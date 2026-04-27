@@ -53,6 +53,24 @@ def run_cmd(cmd: list[str], cwd=None) -> tuple[int, str, str]:
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     return result.returncode, result.stdout, result.stderr
 
+
+async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
+    update_job(job_id, status="downloading", progress=10, message="Downloading video...")
+    video_path = job_dir / "video.mp4"
+    cmd = [
+        "/home/ubuntu/clipforge/venv/bin/yt-dlp",
+        "-f", "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "-o", str(video_path),
+        "--no-playlist",
+        url,
+    ]
+    code, out, err = run_cmd(cmd)
+    if code != 0:
+        raise RuntimeError(f"yt-dlp failed: {err}")
+    update_job(job_id, progress=20, message="Download complete, transcribing...")
+    return video_path
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

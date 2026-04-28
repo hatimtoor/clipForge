@@ -63,6 +63,7 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         "--merge-output-format", "mp4",
         "-o", str(video_path),
         "--no-playlist",
+        "--cookies-from-browser", "chromium",
         url,
     ]
     code, out, err = run_cmd(cmd)
@@ -70,6 +71,48 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         raise RuntimeError(f"yt-dlp failed: {err}")
     update_job(job_id, progress=20, message="Download complete, transcribing...")
     return video_path
+
+
+async def transcribe(video_path: Path, job_id: str) -> dict:
+    update_job(job_id, status="transcribing", progress=30,
+               message="Transcribing audio (this takes a few minutes)...")
+
+    script = f'''
+import json
+from faster_whisper import WhisperModel
+
+model = WhisperModel("medium", device="cpu", compute_type="int8")
+segments, info = model.transcribe(
+    "{video_path}",
+    beam_size=5,
+    word_timestamps=True,
+    language=None,
+    vad_filter=True,
+)
+
+out = []
+for seg in segments:
+    words = []
+    if seg.words:
+        for w in seg.words:
+            words.append({{"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3)}})
+    out.append({{"start": round(seg.start, 3), "end": round(seg.end, 3), "text": seg.text.strip(), "words": words}})
+
+print(json.dumps(out))
+'''
+
+    proc = await asyncio.create_subprocess_exec(
+        "python3", "-c", script,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"Whisper failed: {stderr.decode()}")
+
+    segments = json.loads(stdout.decode())
+    update_job(job_id, progress=50, message="Transcription complete, analyzing virality...")
+    return segments
 
 if __name__ == "__main__":
     import uvicorn

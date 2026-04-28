@@ -114,6 +114,70 @@ print(json.dumps(out))
     update_job(job_id, progress=50, message="Transcription complete, analyzing virality...")
     return segments
 
+
+async def analyze_virality(segments: list, job_id: str, max_clips: int,
+                           min_dur: int, max_dur: int) -> list:
+    update_job(job_id, status="analyzing", progress=55,
+               message="AI is identifying viral moments...")
+
+    transcript_lines = [
+        f"[{s['start']:.1f}s - {s['end']:.1f}s] {s['text']}" for s in segments
+    ]
+    CHUNK_SIZE = 3000
+    full_text = "\n".join(transcript_lines)
+    chunks = []
+    while full_text:
+        chunk = full_text[:CHUNK_SIZE]
+        ln = chunk.rfind("\n")
+        if ln > 0 and len(full_text) > CHUNK_SIZE:
+            chunk = full_text[:ln]
+        chunks.append(chunk)
+        full_text = full_text[len(chunk):].lstrip("\n")
+
+    clips_per_chunk = max(2, max_clips // len(chunks) + 1)
+    all_clips = []
+
+    for chunk_idx, transcript_text in enumerate(chunks):
+        prompt = f"""You are a viral short-form content expert. Identify the {clips_per_chunk} most viral-worthy moments.
+
+TRANSCRIPT:
+{transcript_text}
+
+Return ONLY a JSON array. Each item must have:
+- start, end (seconds), title (max 8 words), hook, virality_score (1-10), reason, tags (array of 3)
+Clips must be {min_dur}s to {max_dur}s long. Return valid JSON array only."""
+
+        try:
+            import requests
+            response = requests.post(
+                "http://localhost:11434/api/generate",
+                json={"model": "llama3.1:8b", "prompt": prompt, "stream": False},
+                timeout=120
+            )
+            raw = response.json()["response"].strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            all_clips.extend(json.loads(raw))
+        except Exception:
+            continue
+
+    all_clips.sort(key=lambda x: x.get("virality_score", 0), reverse=True)
+    clips = all_clips[:max_clips]
+
+    valid = []
+    for c in clips:
+        dur = c["end"] - c["start"]
+        if dur < min_dur:
+            c["end"] = c["start"] + min_dur
+        if dur > max_dur:
+            c["end"] = c["start"] + max_dur
+        valid.append(c)
+
+    return valid
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

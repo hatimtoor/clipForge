@@ -143,9 +143,8 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int,
 TRANSCRIPT:
 {transcript_text}
 
-Return ONLY a JSON array. Each item must have:
-- start, end (seconds), title (max 8 words), hook, virality_score (1-10), reason, tags (array of 3)
-Clips must be {min_dur}s to {max_dur}s long. Return valid JSON array only."""
+Return ONLY a JSON array. Each item: start, end, title, hook, virality_score (1-10), reason, tags.
+Clips must be {min_dur}s to {max_dur}s. Valid JSON only."""
 
         try:
             import requests
@@ -166,7 +165,6 @@ Clips must be {min_dur}s to {max_dur}s long. Return valid JSON array only."""
 
     all_clips.sort(key=lambda x: x.get("virality_score", 0), reverse=True)
     clips = all_clips[:max_clips]
-
     valid = []
     for c in clips:
         dur = c["end"] - c["start"]
@@ -175,8 +173,209 @@ Clips must be {min_dur}s to {max_dur}s long. Return valid JSON array only."""
         if dur > max_dur:
             c["end"] = c["start"] + max_dur
         valid.append(c)
-
     return valid
+
+
+def build_ass_subtitles(
+    segments: list, clip_start: float, clip_end: float,
+    output_path: Path, video_width: int = 1080, video_height: int = 1920,
+):
+    ass_header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {video_width}
+PlayResY: {video_height}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Montserrat,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,5,80,80,120,1
+Style: Highlight,Montserrat,72,&H0000D4FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,5,80,80,120,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    def ts(t: float) -> str:
+        t = max(0, t - clip_start)
+        h = int(t // 3600)
+        m = int((t % 3600) // 60)
+        s = int(t % 60)
+        cs = int((t % 1) * 100)
+        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+    words_in_clip = []
+    for seg in segments:
+        if seg["end"] < clip_start or seg["start"] > clip_end:
+            continue
+        for w in seg.get("words", []):
+            if w["start"] >= clip_start and w["end"] <= clip_end:
+                words_in_clip.append(w)
+
+    events = []
+    LINE_SIZE = 5
+    for i in range(0, len(words_in_clip), LINE_SIZE):
+        group = words_in_clip[i:i + LINE_SIZE]
+        if not group:
+            continue
+        line_start = group[0]["start"]
+        line_end   = group[-1]["end"]
+        karaoke_text = ""
+        for word in group:
+            dur_cs = max(1, int((word["end"] - word["start"]) * 100))
+            karaoke_text += f"{{\k{dur_cs}}}{word['word'].strip()} "
+        karaoke_text = karaoke_text.strip()
+        events.append(
+            f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{karaoke_text}"
+        )
+
+    ass_content = ass_header + "\n".join(events) + "\n"
+    output_path.write_text(ass_content, encoding="utf-8")
+
+
+async def create_clips(
+    video_path: Path, clip_defs: list, segments: list,
+    job_dir: Path, job_id: str,
+) -> list:
+    update_job(job_id, status="clipping", progress=70,
+               message="Cutting clips and burning subtitles...")
+    results = []
+    for idx, clip in enumerate(clip_defs):
+        start = clip["start"]
+        end   = clip["end"]
+        dur   = end - start
+
+        progress = 70 + int((idx / len(clip_defs)) * 25)
+        update_job(job_id, progress=progress,
+                   message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']}")
+
+        probe_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json",
+                     "-show_streams", str(video_path)]
+        _, probe_out, _ = run_cmd(probe_cmd)
+        probe = json.loads(probe_out)
+        vstream = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
+        src_w = int(vstream["width"])  if vstream else 1920
+        src_h = int(vstream["height"]) if vstream else 1080
+
+        out_h = src_h
+        out_w = int(src_h * 9 / 16)
+        crop_x = max(0, (src_w - out_w) // 2)
+
+        ass_path = job_dir / f"clip_{idx}.ass"
+        build_ass_subtitles(segments, clip_start=start, clip_end=end,
+                            output_path=ass_path, video_width=out_w, video_height=out_h)
+
+        clip_filename = f"clip_{idx+1}_{clip['title'][:30].replace(' ','_')}.mp4"
+        clip_path = OUTPUT_DIR / job_id / clip_filename
+        clip_path.parent.mkdir(exist_ok=True)
+
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start),
+            "-i", str(video_path),
+            "-t", str(dur),
+            "-vf", f"crop={out_w}:{out_h}:{crop_x}:0,ass={ass_path}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            str(clip_path),
+        ]
+        code, _, err = run_cmd(ffmpeg_cmd)
+        if code != 0:
+            print(f"FFmpeg error for clip {idx}: {err}")
+            continue
+
+        results.append({
+            **clip,
+            "filename": clip_filename,
+            "path": f"/clips/{job_id}/{clip_filename}",
+            "duration": round(dur, 1),
+        })
+
+    return results
+
+
+async def run_pipeline(job_id: str, req: ClipRequest):
+    from datetime import datetime
+    job_dir = TEMP_DIR / job_id
+    job_dir.mkdir(exist_ok=True)
+    try:
+        video_path = await download_video(req.url, job_dir, job_id)
+        segments   = await transcribe(video_path, job_id)
+        (job_dir / "transcript.json").write_text(json.dumps(segments, indent=2))
+        clips      = await analyze_virality(segments, job_id, req.max_clips,
+                                            req.min_duration, req.max_duration)
+        final_clips = await create_clips(video_path, clips, segments, job_dir, job_id)
+        update_job(job_id, status="done", progress=100,
+                   message=f"Done! {len(final_clips)} clips created.", clips=final_clips)
+    except Exception as e:
+        update_job(job_id, status="error", progress=0,
+                   message="Pipeline failed", error=str(e))
+        raise
+    finally:
+        if job_dir.exists():
+            shutil.rmtree(job_dir, ignore_errors=True)
+
+
+async def watchdog():
+    from datetime import datetime, timezone
+    while True:
+        await asyncio.sleep(60)
+        now = datetime.now(timezone.utc)
+        for job_id, job in list(jobs.items()):
+            if job["status"] in ("done", "error"):
+                continue
+            try:
+                created = datetime.fromisoformat(job["created_at"])
+                age = (now - created).total_seconds() / 60
+                if age > 15:
+                    update_job(job_id, status="error", progress=0,
+                               message="Pipeline failed", error="Job timed out after 15 minutes")
+            except Exception:
+                pass
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(watchdog())
+
+@app.post("/api/clip")
+async def start_clip(req: ClipRequest, background_tasks: BackgroundTasks):
+    from datetime import datetime
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        "job_id": job_id, "status": "queued", "progress": 0,
+        "message": "Queued...", "clips": [], "error": None,
+        "url": req.url, "created_at": datetime.utcnow().isoformat(),
+    }
+    save_jobs(jobs)
+    background_tasks.add_task(run_pipeline, job_id, req)
+    return {"job_id": job_id}
+
+@app.get("/api/status/{job_id}")
+async def get_status(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    return jobs[job_id]
+
+@app.get("/api/jobs")
+async def list_jobs():
+    return list(jobs.values())
+
+@app.get("/clips/{job_id}/{filename}")
+async def serve_clip(job_id: str, filename: str):
+    clip_path = OUTPUT_DIR / job_id / filename
+    if not clip_path.exists():
+        raise HTTPException(404, "Clip not found")
+    return FileResponse(str(clip_path), media_type="video/mp4")
+
+@app.get("/api/transcript/{job_id}")
+async def get_transcript(job_id: str):
+    transcript_path = TEMP_DIR / job_id / "transcript.json"
+    if not transcript_path.exists():
+        raise HTTPException(404, "Transcript not found")
+    return json.loads(transcript_path.read_text())
+
+FRONTEND_BUILD = BASE_DIR / "frontend" / "dist"
+if FRONTEND_BUILD.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_BUILD), html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn

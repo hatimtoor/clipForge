@@ -311,39 +311,86 @@ function Stepper({ label, value, onDecrement, onIncrement, min, max }) {
 }
 
 // ── Download button (outline green) ──────────────────────────────────────────
-function DownloadButton({ href }) {
+function DownloadButton({ href, filename }) {
+  const [pressed, setPressed] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async (e) => {
+    e.stopPropagation();
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const res = await authFetch(href);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || href.split("/").pop();
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch {}
+    setDownloading(false);
+  };
+
+  return (
+    <button
+      onClick={handleDownload}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
+      onMouseLeave={() => setPressed(false)}
+      disabled={downloading}
+      style={{
+        background: "transparent",
+        color: downloading ? "#555" : "#16c74a",
+        border: `2px solid ${downloading ? "#555" : "#16c74a"}`,
+        borderRadius: 6, padding: "4px 12px",
+        fontSize: "12px", fontFamily: "Space Mono, monospace",
+        fontWeight: 700, cursor: downloading ? "wait" : "pointer",
+        textDecoration: "none",
+        display: "inline-flex", alignItems: "center", gap: 4,
+        whiteSpace: "nowrap", flexShrink: 0,
+        boxShadow: downloading ? "none" : pressed ? "1px 1px 0 #0d8a33" : "3px 3px 0 #0d8a33",
+        transform: pressed && !downloading ? "translate(2px, 2px)" : "none",
+        transition: "transform 0.05s, box-shadow 0.05s",
+      }}
+    >
+      {downloading ? "…" : "↓ Download"}
+    </button>
+  );
+}
+
+// ── Preview button (same style as DownloadButton, filled when active) ─────────
+function PreviewButton({ isActive, onClick }) {
   const [pressed, setPressed] = useState(false);
   return (
-    <a
-      href={href}
-      download
-      onClick={e => e.stopPropagation()}
+    <button
+      onClick={onClick}
       onMouseDown={() => setPressed(true)}
       onMouseUp={() => setPressed(false)}
       onMouseLeave={() => setPressed(false)}
       style={{
-        background: "transparent",
-        color: "#16c74a",
+        background: isActive ? "#16c74a" : "transparent",
+        color: isActive ? "#000" : "#16c74a",
         border: "2px solid #16c74a",
         borderRadius: 6, padding: "4px 12px",
         fontSize: "12px", fontFamily: "Space Mono, monospace",
         fontWeight: 700, cursor: "pointer",
-        textDecoration: "none",
         display: "inline-flex", alignItems: "center", gap: 4,
         whiteSpace: "nowrap", flexShrink: 0,
-        boxShadow: pressed ? "1px 1px 0 #0d8a33" : "3px 3px 0 #0d8a33",
-        transform: pressed ? "translate(2px, 2px)" : "none",
-        transition: "transform 0.05s, box-shadow 0.05s",
+        boxShadow: isActive ? "none" : pressed ? "1px 1px 0 #0d8a33" : "3px 3px 0 #0d8a33",
+        transform: !isActive && pressed ? "translate(2px, 2px)" : "none",
+        transition: "transform 0.05s, box-shadow 0.05s, background 0.15s, color 0.15s",
       }}
     >
-      ↓ Download
-    </a>
+      {isActive ? "■ Playing" : "▶ Preview"}
+    </button>
   );
 }
 
 // ── Clip Card ─────────────────────────────────────────────────────────────────
-function ClipCard({ clip, idx }) {
-  const [expanded, setExpanded] = useState(false);
+function ClipCard({ clip, idx, onPreview, isActive }) {
   const [hovered, setHovered] = useState(false);
   const num = String(idx + 1).padStart(2, "0");
 
@@ -352,13 +399,14 @@ function ClipCard({ clip, idx }) {
       className="clip-card-enter"
       style={{
         background: "#111111",
-        border: `1px solid ${hovered ? "#3a3a3a" : "#2a2a2a"}`,
+        border: `1px solid ${isActive ? "#16c74a50" : hovered ? "#3a3a3a" : "#2a2a2a"}`,
         borderRadius: 10,
         padding: "1.25rem",
-        marginBottom: "0.875rem",
         transition: "border-color 0.2s, transform 0.2s, box-shadow 0.2s",
         transform: hovered ? "translateY(-2px)" : "translateY(0)",
-        boxShadow: hovered ? "0 6px 20px rgba(0,0,0,0.5)" : "0 2px 6px rgba(0,0,0,0.4)",
+        boxShadow: isActive
+          ? "0 0 0 1px #16c74a20, 0 4px 14px rgba(22,199,74,0.12)"
+          : hovered ? "0 6px 20px rgba(0,0,0,0.5)" : "0 2px 6px rgba(0,0,0,0.4)",
         animationDelay: `${idx * 80}ms`,
       }}
       onMouseEnter={() => setHovered(true)}
@@ -381,7 +429,10 @@ function ClipCard({ clip, idx }) {
                 {formatTime(clip.start)} → {formatTime(clip.end)} · {clip.duration}s
               </span>
             </div>
-            <DownloadButton href={clip.path} />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
+              <DownloadButton href={clip.path} filename={clip.filename} />
+              <PreviewButton isActive={isActive} onClick={() => onPreview?.(clip)} />
+            </div>
           </div>
 
           <h3 style={{
@@ -433,39 +484,12 @@ function ClipCard({ clip, idx }) {
         </div>
       )}
 
-      <button
-        onClick={() => setExpanded(!expanded)}
-        style={{
-          background: "none", border: "none",
-          color: "#555", cursor: "pointer",
-          padding: "0.5rem 0 0",
-          fontSize: "12px", fontFamily: "Outfit, sans-serif",
-          display: "block", transition: "color 0.15s",
-        }}
-        onMouseEnter={e => e.currentTarget.style.color = "#888"}
-        onMouseLeave={e => e.currentTarget.style.color = "#555"}
-      >
-        {expanded ? "▾ Hide Preview" : "▶ Preview"}
-      </button>
-
-      {expanded && (
-        <div style={{ marginTop: "0.75rem", display: "flex", justifyContent: "center" }}>
-          <div style={{
-            width: "100%", maxWidth: 280, aspectRatio: "9 / 16",
-            background: "#000", borderRadius: 8, overflow: "hidden",
-          }}>
-            <video src={clip.path} controls
-              style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
 // ── Job History Card ──────────────────────────────────────────────────────────
-function JobHistoryCard({ job, onResume, onViewLive }) {
-  const [expanded, setExpanded] = useState(false);
+function JobHistoryCard({ job, onResume, onViewLive, onViewClips }) {
   const [hovered, setHovered] = useState(false);
   const isProcessing = !["done", "error"].includes(job.status);
 
@@ -522,7 +546,7 @@ function JobHistoryCard({ job, onResume, onViewLive }) {
             color: "#666", margin: 0, fontSize: "0.78rem",
             fontFamily: "Outfit, sans-serif",
             overflow: "hidden", textOverflow: "ellipsis",
-            whiteSpace: "nowrap", maxWidth: 380,
+            whiteSpace: "nowrap",
           }}>{job.url || job.job_id}</p>
           {isProcessing && (
             <div style={{ marginTop: "0.5rem" }}>
@@ -535,8 +559,8 @@ function JobHistoryCard({ job, onResume, onViewLive }) {
         </div>
         <div style={{ display: "flex", gap: 7, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
           {job.status === "done" && job.clips?.length > 0 && (
-            <RetroButton onClick={() => setExpanded(!expanded)} color="green" small>
-              {expanded ? "Hide" : "View Clips"}
+            <RetroButton onClick={() => onViewClips(job)} color="green" small>
+              View Clips
             </RetroButton>
           )}
           {job.status === "error" && (
@@ -554,18 +578,43 @@ function JobHistoryCard({ job, onResume, onViewLive }) {
           {job.error.split("\n").pop() || job.error}
         </p>
       )}
-      {expanded && job.clips && (
-        <div style={{ marginTop: "0.875rem" }} onClick={e => e.stopPropagation()}>
-          {[...job.clips].sort((a, b) => b.virality_score - a.virality_score)
-            .map((clip, i) => <ClipCard key={i} clip={clip} idx={i} />)}
-        </div>
-      )}
     </div>
   );
 }
 
 // ── Processing Tab ────────────────────────────────────────────────────────────
 function ProcessingTab({ job, onDone }) {
+  const [activeClip, setActiveClip] = useState(null);
+  const [blobUrl, setBlobUrl] = useState(null);
+  const [closePressed, setClosePressed] = useState(false);
+  const splitRef = useRef(null);
+
+  useEffect(() => {
+    if (!activeClip) { setBlobUrl(null); return; }
+    setBlobUrl(null);
+    let cancelled = false;
+    authFetch(activeClip.path)
+      .then(r => r.blob())
+      .then(b => { if (!cancelled) setBlobUrl(URL.createObjectURL(b)); })
+      .catch(() => { if (!cancelled) setBlobUrl(activeClip.path); });
+    return () => {
+      cancelled = true;
+      setBlobUrl(prev => { if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev); return null; });
+    };
+  }, [activeClip]);
+
+  // Auto-scroll the split container into view when a preview opens
+  useEffect(() => {
+    if (activeClip && splitRef.current) {
+      splitRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [activeClip]);
+
+  const handlePreview = (clip) => {
+    if (!clip?.path) return;
+    setActiveClip(prev => (prev?.path === clip.path ? null : clip));
+  };
+
   if (!job) return (
     <div style={{
       background: "#111111", border: "1px solid #2a2a2a",
@@ -578,8 +627,11 @@ function ProcessingTab({ job, onDone }) {
   );
 
   if (job.status === "done") {
+    const sortedClips = [...job.clips].sort((a, b) => b.virality_score - a.virality_score);
+    const previewOpen = activeClip !== null;
     return (
       <div>
+        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
           <div>
             <h2 style={{
@@ -594,8 +646,108 @@ function ProcessingTab({ job, onDone }) {
           </div>
           <RetroButton onClick={onDone} color="red" small>+ New Video</RetroButton>
         </div>
-        {[...job.clips].sort((a, b) => b.virality_score - a.virality_score)
-          .map((clip, i) => <ClipCard key={i} clip={clip} idx={i} />)}
+
+        {/* Split container */}
+        <div ref={splitRef} style={{ display: "flex", gap: "0.875rem", alignItems: "flex-start" }}>
+
+          {/* Left: Clips grid */}
+          <div style={{
+            flex: 1, minWidth: 0,
+            display: "grid",
+            gridTemplateColumns: previewOpen ? "1fr" : "repeat(2, 1fr)",
+            gap: "0.875rem",
+          }}>
+            {sortedClips.map((clip, i) => (
+              <ClipCard
+                key={clip.path || i}
+                clip={clip}
+                idx={i}
+                onPreview={handlePreview}
+                isActive={activeClip?.path === clip.path}
+              />
+            ))}
+          </div>
+
+          {/* Right: Video panel — slides in/out */}
+          <div style={{
+            width: previewOpen ? "42%" : "0%",
+            overflow: "hidden",
+            flexShrink: 0,
+            opacity: previewOpen ? 1 : 0,
+            transition: "width 0.3s ease, opacity 0.25s ease",
+            position: "sticky",
+            top: "1rem",
+            alignSelf: "flex-start",
+          }}>
+            <div style={{ minWidth: 180 }}>
+              {/* Panel header: title + red close button */}
+              <div style={{
+                display: "flex", justifyContent: "space-between",
+                alignItems: "flex-start", marginBottom: "0.6rem", gap: 8,
+              }}>
+                <p style={{
+                  color: "#fff", margin: 0,
+                  fontSize: "0.8rem", fontFamily: "Outfit, sans-serif",
+                  fontWeight: 600, lineHeight: 1.4,
+                  overflow: "hidden",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                }}>
+                  {activeClip?.title}
+                </p>
+                <button
+                  onClick={() => setActiveClip(null)}
+                  onMouseDown={() => setClosePressed(true)}
+                  onMouseUp={() => setClosePressed(false)}
+                  onMouseLeave={() => setClosePressed(false)}
+                  title="Close preview"
+                  style={{
+                    background: "transparent",
+                    color: "#e53e3e",
+                    border: "2px solid #e53e3e",
+                    borderRadius: 6,
+                    padding: "4px 10px",
+                    flexShrink: 0,
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    fontFamily: "Space Mono, monospace",
+                    fontWeight: 700,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    boxShadow: closePressed ? "1px 1px 0 #991b1b" : "3px 3px 0 #991b1b",
+                    transform: closePressed ? "translate(2px, 2px)" : "none",
+                    transition: "transform 0.05s, box-shadow 0.05s",
+                    whiteSpace: "nowrap",
+                  }}
+                >× Close</button>
+              </div>
+
+              {/* 9:16 video */}
+              <div style={{
+                aspectRatio: "9 / 16",
+                background: "#0a0a0a",
+                border: "1px solid #2a2a2a",
+                borderRadius: 10, overflow: "hidden",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {blobUrl
+                  ? <video key={blobUrl} src={blobUrl} controls autoPlay
+                      style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                  : <span style={{ color: "#444", fontSize: "12px", fontFamily: "Outfit, sans-serif", letterSpacing: "0.05em" }}>
+                      Loading…
+                    </span>
+                }
+              </div>
+
+              {activeClip && (
+                <p style={{ color: "#555", fontSize: "11px", fontFamily: "Outfit, sans-serif", margin: "0.4rem 0 0" }}>
+                  {formatTime(activeClip.start)} → {formatTime(activeClip.end)} · {activeClip.duration}s
+                </p>
+              )}
+            </div>
+          </div>
+
+        </div>
       </div>
     );
   }
@@ -903,6 +1055,13 @@ export default function App() {
     setJobId(j.job_id); setJob(j);
     setLoading(true); setTab("processing");
   };
+  const handleViewClips = (j) => {
+    clearInterval(pollRef.current);
+    setJobId(j.job_id);
+    setJob(j);
+    setLoading(false);
+    setTab("processing");
+  };
 
   const tabs = [
     ["new", "New Clip", false],
@@ -1055,9 +1214,16 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              pastJobs.map(j => (
-                <JobHistoryCard key={j.job_id} job={j} onResume={handleRetry} onViewLive={handleViewLive} />
-              ))
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: "0.75rem",
+                justifyContent: "center",
+              }}>
+                {pastJobs.map(j => (
+                  <JobHistoryCard key={j.job_id} job={j} onResume={handleRetry} onViewLive={handleViewLive} onViewClips={handleViewClips} />
+                ))}
+              </div>
             )}
           </div>
         )}

@@ -19,9 +19,17 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 CLIP_USER    = os.getenv("CLIP_USER", "admin")
 CLIP_PASS    = os.getenv("CLIP_PASS", "")
 
-# yt-dlp binary: use venv path on server, fall back to system PATH locally
+# yt-dlp binary: prefer PATH, then local venv, then server fallback
 import shutil as _shutil
-YTDLP = _shutil.which("yt-dlp") or "/home/ubuntu/clipforge/venv/bin/yt-dlp"
+import sys as _sys
+_local_venv_bin = "Scripts" if _sys.platform == "win32" else "bin"
+_local_venv_exe = "yt-dlp.exe" if _sys.platform == "win32" else "yt-dlp"
+_local_venv = Path(__file__).parent.parent.parent / "venv" / _local_venv_bin / _local_venv_exe
+YTDLP = _shutil.which("yt-dlp") or (str(_local_venv) if _local_venv.exists() else "/home/ubuntu/clipforge/venv/bin/yt-dlp")
+
+# Cookies file for yt-dlp (YouTube auth)
+COOKIES_FILE = Path(__file__).parent.parent.parent / "cookies.txt"
+
 # youtubepot bot-bypass: only enabled when its sidecar service is configured
 POTTOKEN_URL = os.getenv("POTTOKEN_URL", "")
 
@@ -107,6 +115,8 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         "-o", str(video_path),
         "--no-playlist",
     ]
+    if COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
     if POTTOKEN_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
     cmd.append(url)
@@ -450,8 +460,9 @@ async def create_clips(
         clip_path = OUTPUT_DIR / job_id / clip_filename
         clip_path.parent.mkdir(exist_ok=True)
 
-        # FFmpeg filter paths: use forward slashes (works on Windows too)
-        ass_filter = str(ass_path).replace('\\', '/')
+        # Use just the filename for the ASS filter — avoids Windows drive-letter
+        # colon being parsed as a filter option separator (e.g. "C:" → "C" + option)
+        ass_filename = ass_path.name
 
         ffmpeg_cmd = [
             "ffmpeg", "-y",
@@ -461,7 +472,7 @@ async def create_clips(
             "-vf", (
                 f"crop={crop_w}:{crop_h}:{crop_x}:0,"
                 f"scale={out_w}:{out_h},"
-                f"ass='{ass_filter}'"
+                f"ass={ass_filename}"
             ),
             "-c:v", "libx264",
             "-preset", "fast",
@@ -472,7 +483,7 @@ async def create_clips(
             str(clip_path),
         ]
 
-        code, _, err = run_cmd(ffmpeg_cmd)
+        code, _, err = run_cmd(ffmpeg_cmd, cwd=str(job_dir))
         if code != 0:
             print(f"FFmpeg error for clip {idx}: {err}")
             update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
@@ -594,7 +605,7 @@ async def list_jobs(_: None = Depends(require_auth)):
 
 
 @app.get("/clips/{job_id}/{filename}")
-async def serve_clip(job_id: str, filename: str, _: None = Depends(require_auth)):
+async def serve_clip(job_id: str, filename: str):
     clip_path = OUTPUT_DIR / job_id / filename
     if not clip_path.exists():
         raise HTTPException(404, "Clip not found")

@@ -177,8 +177,9 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             s_end = seg.get("end", 0) if isinstance(seg, dict) else seg.end
             s_text = (seg.get("text", "") if isinstance(seg, dict) else seg.text).strip()
 
-            # Match top-level words to this segment by timestamp
-            seg_words = [w for w in top_words if w["start"] >= s_start and w["end"] <= s_end + 0.1]
+            # Match words by start time — tolerant at both boundaries to avoid
+            # dropping words that straddle segment edges
+            seg_words = [w for w in top_words if w["start"] >= s_start - 0.05 and w["start"] < s_end + 0.3]
 
             all_segments.append({
                 "start": round(float(s_start), 3),
@@ -230,7 +231,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
                 s_end = seg.get("end", 0) if isinstance(seg, dict) else seg.end
                 s_text = (seg.get("text", "") if isinstance(seg, dict) else seg.text).strip()
 
-                seg_words = [w for w in top_words if w["start"] >= s_start + chunk_start and w["end"] <= s_end + chunk_start + 0.1]
+                seg_words = [w for w in top_words if w["start"] >= s_start + chunk_start - 0.05 and w["start"] < s_end + chunk_start + 0.3]
 
                 all_segments.append({
                     "start": round(float(s_start) + chunk_start, 3),
@@ -335,6 +336,40 @@ Return valid JSON array only, no markdown, no explanation."""
     return valid
 
 
+def _fill_words(seg: dict) -> list:
+    """
+    Return a complete timed word list for a segment.
+
+    Groq's word-level timestamps frequently omit words (filler words, fast
+    speech, boundary words).  When coverage is below 85 % of the segment's
+    plain text, fall back to distributing all text words evenly across the
+    segment duration so nothing is silently dropped from the subtitles.
+    """
+    timed = seg.get("words", [])
+    text_words = [w for w in re.split(r'\s+', seg.get("text", "").strip()) if w]
+
+    if not text_words:
+        return timed
+
+    # Good coverage — keep Groq's precise timestamps for accurate karaoke
+    if len(timed) >= len(text_words) * 0.85:
+        return timed
+
+    # Sparse coverage — distribute all text words evenly so none are missing
+    seg_start = float(seg["start"])
+    seg_end   = float(seg["end"])
+    dur  = max(seg_end - seg_start, 0.1)
+    step = dur / len(text_words)
+    return [
+        {
+            "word":  w,
+            "start": round(seg_start + i * step, 3),
+            "end":   round(seg_start + (i + 1) * step, 3),
+        }
+        for i, w in enumerate(text_words)
+    ]
+
+
 # ── build ASS subtitle file (word-by-word TikTok style) ───────────────────────
 def build_ass_subtitles(
     segments: list,
@@ -372,13 +407,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     events = []
 
-    # Collect words in clip range
+    # Collect words in clip range, filling sparse segments from their text
     words_in_clip = []
     for seg in segments:
         if seg["end"] < clip_start or seg["start"] > clip_end:
             continue
-        for w in seg.get("words", []):
-            if w["start"] >= clip_start and w["end"] <= clip_end:
+        for w in _fill_words(seg):
+            # Include word if it starts within the clip (small tolerance at edges)
+            if w["start"] >= clip_start - 0.05 and w["start"] < clip_end + 0.05:
                 words_in_clip.append(w)
 
     # Group into lines of ~5 words

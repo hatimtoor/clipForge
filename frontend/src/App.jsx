@@ -389,10 +389,113 @@ function PreviewButton({ isActive, onClick }) {
   );
 }
 
+// ── YouTube Upload Modal ──────────────────────────────────────────────────────
+function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
+  const [title, setTitle] = useState(clip.title || "");
+  const [description, setDescription] = useState(
+    [clip.hook, clip.reason, (clip.tags || []).map(t => `#${t}`).join(" ")]
+      .filter(Boolean).join("\n\n")
+  );
+  const [tags, setTags] = useState((clip.tags || []).join(", "));
+  const [privacy, setPrivacy] = useState("public");
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [done, setDone] = useState(null);
+  const [err, setErr] = useState("");
+  const pollRef = useRef(null);
+
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
+  const handleUpload = async () => {
+    setUploading(true); setErr("");
+    try {
+      const res = await authFetch(`${API}/api/youtube/upload/${jobId}/${clipIndex}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          description,
+          tags: tags.split(",").map(t => t.trim()).filter(Boolean),
+          privacy_status: privacy,
+        }),
+      });
+      if (!res.ok) { setErr("Failed to start upload."); setUploading(false); return; }
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await authFetch(`${API}/api/youtube/upload_status/${jobId}/${clipIndex}`);
+          const s = await r.json();
+          if (s.status === "uploading") setProgress(s.progress || 0);
+          if (s.status === "done") { clearInterval(pollRef.current); setProgress(100); setDone(s); setUploading(false); onUploaded?.(); }
+          if (s.status === "error") { clearInterval(pollRef.current); setErr(s.error || "Upload failed"); setUploading(false); }
+        } catch {}
+      }, 2000);
+    } catch { setErr("Failed to start upload."); setUploading(false); }
+  };
+
+  return (
+    <div
+      onClick={e => { if (!uploading && e.target === e.currentTarget) onClose(); }}
+      style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
+    >
+      <div style={{ background: "#111", border: "2px solid #2a2a2a", borderRadius: 10, padding: "1.75rem", width: "100%", maxWidth: 480, boxShadow: "6px 6px 0 #1a1a1a", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+          <h2 style={{ fontFamily: "Space Mono, monospace", fontWeight: 700, color: "#fff", margin: 0, fontSize: "1rem" }}>
+            Upload to <span style={{ color: "#ff4444" }}>YouTube</span>
+          </h2>
+          {!uploading && <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: "1.3rem", padding: "0 4px", lineHeight: 1 }}>×</button>}
+        </div>
+
+        {done ? (
+          <div style={{ textAlign: "center" }}>
+            <p style={{ color: "#16c74a", fontFamily: "Outfit, sans-serif", marginBottom: "1rem", fontSize: "0.95rem" }}>✓ Uploaded successfully!</p>
+            <a href={done.url} target="_blank" rel="noreferrer" style={{ color: "#ff4444", fontFamily: "Space Mono, monospace", fontSize: "0.8rem", wordBreak: "break-all" }}>{done.url}</a>
+            <div style={{ marginTop: "1.25rem" }}><RetroButton onClick={onClose} color="green" small>Close</RetroButton></div>
+          </div>
+        ) : uploading ? (
+          <div>
+            <p style={{ color: "#aaa", fontFamily: "Outfit, sans-serif", marginBottom: "0.75rem", fontSize: "0.85rem" }}>Uploading to YouTube…</p>
+            <ProgressBar progress={progress} inProgress />
+            <p style={{ color: "#16c74a", fontFamily: "Space Mono, monospace", fontSize: "0.8rem", textAlign: "center", marginTop: "0.25rem" }}>{progress}%</p>
+          </div>
+        ) : (
+          <>
+            <div style={{ marginBottom: "0.875rem" }}>
+              <label style={{ display: "block", color: "#555", fontSize: "0.68rem", fontFamily: "Space Mono, monospace", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.4rem" }}>Title</label>
+              <LoginInput value={title} onChange={e => setTitle(e.target.value)} />
+            </div>
+            <div style={{ marginBottom: "0.875rem" }}>
+              <label style={{ display: "block", color: "#555", fontSize: "0.68rem", fontFamily: "Space Mono, monospace", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.4rem" }}>Description</label>
+              <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4}
+                style={{ width: "100%", background: "#000", border: "2px solid #2a2a2a", borderRadius: 6, padding: "0.75rem 1rem", color: "#fff", fontSize: "0.9rem", fontFamily: "Outfit, sans-serif", resize: "vertical", boxSizing: "border-box", outline: "none" }} />
+            </div>
+            <div style={{ marginBottom: "0.875rem" }}>
+              <label style={{ display: "block", color: "#555", fontSize: "0.68rem", fontFamily: "Space Mono, monospace", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.4rem" }}>Tags (comma-separated)</label>
+              <LoginInput value={tags} onChange={e => setTags(e.target.value)} />
+            </div>
+            <div style={{ marginBottom: "1.25rem" }}>
+              <label style={{ display: "block", color: "#555", fontSize: "0.68rem", fontFamily: "Space Mono, monospace", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "0.4rem" }}>Privacy</label>
+              <select value={privacy} onChange={e => setPrivacy(e.target.value)}
+                style={{ background: "#000", border: "2px solid #2a2a2a", borderRadius: 6, padding: "0.65rem 1rem", color: "#fff", fontSize: "0.9rem", fontFamily: "Outfit, sans-serif", width: "100%", boxSizing: "border-box", outline: "none" }}>
+                <option value="public">Public</option>
+                <option value="unlisted">Unlisted</option>
+                <option value="private">Private</option>
+              </select>
+            </div>
+            {err && <p style={{ color: "#e53e3e", fontSize: "0.8rem", fontFamily: "Outfit, sans-serif", marginBottom: "0.75rem" }}>{err}</p>}
+            <RetroButton onClick={handleUpload} color="green" fullWidth>↑ Upload to YouTube</RetroButton>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Clip Card ─────────────────────────────────────────────────────────────────
-function ClipCard({ clip, idx, onPreview, isActive }) {
+function ClipCard({ clip, idx, onPreview, isActive, ytConnected, onYTUpload }) {
   const [hovered, setHovered] = useState(false);
+  const [ytPressed, setYtPressed] = useState(false);
   const num = String(idx + 1).padStart(2, "0");
+  const ytUp = clip.yt_upload;
 
   return (
     <div
@@ -432,6 +535,35 @@ function ClipCard({ clip, idx, onPreview, isActive }) {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
               <DownloadButton href={clip.path} filename={clip.filename} />
               <PreviewButton isActive={isActive} onClick={() => onPreview?.(clip)} />
+              {ytConnected && (
+                ytUp?.status === "done" ? (
+                  <a href={ytUp.url} target="_blank" rel="noreferrer"
+                    style={{ color: "#ff4444", fontSize: "11px", fontFamily: "Space Mono, monospace", fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>
+                    ▶ YouTube ↗
+                  </a>
+                ) : ytUp?.status === "uploading" || ytUp?.status === "queued" ? (
+                  <span style={{ color: "#ff8844", fontSize: "11px", fontFamily: "Space Mono, monospace", fontWeight: 700, whiteSpace: "nowrap" }}>
+                    ↑ {ytUp.progress || 0}%
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => onYTUpload?.(clip, idx)}
+                    onMouseDown={() => setYtPressed(true)}
+                    onMouseUp={() => setYtPressed(false)}
+                    onMouseLeave={() => setYtPressed(false)}
+                    style={{
+                      background: "transparent", color: "#ff4444",
+                      border: "2px solid #ff4444", borderRadius: 6, padding: "4px 10px",
+                      fontSize: "11px", fontFamily: "Space Mono, monospace", fontWeight: 700,
+                      cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4,
+                      whiteSpace: "nowrap", flexShrink: 0,
+                      boxShadow: ytPressed ? "1px 1px 0 #991111" : "3px 3px 0 #991111",
+                      transform: ytPressed ? "translate(2px, 2px)" : "none",
+                      transition: "transform 0.05s, box-shadow 0.05s",
+                    }}
+                  >↑ YouTube</button>
+                )
+              )}
             </div>
           </div>
 
@@ -583,10 +715,11 @@ function JobHistoryCard({ job, onResume, onViewLive, onViewClips }) {
 }
 
 // ── Processing Tab ────────────────────────────────────────────────────────────
-function ProcessingTab({ job, onDone }) {
+function ProcessingTab({ job, onDone, ytConnected }) {
   const [activeClip, setActiveClip] = useState(null);
   const [blobUrl, setBlobUrl] = useState(null);
   const [closePressed, setClosePressed] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState(null);
   const splitRef = useRef(null);
 
   useEffect(() => {
@@ -664,8 +797,19 @@ function ProcessingTab({ job, onDone }) {
                 idx={i}
                 onPreview={handlePreview}
                 isActive={activeClip?.path === clip.path}
+                ytConnected={ytConnected}
+                onYTUpload={(c, localIdx) => setUploadTarget({ clip: c, clipIndex: sortedClips.indexOf(c) })}
               />
             ))}
+            {uploadTarget && (
+              <YouTubeUploadModal
+                clip={uploadTarget.clip}
+                clipIndex={uploadTarget.clipIndex}
+                jobId={job.job_id}
+                onClose={() => setUploadTarget(null)}
+                onUploaded={() => {}}
+              />
+            )}
           </div>
 
           {/* Right: Video panel — slides in/out */}
@@ -983,6 +1127,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pastJobs, setPastJobs] = useState([]);
+  const [ytStatus, setYtStatus] = useState({ connected: false });
   const pollRef = useRef(null);
 
   const isProcessing = loading || (job && !["done", "error"].includes(job?.status));
@@ -995,7 +1140,30 @@ export default function App() {
     } catch (e) {}
   };
 
+  const fetchYtStatus = async () => {
+    try {
+      const res = await authFetch(`${API}/api/youtube/status`);
+      const data = await res.json();
+      setYtStatus(data);
+    } catch {}
+  };
+
+  const handleConnectYouTube = async () => {
+    try {
+      const res = await authFetch(`${API}/api/youtube/auth`);
+      const data = await res.json();
+      if (!data.auth_url) return;
+      window.open(data.auth_url, "youtube_auth", "width=600,height=700,scrollbars=yes,resizable=yes");
+      const onMessage = (e) => {
+        if (e.data?.type === "youtube_auth_success") { window.removeEventListener("message", onMessage); fetchYtStatus(); }
+        else if (e.data?.type === "youtube_auth_error") { window.removeEventListener("message", onMessage); }
+      };
+      window.addEventListener("message", onMessage);
+    } catch {}
+  };
+
   useEffect(() => { if (authed) fetchPastJobs(); }, [authed]);
+  useEffect(() => { if (authed) fetchYtStatus(); }, [authed]);
   useEffect(() => { if (authed && tab === "history") fetchPastJobs(); }, [tab]);
   useEffect(() => {
     if (!authed) return;
@@ -1102,19 +1270,33 @@ export default function App() {
               Drop a YouTube URL. Get viral-ready short clips.
             </p>
           </div>
-          <button
-            title="Sign out"
-            onClick={() => { sessionStorage.clear(); window.location.reload(); }}
-            style={{
-              background: "transparent", border: "2px solid #2a2a2a",
-              color: "#555", borderRadius: 6,
-              padding: "0.4rem 0.7rem",
-              cursor: "pointer", fontSize: "1rem", lineHeight: 1,
-              transition: "border-color 0.15s, color 0.15s",
-            }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = "#e53e3e"; e.currentTarget.style.color = "#e53e3e"; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a2a2a"; e.currentTarget.style.color = "#555"; }}
-          >⎋</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {ytStatus.connected ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#ff4444", fontSize: "11px", fontFamily: "Space Mono, monospace", fontWeight: 700, border: "2px solid #ff444430", borderRadius: 6, padding: "0.4rem 0.7rem" }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4444", display: "inline-block", flexShrink: 0 }} />
+                {ytStatus.channel_name || "YouTube"}
+              </div>
+            ) : (
+              <button onClick={handleConnectYouTube}
+                style={{ background: "transparent", border: "2px solid #2a2a2a", color: "#555", borderRadius: 6, padding: "0.4rem 0.7rem", cursor: "pointer", fontSize: "11px", fontFamily: "Space Mono, monospace", fontWeight: 700, transition: "border-color 0.15s, color 0.15s" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "#ff4444"; e.currentTarget.style.color = "#ff4444"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a2a2a"; e.currentTarget.style.color = "#555"; }}
+              >+ YouTube</button>
+            )}
+            <button
+              title="Sign out"
+              onClick={() => { sessionStorage.clear(); window.location.reload(); }}
+              style={{
+                background: "transparent", border: "2px solid #2a2a2a",
+                color: "#555", borderRadius: 6,
+                padding: "0.4rem 0.7rem",
+                cursor: "pointer", fontSize: "1rem", lineHeight: 1,
+                transition: "border-color 0.15s, color 0.15s",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#e53e3e"; e.currentTarget.style.color = "#e53e3e"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a2a2a"; e.currentTarget.style.color = "#555"; }}
+            >⎋</button>
+          </div>
         </header>
 
         {/* Tabs */}
@@ -1182,7 +1364,7 @@ export default function App() {
         )}
 
         {/* ── PROCESSING ── */}
-        {tab === "processing" && <ProcessingTab job={job} onDone={reset} />}
+        {tab === "processing" && <ProcessingTab job={job} onDone={reset} ytConnected={ytStatus.connected} />}
 
         {/* ── HISTORY ── */}
         {tab === "history" && (

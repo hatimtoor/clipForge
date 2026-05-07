@@ -9,17 +9,42 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import secrets
+
 from dotenv import load_dotenv
-load_dotenv("/home/ubuntu/.env")
+# Load from clipforge root (local dev) or server path
+_env = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(_env if _env.exists() else "/home/ubuntu/.env")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+CLIP_USER    = os.getenv("CLIP_USER", "admin")
+CLIP_PASS    = os.getenv("CLIP_PASS", "")
+
+# yt-dlp binary: use venv path on server, fall back to system PATH locally
+import shutil as _shutil
+YTDLP = _shutil.which("yt-dlp") or "/home/ubuntu/clipforge/venv/bin/yt-dlp"
+# youtubepot bot-bypass: only enabled when its sidecar service is configured
+POTTOKEN_URL = os.getenv("POTTOKEN_URL", "")
 
 from groq import Groq
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+import base64
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+
+def require_auth(x_clip_auth: str = Header(default="")):
+    try:
+        user, pw = base64.b64decode(x_clip_auth).decode().split(":", 1)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    ok = (
+        secrets.compare_digest(user.encode(), CLIP_USER.encode()) and
+        secrets.compare_digest(pw.encode(), CLIP_PASS.encode())
+    )
+    if not ok:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
 app = FastAPI(title="ClipForge API")
 
@@ -76,15 +101,15 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
     update_job(job_id, status="downloading", progress=5, message="Downloading video...")
     video_path = job_dir / "video.mp4"
     cmd = [
-        "/home/ubuntu/clipforge/venv/bin/yt-dlp",
+        YTDLP,
         "-f", "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "-o", str(video_path),
         "--no-playlist",
-        "--cookies-from-browser", "chromium",
-        "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-        url,
     ]
+    if POTTOKEN_URL:
+        cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
+    cmd.append(url)
     update_job(job_id, progress=8, message="Downloading video...")
     code, out, err = run_cmd(cmd)
     if code != 0:
@@ -425,6 +450,9 @@ async def create_clips(
         clip_path = OUTPUT_DIR / job_id / clip_filename
         clip_path.parent.mkdir(exist_ok=True)
 
+        # FFmpeg filter paths: use forward slashes (works on Windows too)
+        ass_filter = str(ass_path).replace('\\', '/')
+
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-ss", str(start),
@@ -433,7 +461,7 @@ async def create_clips(
             "-vf", (
                 f"crop={crop_w}:{crop_h}:{crop_x}:0,"
                 f"scale={out_w}:{out_h},"
-                f"ass={ass_path}"
+                f"ass='{ass_filter}'"
             ),
             "-c:v", "libx264",
             "-preset", "fast",
@@ -447,6 +475,7 @@ async def create_clips(
         code, _, err = run_cmd(ffmpeg_cmd)
         if code != 0:
             print(f"FFmpeg error for clip {idx}: {err}")
+            update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
             continue
 
         results.append({
@@ -534,7 +563,8 @@ async def startup_event():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/clip")
-async def start_clip(req: ClipRequest, background_tasks: BackgroundTasks):
+async def start_clip(req: ClipRequest, background_tasks: BackgroundTasks,
+                     _: None = Depends(require_auth)):
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "job_id":    job_id,
@@ -552,19 +582,19 @@ async def start_clip(req: ClipRequest, background_tasks: BackgroundTasks):
 
 
 @app.get("/api/status/{job_id}")
-async def get_status(job_id: str):
+async def get_status(job_id: str, _: None = Depends(require_auth)):
     if job_id not in jobs:
         raise HTTPException(404, "Job not found")
     return jobs[job_id]
 
 
 @app.get("/api/jobs")
-async def list_jobs():
+async def list_jobs(_: None = Depends(require_auth)):
     return list(jobs.values())
 
 
 @app.get("/clips/{job_id}/{filename}")
-async def serve_clip(job_id: str, filename: str):
+async def serve_clip(job_id: str, filename: str, _: None = Depends(require_auth)):
     clip_path = OUTPUT_DIR / job_id / filename
     if not clip_path.exists():
         raise HTTPException(404, "Clip not found")
@@ -572,7 +602,7 @@ async def serve_clip(job_id: str, filename: str):
 
 
 @app.get("/api/transcript/{job_id}")
-async def get_transcript(job_id: str):
+async def get_transcript(job_id: str, _: None = Depends(require_auth)):
     transcript_path = OUTPUT_DIR / job_id / "transcript.json"
     if not transcript_path.exists():
         raise HTTPException(404, "Transcript not found")

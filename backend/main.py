@@ -33,13 +33,17 @@ COOKIES_FILE = Path(__file__).parent.parent.parent / "cookies.txt"
 # youtubepot bot-bypass: only enabled when its sidecar service is configured
 POTTOKEN_URL = os.getenv("POTTOKEN_URL", "")
 
+YOUTUBE_CLIENT_ID     = os.getenv("YOUTUBE_CLIENT_ID", "")
+YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "")
+YOUTUBE_REDIRECT_URI  = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000/api/youtube/callback")
+
 from groq import Groq
 
 import base64
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 
 def require_auth(x_clip_auth: str = Header(default="")):
@@ -69,6 +73,8 @@ OUTPUT_DIR = BASE_DIR / "output"
 TEMP_DIR   = BASE_DIR / "temp"
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
+YOUTUBE_TOKEN_FILE = BASE_DIR / "youtube_token.json"
+_oauth_states: dict = {}
 
 # ── persistent job store ─────────────────────────────────────────────────────
 from jobs_store import load_jobs, save_jobs
@@ -88,6 +94,12 @@ class JobStatus(BaseModel):
     message: str
     clips: list = []
     error: Optional[str] = None
+
+class YouTubeUploadRequest(BaseModel):
+    title: str
+    description: str
+    tags: list = []
+    privacy_status: str = "public"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -654,6 +666,207 @@ async def get_transcript(job_id: str, _: None = Depends(require_auth)):
     if not transcript_path.exists():
         raise HTTPException(404, "Transcript not found")
     return json.loads(transcript_path.read_text())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# YOUTUBE INTEGRATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_youtube_credentials():
+    """Load stored YouTube OAuth credentials and refresh if expired."""
+    if not YOUTUBE_TOKEN_FILE.exists():
+        return None
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request as GRequest
+        token_data = json.loads(YOUTUBE_TOKEN_FILE.read_text())
+        creds = Credentials(
+            token=token_data.get("token"),
+            refresh_token=token_data.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=YOUTUBE_CLIENT_ID,
+            client_secret=YOUTUBE_CLIENT_SECRET,
+            scopes=["https://www.googleapis.com/auth/youtube.upload"],
+        )
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GRequest())
+            YOUTUBE_TOKEN_FILE.write_text(json.dumps({
+                "token": creds.token,
+                "refresh_token": creds.refresh_token,
+            }))
+        return creds
+    except Exception:
+        return None
+
+
+def do_youtube_upload(job_id: str, clip_index: int, req_data: dict):
+    """Upload a clip to YouTube (runs in background thread)."""
+    try:
+        from googleapiclient.discovery import build as yt_build
+        from googleapiclient.http import MediaFileUpload
+
+        creds = get_youtube_credentials()
+        if not creds:
+            jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "error", "error": "Not authenticated with YouTube"}
+            save_jobs(jobs)
+            return
+
+        clip = jobs[job_id]["clips"][clip_index]
+        clip_file = OUTPUT_DIR / job_id / clip["filename"]
+        if not clip_file.exists():
+            jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "error", "error": "Clip file not found"}
+            save_jobs(jobs)
+            return
+
+        youtube = yt_build("youtube", "v3", credentials=creds)
+
+        tags = req_data.get("tags") or clip.get("tags", [])
+        auto_desc = (
+            f"{clip.get('hook', '')}\n\n"
+            f"{clip.get('reason', '')}\n\n"
+            + " ".join(f"#{t}" for t in tags)
+        ).strip()
+        description = req_data.get("description") or auto_desc
+
+        body = {
+            "snippet": {
+                "title": req_data.get("title") or clip.get("title", "ClipForge Video"),
+                "description": description,
+                "tags": tags,
+                "categoryId": "22",
+            },
+            "status": {
+                "privacyStatus": req_data.get("privacy_status", "public"),
+            },
+        }
+
+        media = MediaFileUpload(str(clip_file), mimetype="video/mp4", chunksize=256 * 1024, resumable=True)
+        jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "uploading", "progress": 0}
+        save_jobs(jobs)
+
+        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                prog = int(status.resumable_progress / status.resumable_total * 100)
+                jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "uploading", "progress": prog}
+                save_jobs(jobs)
+
+        video_id = response["id"]
+        jobs[job_id]["clips"][clip_index]["yt_upload"] = {
+            "status": "done",
+            "progress": 100,
+            "video_id": video_id,
+            "url": f"https://youtube.com/watch?v={video_id}",
+        }
+        save_jobs(jobs)
+
+    except Exception as e:
+        jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "error", "error": str(e)}
+        save_jobs(jobs)
+
+
+@app.get("/api/youtube/status")
+async def youtube_status(_: None = Depends(require_auth)):
+    creds = get_youtube_credentials()
+    if not creds:
+        return {"connected": False}
+    try:
+        from googleapiclient.discovery import build as yt_build
+        youtube = yt_build("youtube", "v3", credentials=creds)
+        ch = youtube.channels().list(part="snippet", mine=True).execute()
+        items = ch.get("items", [])
+        if items:
+            return {"connected": True, "channel_name": items[0]["snippet"]["title"]}
+        return {"connected": True}
+    except Exception:
+        return {"connected": False}
+
+
+@app.get("/api/youtube/auth")
+async def youtube_auth(_: None = Depends(require_auth)):
+    if not YOUTUBE_CLIENT_ID or not YOUTUBE_CLIENT_SECRET:
+        raise HTTPException(400, "YouTube OAuth not configured. Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env")
+    try:
+        from google_auth_oauthlib.flow import Flow
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": YOUTUBE_CLIENT_ID,
+                    "client_secret": YOUTUBE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [YOUTUBE_REDIRECT_URI],
+                }
+            },
+            scopes=["https://www.googleapis.com/auth/youtube.upload"],
+        )
+        flow.redirect_uri = YOUTUBE_REDIRECT_URI
+        auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
+        _oauth_states[state] = True
+        return {"auth_url": auth_url}
+    except Exception as e:
+        raise HTTPException(500, f"OAuth setup failed: {e}")
+
+
+@app.get("/api/youtube/callback")
+async def youtube_callback(code: str = None, state: str = None, error: str = None):
+    if error:
+        return HTMLResponse(f"<script>window.opener?.postMessage({{type:'youtube_auth_error',error:'{error}'}},'*');window.close();</script>")
+    if not code or state not in _oauth_states:
+        return HTMLResponse("<script>window.opener?.postMessage({type:'youtube_auth_error',error:'Invalid state'},'*');window.close();</script>")
+    try:
+        from google_auth_oauthlib.flow import Flow
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": YOUTUBE_CLIENT_ID,
+                    "client_secret": YOUTUBE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [YOUTUBE_REDIRECT_URI],
+                }
+            },
+            scopes=["https://www.googleapis.com/auth/youtube.upload"],
+            state=state,
+        )
+        flow.redirect_uri = YOUTUBE_REDIRECT_URI
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        YOUTUBE_TOKEN_FILE.write_text(json.dumps({
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+        }))
+        _oauth_states.pop(state, None)
+        return HTMLResponse("<script>window.opener?.postMessage({type:'youtube_auth_success'},'*');window.close();</script>")
+    except Exception as e:
+        return HTMLResponse(f"<script>window.opener?.postMessage({{type:'youtube_auth_error',error:'{str(e)}'}},'*');window.close();</script>")
+
+
+@app.post("/api/youtube/upload/{job_id}/{clip_index}")
+async def start_youtube_upload(
+    job_id: str, clip_index: int, req: YouTubeUploadRequest,
+    background_tasks: BackgroundTasks, _: None = Depends(require_auth),
+):
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    if clip_index >= len(jobs[job_id].get("clips", [])):
+        raise HTTPException(404, "Clip not found")
+    jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "queued", "progress": 0}
+    save_jobs(jobs)
+    background_tasks.add_task(do_youtube_upload, job_id, clip_index, req.model_dump())
+    return {"status": "queued"}
+
+
+@app.get("/api/youtube/upload_status/{job_id}/{clip_index}")
+async def get_youtube_upload_status(job_id: str, clip_index: int, _: None = Depends(require_auth)):
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    clips = jobs[job_id].get("clips", [])
+    if clip_index >= len(clips):
+        raise HTTPException(404, "Clip not found")
+    return clips[clip_index].get("yt_upload", {"status": "none"})
 
 
 # Serve frontend (must be last)

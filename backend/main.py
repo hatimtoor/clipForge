@@ -779,9 +779,9 @@ async def youtube_status(_: None = Depends(require_auth)):
         items = ch.get("items", [])
         if items:
             return {"connected": True, "channel_name": items[0]["snippet"]["title"]}
-        return {"connected": True}
     except Exception:
-        return {"connected": False}
+        pass
+    return {"connected": True}
 
 
 @app.get("/api/youtube/auth")

@@ -804,7 +804,7 @@ async def youtube_auth(_: None = Depends(require_auth)):
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
         auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
-        _oauth_states[state] = True
+        _oauth_states[state] = getattr(flow, "code_verifier", None)
         return {"auth_url": auth_url}
     except Exception as e:
         raise HTTPException(500, f"OAuth setup failed: {e}")
@@ -832,7 +832,8 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
             state=state,
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
-        flow.fetch_token(code=code)
+        code_verifier = _oauth_states.get(state)
+        flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
         YOUTUBE_TOKEN_FILE.write_text(json.dumps({
             "token": creds.token,

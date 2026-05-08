@@ -134,24 +134,30 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
     cmd.append(url)
 
-    _pct_re = re.compile(r'\[download\]\s+(\d+\.?\d*)%')
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", bufsize=1,
+    _pct_re = re.compile(rb'\[download\]\s+(\d+\.?\d*)%')
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
-    stderr_lines = []
-    for line in proc.stdout:
-        stderr_lines.append(line)
-        m = _pct_re.search(line)
-        if m:
-            pct = float(m.group(1))
-            overall = 5 + int(pct * 0.13)  # maps 0-100% → 5-18%
-            update_job(job_id, progress=overall, message=f"Downloading video... {pct:.0f}%")
-    proc.wait()
+    output_tail = []
+    try:
+        async for raw in proc.stdout:
+            output_tail.append(raw)
+            if len(output_tail) > 40:
+                output_tail.pop(0)
+            m = _pct_re.search(raw)
+            if m:
+                pct = float(m.group(1))
+                overall = 5 + int(pct * 0.13)
+                update_job(job_id, progress=overall, message=f"Downloading video... {pct:.0f}%")
+    except asyncio.CancelledError:
+        proc.terminate()
+        raise
+    await proc.wait()
     if proc.returncode != 0:
-        raise RuntimeError(f"yt-dlp failed: {''.join(stderr_lines[-20:])}")
+        tail = b"".join(output_tail).decode("utf-8", errors="replace")
+        raise RuntimeError(f"yt-dlp failed: {tail[-500:]}")
     update_job(job_id, progress=20, message="Download complete, preparing transcription...")
     return video_path
 

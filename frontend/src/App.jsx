@@ -391,9 +391,10 @@ function PreviewButton({ isActive, onClick }) {
 
 // ── YouTube Upload Modal ──────────────────────────────────────────────────────
 function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
-  const [title, setTitle] = useState(clip.title || "");
+  const isShort = (clip.duration || 0) <= 60;
+  const [title, setTitle] = useState((clip.title || "") + (isShort ? " #Shorts" : ""));
   const [description, setDescription] = useState(
-    [clip.hook, clip.reason, (clip.tags || []).map(t => `#${t}`).join(" ")]
+    [clip.hook, clip.reason, (clip.tags || []).map(t => `#${t}`).join(" "), isShort ? "#Shorts" : ""]
       .filter(Boolean).join("\n\n")
   );
   const [tags, setTags] = useState((clip.tags || []).join(", "));
@@ -439,8 +440,9 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
     >
       <div style={{ background: "#111", border: "2px solid #2a2a2a", borderRadius: 10, padding: "1.75rem", width: "100%", maxWidth: 480, boxShadow: "6px 6px 0 #1a1a1a", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
-          <h2 style={{ fontFamily: "Space Mono, monospace", fontWeight: 700, color: "#fff", margin: 0, fontSize: "1rem" }}>
+          <h2 style={{ fontFamily: "Space Mono, monospace", fontWeight: 700, color: "#fff", margin: 0, fontSize: "1rem", display: "flex", alignItems: "center", gap: 8 }}>
             Upload to <span style={{ color: "#ff4444" }}>YouTube</span>
+            {isShort && <span style={{ background: "#ff444420", color: "#ff4444", fontSize: "10px", padding: "2px 7px", borderRadius: 4, border: "1px solid #ff444440", fontFamily: "Space Mono, monospace", fontWeight: 700 }}>SHORT</span>}
           </h2>
           {!uploading && <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", fontSize: "1.3rem", padding: "0 4px", lineHeight: 1 }}>×</button>}
         </div>

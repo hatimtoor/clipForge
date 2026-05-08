@@ -454,6 +454,99 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     output_path.write_text(ass_content, encoding="utf-8")
 
 
+# ── smart speaker-tracking crop ───────────────────────────────────────────────
+
+def sample_face_positions(
+    video_path: Path,
+    clip_start: float,
+    clip_end: float,
+    src_w: int,
+    src_h: int,
+    sample_interval: float = 1.0,
+) -> list:
+    """Sample frames and detect face positions. Returns [(rel_time, crop_x), ...]."""
+    try:
+        import cv2
+    except ImportError:
+        print("opencv-python-headless not installed — using center crop")
+        return []
+
+    crop_w = min(int(src_h * 9 / 16), src_w)
+    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    cap = cv2.VideoCapture(str(video_path))
+    results = []
+    t = clip_start
+    while t < clip_end:
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+        gray  = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+        if len(faces) > 0:
+            fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+            face_cx = (fx + fw // 2) * 2  # scale back to full resolution
+            crop_x  = max(0, min(face_cx - crop_w // 2, src_w - crop_w))
+            results.append((round(t - clip_start, 3), crop_x))
+        t += sample_interval
+    cap.release()
+    return results
+
+
+def smooth_crop_trajectory(
+    detections: list,
+    clip_duration: float,
+    fallback_crop_x: int,
+    max_speed_px_per_s: float = 80.0,
+) -> list:
+    """
+    Convert sparse detections to a smooth sendcmd-ready trajectory.
+    Returns [(time_s, crop_x), ...] with 0.0 and clip_duration bookends.
+    """
+    if not detections:
+        return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
+
+    # Outlier rejection: drop samples >200px from 3-sample rolling median
+    xs = [x for _, x in detections]
+    filtered = []
+    for i, (t, x) in enumerate(detections):
+        window = xs[max(0, i-1):i+2]
+        median = sorted(window)[len(window) // 2]
+        if abs(x - median) <= 200:
+            filtered.append((t, x))
+
+    if not filtered:
+        return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
+
+    # Bookend at 0 and clip_duration
+    if filtered[0][0] > 0:
+        filtered.insert(0, (0.0, filtered[0][1]))
+    if filtered[-1][0] < clip_duration:
+        filtered.append((round(clip_duration, 3), filtered[-1][1]))
+
+    # Rate-limit: max max_speed_px_per_s pixels/second
+    smoothed = [filtered[0]]
+    for i in range(1, len(filtered)):
+        t_prev, x_prev = smoothed[-1]
+        t_cur,  x_cur  = filtered[i]
+        dt = max(t_cur - t_prev, 0.001)
+        max_delta = int(max_speed_px_per_s * dt)
+        x_cur = x_prev + max(-max_delta, min(max_delta, x_cur - x_prev))
+        smoothed.append((t_cur, x_cur))
+
+    return smoothed
+
+
+def write_sendcmd_file(trajectory: list, output_path: Path) -> None:
+    """Write FFmpeg sendcmd file that sets crop x at each keyframe."""
+    lines = []
+    for i, (t, x) in enumerate(trajectory):
+        t_end = trajectory[i + 1][0] - 0.001 if i + 1 < len(trajectory) else t + 3600
+        lines.append(f"{t:.3f},{t_end:.3f} [ALL] crop x {x};")
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 # ── cut clips + burn subtitles ────────────────────────────────────────────────
 async def create_clips(
     video_path: Path,
@@ -484,10 +577,10 @@ async def create_clips(
         src_w = int(vstream["width"])  if vstream else 1920
         src_h = int(vstream["height"]) if vstream else 1080
 
-        # Crop to 9:16 centered then scale to 1080x1920
+        # Crop to 9:16 then scale to 1080x1920
         crop_h = src_h
-        crop_w = int(src_h * 9 / 16)
-        crop_x = max(0, (src_w - crop_w) // 2)
+        crop_w = min(int(src_h * 9 / 16), src_w)
+        center_crop_x = max(0, (src_w - crop_w) // 2)
 
         # Final output resolution
         out_w = 1080
@@ -508,20 +601,38 @@ async def create_clips(
         clip_path = OUTPUT_DIR / job_id / clip_filename
         clip_path.parent.mkdir(exist_ok=True)
 
-        # Use just the filename for the ASS filter — avoids Windows drive-letter
-        # colon being parsed as a filter option separator (e.g. "C:" → "C" + option)
+        # basename-only for filter paths — avoids Windows drive-letter colon issue
         ass_filename = ass_path.name
+
+        # Smart speaker-tracking crop
+        detections  = sample_face_positions(video_path, start, end, src_w, src_h)
+        trajectory  = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x)
+        is_dynamic  = len(set(x for _, x in trajectory)) > 1
+
+        if is_dynamic:
+            sendcmd_path = job_dir / f"clip_{idx}_crop.txt"
+            write_sendcmd_file(trajectory, sendcmd_path)
+            sendcmd_filename = sendcmd_path.name
+            vf_string = (
+                f"sendcmd=f={sendcmd_filename},"
+                f"crop={crop_w}:{crop_h}:0:0,"
+                f"scale={out_w}:{out_h},"
+                f"ass={ass_filename}"
+            )
+        else:
+            static_x = trajectory[0][1]
+            vf_string = (
+                f"crop={crop_w}:{crop_h}:{static_x}:0,"
+                f"scale={out_w}:{out_h},"
+                f"ass={ass_filename}"
+            )
 
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-ss", str(start),
             "-i", str(video_path),
             "-t", str(dur),
-            "-vf", (
-                f"crop={crop_w}:{crop_h}:{crop_x}:0,"
-                f"scale={out_w}:{out_h},"
-                f"ass={ass_filename}"
-            ),
+            "-vf", vf_string,
             "-c:v", "libx264",
             "-preset", "fast",
             "-crf", "23",

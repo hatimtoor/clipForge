@@ -151,6 +151,10 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
                 pct = float(m.group(1))
                 update_job(job_id, progress=5 + int(pct * 0.13),
                            message=f"Downloading video... {pct:.0f}%")
+            elif any(k in line for k in ("Merger", "Merging", "ffmpeg")):
+                update_job(job_id, progress=19, message="Merging video and audio streams...")
+            elif any(k in line for k in ("Deleting", "Destination", "Already downloaded")):
+                update_job(job_id, progress=19, message="Finalizing download...")
         p.wait()
         return p.returncode, "".join(tail)
 

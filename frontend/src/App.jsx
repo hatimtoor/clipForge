@@ -1128,6 +1128,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [pastJobs, setPastJobs] = useState([]);
   const [ytStatus, setYtStatus] = useState({ connected: false });
+  const [ytError, setYtError] = useState("");
   const pollRef = useRef(null);
 
   const isProcessing = loading || (job && !["done", "error"].includes(job?.status));
@@ -1149,17 +1150,27 @@ export default function App() {
   };
 
   const handleConnectYouTube = async () => {
+    setYtError("");
     try {
       const res = await authFetch(`${API}/api/youtube/auth`);
       const data = await res.json();
-      if (!data.auth_url) return;
+      if (!res.ok) {
+        setYtError(data.detail || "YouTube auth failed. Check server logs.");
+        return;
+      }
+      if (!data.auth_url) {
+        setYtError("No auth URL returned. Are YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET set in .env?");
+        return;
+      }
       window.open(data.auth_url, "youtube_auth", "width=600,height=700,scrollbars=yes,resizable=yes");
       const onMessage = (e) => {
         if (e.data?.type === "youtube_auth_success") { window.removeEventListener("message", onMessage); fetchYtStatus(); }
-        else if (e.data?.type === "youtube_auth_error") { window.removeEventListener("message", onMessage); }
+        else if (e.data?.type === "youtube_auth_error") { window.removeEventListener("message", onMessage); setYtError(e.data.error || "Auth failed"); }
       };
       window.addEventListener("message", onMessage);
-    } catch {}
+    } catch (e) {
+      setYtError("Cannot reach server.");
+    }
   };
 
   useEffect(() => { if (authed) fetchPastJobs(); }, [authed]);
@@ -1277,11 +1288,14 @@ export default function App() {
                 {ytStatus.channel_name || "YouTube"}
               </div>
             ) : (
-              <button onClick={handleConnectYouTube}
-                style={{ background: "transparent", border: "2px solid #2a2a2a", color: "#555", borderRadius: 6, padding: "0.4rem 0.7rem", cursor: "pointer", fontSize: "11px", fontFamily: "Space Mono, monospace", fontWeight: 700, transition: "border-color 0.15s, color 0.15s" }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = "#ff4444"; e.currentTarget.style.color = "#ff4444"; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a2a2a"; e.currentTarget.style.color = "#555"; }}
-              >+ YouTube</button>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+                <button onClick={handleConnectYouTube}
+                  style={{ background: "transparent", border: "2px solid #2a2a2a", color: "#555", borderRadius: 6, padding: "0.4rem 0.7rem", cursor: "pointer", fontSize: "11px", fontFamily: "Space Mono, monospace", fontWeight: 700, transition: "border-color 0.15s, color 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#ff4444"; e.currentTarget.style.color = "#ff4444"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a2a2a"; e.currentTarget.style.color = "#555"; }}
+                >+ YouTube</button>
+                {ytError && <span style={{ color: "#e53e3e", fontSize: "10px", fontFamily: "Outfit, sans-serif", maxWidth: 160, textAlign: "right", lineHeight: 1.3 }}>{ytError}</span>}
+              </div>
             )}
             <button
               title="Sign out"

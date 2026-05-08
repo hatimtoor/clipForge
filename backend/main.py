@@ -749,7 +749,8 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict):
         while response is None:
             status, response = request.next_chunk()
             if status:
-                prog = int(status.resumable_progress / status.resumable_total * 100)
+                total = getattr(status, "total_size", None) or getattr(status, "resumable_total", None)
+                prog = int(status.resumable_progress / total * 100) if total else 0
                 jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "uploading", "progress": prog}
                 save_jobs(jobs)
 

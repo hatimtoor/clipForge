@@ -126,16 +126,32 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         "--merge-output-format", "mp4",
         "-o", str(video_path),
         "--no-playlist",
+        "--newline",  # one progress line per update
     ]
     if COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
     if POTTOKEN_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
     cmd.append(url)
-    update_job(job_id, progress=8, message="Downloading video...")
-    code, out, err = run_cmd(cmd)
-    if code != 0:
-        raise RuntimeError(f"yt-dlp failed: {err}")
+
+    _pct_re = re.compile(r'\[download\]\s+(\d+\.?\d*)%')
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+    )
+    stderr_lines = []
+    for line in proc.stdout:
+        stderr_lines.append(line)
+        m = _pct_re.search(line)
+        if m:
+            pct = float(m.group(1))
+            overall = 5 + int(pct * 0.13)  # maps 0-100% → 5-18%
+            update_job(job_id, progress=overall, message=f"Downloading video... {pct:.0f}%")
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(f"yt-dlp failed: {''.join(stderr_lines[-20:])}")
     update_job(job_id, progress=20, message="Download complete, preparing transcription...")
     return video_path
 
@@ -543,7 +559,7 @@ def write_sendcmd_file(trajectory: list, output_path: Path) -> None:
     lines = []
     for i, (t, x) in enumerate(trajectory):
         t_end = trajectory[i + 1][0] - 0.001 if i + 1 < len(trajectory) else t + 3600
-        lines.append(f"{t:.3f},{t_end:.3f} [ALL] crop x {x};")
+        lines.append(f"{t:.3f}-{t_end:.3f} crop x {x};")
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 

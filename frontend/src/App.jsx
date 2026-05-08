@@ -913,18 +913,33 @@ function ProcessingTab({ job, onDone, ytConnected }) {
   }
 
   const inProgress = !["done", "error"].includes(job.status);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!inProgress) { setElapsed(0); return; }
+    const t = setInterval(() => setElapsed(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [inProgress]);
+  const elapsedStr = elapsed >= 60
+    ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+    : `${elapsed}s`;
+
   return (
     <div style={{
       background: "#111111", border: "1px solid #2a2a2a",
       borderRadius: 10, padding: "1.75rem",
     }}>
-      <h2 style={{
-        fontFamily: "Space Mono, monospace", fontWeight: 700,
-        color: "#16c74a", margin: "0 0 0.2rem", fontSize: "1rem",
-        letterSpacing: "0.04em",
-      }}>
-        Processing...
-      </h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.2rem" }}>
+        <h2 style={{
+          fontFamily: "Space Mono, monospace", fontWeight: 700,
+          color: "#16c74a", margin: 0, fontSize: "1rem",
+          letterSpacing: "0.04em",
+        }}>
+          Processing...
+        </h2>
+        <span style={{ color: "#444", fontSize: "0.72rem", fontFamily: "Space Mono, monospace" }}>
+          {elapsedStr}
+        </span>
+      </div>
       {job.url && (
         <p style={{
           color: "#444", fontSize: "0.75rem", fontFamily: "Outfit, sans-serif",
@@ -943,7 +958,7 @@ function ProcessingTab({ job, onDone, ytConnected }) {
         color: "#444", fontSize: "0.78rem", fontFamily: "Outfit, sans-serif",
         textAlign: "center", margin: 0,
       }}>
-        Transcription may take 5–10 minutes depending on video length.
+        Large videos can take 5–10 minutes. The bar moves as each stage completes.
       </p>
     </div>
   );

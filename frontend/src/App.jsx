@@ -242,16 +242,15 @@ function PhaseSteps({ status }) {
         const isComplete = isDone || i < currentIdx;
         return (
           <div key={step.key} style={{
-            flex:1, padding:"10px 4px", textAlign:"center",
-            background: isActive ? step.color : isComplete ? C.signal : C.cream2,
+            flex:1, padding:"12px 4px", textAlign:"center",
+            background: isComplete || isActive ? step.color : C.cream2,
             border: BORDER,
             boxShadow: isActive ? `4px 4px 0 ${C.ink}` : `2px 2px 0 ${C.ink}`,
             transform: isActive ? "translate(-2px,-2px)" : "none",
             transition: "transform .1s, box-shadow .1s",
           }}>
-            <div className="pixel" style={{fontSize:9, color: isComplete ? C.signalDeep : C.dim, marginBottom:5}}>{step.num}</div>
-            <div className="pixel" style={{fontSize:7, color: isActive ? C.ink : isComplete ? C.signalDeep : C.dim}}>
-              {isComplete && !isActive ? "✓ " : ""}{step.label}
+            <div className="pixel" style={{fontSize:7, color: C.ink}}>
+              {step.label}
             </div>
           </div>
         );
@@ -282,16 +281,10 @@ function SegmentedProgressBar({ displayProgress, status }) {
 
         return (
           <div key={block.key} style={{flex:1,display:"flex",flexDirection:"column",gap:4}}>
-            <div className="pixel" style={{
-              fontSize:7, textAlign:"center",
-              color: isActive ? C.ink : isComplete ? C.signalDeep : C.dim,
-            }}>
-              {block.label}
-            </div>
             <div style={{height:22,background:C.paper,border:`2px solid ${C.ink}`,padding:2,position:"relative",overflow:"hidden"}}>
               <div style={{
                 height:"100%", width:`${fill}%`,
-                background: isComplete ? C.signal : block.color,
+                background: isComplete ? block.color : block.color,
                 transition:"width .08s linear",
                 position:"relative", overflow:"hidden",
               }}>
@@ -299,8 +292,7 @@ function SegmentedProgressBar({ displayProgress, status }) {
               </div>
             </div>
             <div className="pixel" style={{
-              fontSize:7, textAlign:"center",
-              color: isActive ? C.hotDeep : isComplete ? C.signalDeep : C.dim,
+              fontSize:7, textAlign:"center", color: C.ink,
             }}>
               {isActive ? `${Math.round(fill)}%` : isComplete ? "DONE" : "--"}
             </div>

@@ -221,7 +221,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
     audio_path = video_path.parent / "audio.mp3"
     cmd = [FFMPEG, "-y", "-i", str(video_path), "-q:a", "0", "-map", "a",
            "-ac", "1", "-ar", "16000", str(audio_path)]
-    code, _, err = run_cmd(cmd)
+    code, _, err = await asyncio.to_thread(run_cmd, cmd)
     if code != 0:
         log(job_id, f"Audio extraction FAILED: {err[-300:]}")
         raise RuntimeError(f"Audio extraction failed: {err}")
@@ -240,13 +240,15 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
     if file_size <= CHUNK_LIMIT:
         log(job_id, f"Audio is {file_size/1_048_576:.1f} MB — sending as single file to Whisper")
         update_job(job_id, progress=47, message="Transcribing audio via Groq Whisper...")
-        with open(audio_path, "rb") as f:
-            response = groq_client.audio.transcriptions.create(
-                file=("audio.mp3", f.read()),
+        audio_data = audio_path.read_bytes()
+        response = await asyncio.to_thread(
+            lambda: groq_client.audio.transcriptions.create(
+                file=("audio.mp3", audio_data),
                 model="whisper-large-v3",
                 response_format="verbose_json",
                 timestamp_granularities=["segment", "word"],
             )
+        )
         # Groq returns words at top level, segments as dicts
         top_words = []
         if hasattr(response, "words") and response.words:
@@ -284,7 +286,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
         # Get audio duration
         probe_cmd = [FFPROBE, "-v", "quiet", "-show_entries", "format=duration",
                      "-of", "csv=p=0", str(audio_path)]
-        _, duration_out, _ = run_cmd(probe_cmd)
+        _, duration_out, _ = await asyncio.to_thread(run_cmd, probe_cmd)
         total_duration = float(duration_out.strip())
 
         # Split into 10-minute chunks
@@ -303,15 +305,18 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             cmd = [FFMPEG, "-y", "-i", str(audio_path),
                    "-ss", str(chunk_start), "-t", str(chunk_duration),
                    "-ac", "1", "-ar", "16000", str(chunk_path)]
-            run_cmd(cmd)
+            await asyncio.to_thread(run_cmd, cmd)
 
-            with open(chunk_path, "rb") as f:
-                response = groq_client.audio.transcriptions.create(
-                    file=(f"chunk_{i}.mp3", f.read()),
+            chunk_data = chunk_path.read_bytes()
+            chunk_name = f"chunk_{i}.mp3"
+            response = await asyncio.to_thread(
+                lambda data=chunk_data, name=chunk_name: groq_client.audio.transcriptions.create(
+                    file=(name, data),
                     model="whisper-large-v3",
                     response_format="verbose_json",
                     timestamp_granularities=["segment", "word"],
                 )
+            )
 
             # Groq returns words at top level
             top_words = []
@@ -409,26 +414,53 @@ Return ONLY a JSON array. Each item must have:
 
 Return valid JSON array only, no markdown, no explanation."""
 
-        try:
-            client = Groq(api_key=GROQ_API_KEY)
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=2000,
-            )
-            raw = response.choices[0].message.content.strip()
+        async def _call_groq(temp=0.3):
+            def _sync(t=temp):
+                client = Groq(api_key=GROQ_API_KEY)
+                r = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=t,
+                    max_tokens=2000,
+                )
+                return r.choices[0].message.content.strip()
+            return await asyncio.to_thread(_sync)
+
+        def _parse_raw(raw: str):
+            # Strip markdown fences
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:]
                 raw = raw.strip()
-            chunk_clips = json.loads(raw)
+            # Try direct parse
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+            # Fallback: extract first [...] block with regex
+            m = re.search(r'\[.*\]', raw, re.DOTALL)
+            if m:
+                try:
+                    return json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    pass
+            return None
+
+        try:
+            raw = await _call_groq(temp=0.3)
+            chunk_clips = _parse_raw(raw)
+            if chunk_clips is None:
+                log(job_id, f"  chunk {chunk_idx+1} bad JSON on attempt 1, retrying with temp=0.1...")
+                raw = await _call_groq(temp=0.1)
+                chunk_clips = _parse_raw(raw)
+            if chunk_clips is None:
+                log(job_id, f"  chunk {chunk_idx+1} still bad JSON after retry — skipping. Raw: {raw[:300]}")
+                continue
             log(job_id, f"  → chunk {chunk_idx+1} returned {len(chunk_clips)} clip candidates")
             all_clips.extend(chunk_clips)
         except Exception as e:
-            log(job_id, f"  !!! Groq analysis failed on chunk {chunk_idx+1}: {e}")
-            raise RuntimeError(f"Groq analysis failed: {e}")
+            log(job_id, f"  !!! Groq API error on chunk {chunk_idx+1}: {e} — skipping chunk")
             continue
 
     # Sort by virality score and take top max_clips
@@ -707,7 +739,7 @@ async def create_clips(
             FFPROBE, "-v", "quiet", "-print_format", "json",
             "-show_streams", str(video_path)
         ]
-        _, probe_out, _ = run_cmd(probe_cmd)
+        _, probe_out, _ = await asyncio.to_thread(run_cmd, probe_cmd)
         probe = json.loads(probe_out)
         vstream = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
         src_w = int(vstream["width"])  if vstream else 1920
@@ -741,7 +773,7 @@ async def create_clips(
         ass_filename = ass_path.name
 
         # Smart speaker-tracking crop
-        detections  = sample_face_positions(video_path, start, end, src_w, src_h)
+        detections  = await asyncio.to_thread(sample_face_positions, video_path, start, end, src_w, src_h)
         log(job_id, f"  Face detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
         trajectory  = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
         is_dynamic  = len(set(x for _, x in trajectory)) > 1
@@ -781,7 +813,7 @@ async def create_clips(
         ]
 
         log(job_id, f"  Running FFmpeg for clip {idx+1}...")
-        code, _, err = run_cmd(ffmpeg_cmd, cwd=str(job_dir))
+        code, _, err = await asyncio.to_thread(run_cmd, ffmpeg_cmd, str(job_dir))
         if code != 0:
             log(job_id, f"  !!! FFmpeg FAILED for clip {idx+1}: {err[-300:]}")
             update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")

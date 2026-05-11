@@ -60,7 +60,6 @@ const SHADOW_SM = `3px 3px 0 ${C.ink}`;
 const BORDER = `3px solid ${C.ink}`;
 const BORDER_SM = `2px solid ${C.ink}`;
 
-const STAGES = ["downloading", "transcribing", "analyzing", "clipping", "done"];
 const STAGE_LABELS = { downloading:"DOWNLOAD", merging:"MERGE", transcribing:"TRANSCRIBE", analyzing:"ANALYZE", clipping:"CLIP", done:"DONE" };
 
 const KEYFRAMES = `
@@ -467,9 +466,6 @@ function ProcessingTab({ job, onReset, ytStatus, onYTUpload, refreshJob }) {
 }
 
 /*  LIVE PROCESSING  */
-// Max global progress each phase can creep to before server confirms next
-const PHASE_CEILINGS = { downloading: 36, merging: 39, transcribing: 64, analyzing: 76, clipping: 97 };
-
 // Segmented bar config — one block per phase
 const PHASE_BLOCKS = [
   { key: "downloading",  label: "DOWNLOAD",   color: C.hot },
@@ -845,7 +841,7 @@ function LoginScreen({ onLogin }) {
             <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={4}/>
             <div className="pixel" style={{fontSize:18,color:C.ink}}><span style={{color:C.hotDeep}}>CLIP</span>FORGE</div>
           </div>
-          <h1 className="pixel" style={{fontSize:22,color:C.ink,lineHeight:1.3,marginBottom:8}}>Hello, smith.</h1>
+          <h1 className="pixel" style={{fontSize:22,color:C.ink,lineHeight:1.3,marginBottom:8}}>Hello, Hatim.</h1>
           <p className="vt" style={{fontSize:20,color:C.dim2,marginBottom:24}}>Sign in to fire up the forge. -</p>
 
           <div style={{display:"flex",flexDirection:"column",gap:14}}>

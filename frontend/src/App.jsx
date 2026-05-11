@@ -224,6 +224,42 @@ const ProgressBar = ({ progress, color = C.hot }) => (
   </div>
 );
 
+/*  numbered step indicator boxes  */
+function PhaseSteps({ status }) {
+  const steps = [
+    { key: "downloading",  num: "01", label: "DOWNLOAD",   color: C.hot },
+    { key: "merging",      num: "02", label: "MERGE",      color: C.peach },
+    { key: "transcribing", num: "03", label: "TRANSCRIBE", color: C.amber },
+    { key: "analyzing",    num: "04", label: "ANALYZE",    color: C.lavender },
+    { key: "clipping",     num: "05", label: "CLIP",       color: C.signal },
+  ];
+  const isDone = status === "done";
+  const currentIdx = steps.findIndex(s => s.key === status);
+  return (
+    <div style={{display:"flex", gap:6}}>
+      {steps.map((step, i) => {
+        const isActive = !isDone && i === currentIdx;
+        const isComplete = isDone || i < currentIdx;
+        return (
+          <div key={step.key} style={{
+            flex:1, padding:"10px 4px", textAlign:"center",
+            background: isActive ? step.color : isComplete ? C.signal : C.cream2,
+            border: BORDER,
+            boxShadow: isActive ? `4px 4px 0 ${C.ink}` : `2px 2px 0 ${C.ink}`,
+            transform: isActive ? "translate(-2px,-2px)" : "none",
+            transition: "transform .1s, box-shadow .1s",
+          }}>
+            <div className="pixel" style={{fontSize:9, color: isComplete ? C.signalDeep : C.dim, marginBottom:5}}>{step.num}</div>
+            <div className="pixel" style={{fontSize:7, color: isActive ? C.ink : isComplete ? C.signalDeep : C.dim}}>
+              {isComplete && !isActive ? "✓ " : ""}{step.label}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /*  segmented 4-block progress bar  */
 function SegmentedProgressBar({ displayProgress, status }) {
   const isDone = status === "done";
@@ -524,8 +560,9 @@ function LiveProcessing({ job, onCancel }) {
             <div style={{position:"absolute",top:22,left:0,width:14,height:6,background:"#fff",border:`2px solid ${C.ink}`,animation:"drift 24s 3s linear infinite"}}/>
           </div>
 
-          <div style={{marginTop:22}}>
+          <div style={{marginTop:22, display:"flex", flexDirection:"column", gap:10}}>
             <SegmentedProgressBar displayProgress={displayProgress} status={job.status}/>
+            <PhaseSteps status={job.status}/>
           </div>
         </PixelCard>
 

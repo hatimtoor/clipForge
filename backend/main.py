@@ -27,6 +27,13 @@ _local_venv_exe = "yt-dlp.exe" if _sys.platform == "win32" else "yt-dlp"
 _local_venv = Path(__file__).parent.parent.parent / "venv" / _local_venv_bin / _local_venv_exe
 YTDLP = _shutil.which("yt-dlp") or (str(_local_venv) if _local_venv.exists() else "/home/ubuntu/clipforge/venv/bin/yt-dlp")
 
+# ffmpeg/ffprobe binaries: prefer PATH, then winget install location, then server fallback
+_WINGET_FFMPEG = Path.home() / "AppData/Local/Microsoft/WinGet/Packages"
+_ffmpeg_winget = next(_WINGET_FFMPEG.glob("Gyan.FFmpeg*/*/bin/ffmpeg.exe"), None) if _WINGET_FFMPEG.exists() else None
+_ffprobe_winget = next(_WINGET_FFMPEG.glob("Gyan.FFmpeg*/*/bin/ffprobe.exe"), None) if _WINGET_FFMPEG.exists() else None
+FFMPEG  = _shutil.which("ffmpeg")  or (str(_ffmpeg_winget)  if _ffmpeg_winget  else "ffmpeg")
+FFPROBE = _shutil.which("ffprobe") or (str(_ffprobe_winget) if _ffprobe_winget else "ffprobe")
+
 # Cookies file for yt-dlp (YouTube auth)
 COOKIES_FILE = Path(__file__).parent.parent.parent / "cookies.txt"
 
@@ -106,6 +113,10 @@ class YouTubeUploadRequest(BaseModel):
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def log(job_id: str, msg: str):
+    print(f"[{job_id[:8]}] {msg}", flush=True)
+
+
 def update_job(job_id: str, **kwargs):
     jobs[job_id].update(kwargs)
     save_jobs(jobs)
@@ -118,7 +129,8 @@ def run_cmd(cmd: list[str], cwd=None) -> tuple[int, str, str]:
 
 # ── download ──────────────────────────────────────────────────────────────────
 async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
-    update_job(job_id, status="downloading", progress=5, message="Downloading video...")
+    log(job_id, f"Downloading: {url}")
+    update_job(job_id, status="downloading", progress=2, message="Downloading video...")
     video_path = job_dir / "video.mp4"
     cmd = [
         YTDLP,
@@ -132,9 +144,15 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         cmd += ["--cookies", str(COOKIES_FILE)]
     if POTTOKEN_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
+    # Tell yt-dlp exactly where ffmpeg is so it can merge streams reliably
+    cmd += ["--ffmpeg-location", str(Path(FFMPEG).parent)]
     cmd.append(url)
 
     _pct_re = re.compile(r'\[download\]\s+(\d+\.?\d*)%')
+    # Two-stream tracking: yt-dlp downloads video then audio separately
+    # Stream 1 (video) maps to progress 2-25, stream 2 (audio) maps to 25-36
+    _stream = [0]           # current stream index (0-based)
+    _last_logged_pct = [-10]
 
     def _run_download():
         p = subprocess.Popen(
@@ -146,30 +164,54 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
             tail.append(line)
             if len(tail) > 40:
                 tail.pop(0)
-            m = _pct_re.search(line)
-            if m:
+            stripped = line.strip()
+            if stripped:
+                print(f"[{job_id[:8]}] ytdlp> {stripped}", flush=True)
+            if "[download] Destination:" in line:
+                _stream[0] += 1
+                _last_logged_pct[0] = -10
+                label = "video" if _stream[0] == 1 else "audio"
+                log(job_id, f"Downloading {label} stream (stream {_stream[0]})...")
+            elif m := _pct_re.search(line):
                 pct = float(m.group(1))
-                update_job(job_id, progress=5 + int(pct * 0.13),
-                           message=f"Downloading video... {pct:.0f}%")
-            elif any(k in line for k in ("Merger", "Merging", "ffmpeg")):
-                update_job(job_id, progress=19, message="Merging video and audio streams...")
-            elif any(k in line for k in ("Deleting", "Destination", "Already downloaded")):
-                update_job(job_id, progress=19, message="Finalizing download...")
+                if pct - _last_logged_pct[0] >= 10:
+                    label = "video" if _stream[0] <= 1 else "audio"
+                    log(job_id, f"{label} stream: {pct:.0f}%")
+                    _last_logged_pct[0] = pct
+                # Stream 1 → progress 2-25, stream 2 → progress 25-36
+                if _stream[0] <= 1:
+                    prog = 2 + int(pct * 0.23)
+                    msg = f"Downloading video... {pct:.0f}%"
+                else:
+                    prog = 25 + int(pct * 0.11)
+                    msg = f"Downloading audio... {pct:.0f}%"
+                update_job(job_id, progress=prog, message=msg)
+            elif "[Merger]" in line or "[VideoConvertor]" in line:
+                log(job_id, f"Merge started: {line.strip()}")
+                update_job(job_id, status="merging", progress=37, message="Merging video and audio streams...")
+            elif "Deleting original file" in line or "Already downloaded" in line:
+                log(job_id, "Merge finalizing...")
+                update_job(job_id, status="merging", progress=39, message="Finalizing download...")
         p.wait()
         return p.returncode, "".join(tail)
 
     loop = asyncio.get_event_loop()
     returncode, tail = await loop.run_in_executor(None, _run_download)
     if returncode != 0:
+        log(job_id, f"yt-dlp failed (exit {returncode})")
         raise RuntimeError(f"yt-dlp failed: {tail[-500:]}")
-    update_job(job_id, progress=20, message="Download complete, preparing transcription...")
+    if not video_path.exists():
+        log(job_id, "yt-dlp exited 0 but video.mp4 missing — merge likely failed")
+        raise RuntimeError(f"yt-dlp exited 0 but output file missing. Last output: {tail[-500:]}")
+    update_job(job_id, progress=40, message="Download complete, preparing transcription...")
     return video_path
 
 
 # ── transcribe with faster-whisper ───────────────────────────────────────────
 async def transcribe(video_path: Path, job_id: str) -> dict:
     """Transcribe using Groq Whisper API with chunking for large files."""
-    update_job(job_id, status="transcribing", progress=30, message="Extracting audio...")
+    log(job_id, "Extracting audio from video...")
+    update_job(job_id, status="transcribing", progress=41, message="Extracting audio...")
 
     import math
 
@@ -177,22 +219,27 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
 
     # Extract audio as mp3 (much smaller than video)
     audio_path = video_path.parent / "audio.mp3"
-    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-q:a", "0", "-map", "a",
+    cmd = [FFMPEG, "-y", "-i", str(video_path), "-q:a", "0", "-map", "a",
            "-ac", "1", "-ar", "16000", str(audio_path)]
     code, _, err = run_cmd(cmd)
     if code != 0:
+        log(job_id, f"Audio extraction FAILED: {err[-300:]}")
         raise RuntimeError(f"Audio extraction failed: {err}")
 
-    update_job(job_id, progress=35, message="Audio extracted, sending to Groq Whisper...")
+    audio_mb = audio_path.stat().st_size / 1_048_576
+    log(job_id, f"Audio extracted → audio.mp3 ({audio_mb:.1f} MB)")
+    update_job(job_id, progress=44, message="Audio extracted, sending to Groq Whisper...")
 
     # Check file size — chunk if over 20MB
     file_size = audio_path.stat().st_size
     CHUNK_LIMIT = 20 * 1024 * 1024  # 20MB
 
     all_segments = []
+    hallucinations_dropped = 0
 
     if file_size <= CHUNK_LIMIT:
-        update_job(job_id, progress=38, message="Transcribing audio via Groq Whisper...")
+        log(job_id, f"Audio is {file_size/1_048_576:.1f} MB — sending as single file to Whisper")
+        update_job(job_id, progress=47, message="Transcribing audio via Groq Whisper...")
         with open(audio_path, "rb") as f:
             response = groq_client.audio.transcriptions.create(
                 file=("audio.mp3", f.read()),
@@ -215,6 +262,14 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             s_end = seg.get("end", 0) if isinstance(seg, dict) else seg.end
             s_text = (seg.get("text", "") if isinstance(seg, dict) else seg.text).strip()
 
+            # Drop hallucinated segments: no real speech, or model was very uncertain
+            no_speech  = seg.get("no_speech_prob", 0.0) if isinstance(seg, dict) else getattr(seg, "no_speech_prob", 0.0)
+            avg_logprob = seg.get("avg_logprob", 0.0)  if isinstance(seg, dict) else getattr(seg, "avg_logprob", 0.0)
+            if no_speech > 0.4 or avg_logprob < -1.0:
+                log(job_id, f"  [hallucination] dropped seg '{s_text[:40]}' (no_speech={no_speech:.2f}, logprob={avg_logprob:.2f})")
+                hallucinations_dropped += 1
+                continue
+
             # Match words by start time — tolerant at both boundaries to avoid
             # dropping words that straddle segment edges
             seg_words = [w for w in top_words if w["start"] >= s_start - 0.05 and w["start"] < s_end + 0.3]
@@ -227,7 +282,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             })
     else:
         # Get audio duration
-        probe_cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+        probe_cmd = [FFPROBE, "-v", "quiet", "-show_entries", "format=duration",
                      "-of", "csv=p=0", str(audio_path)]
         _, duration_out, _ = run_cmd(probe_cmd)
         total_duration = float(duration_out.strip())
@@ -235,13 +290,17 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
         # Split into 10-minute chunks
         chunk_duration = 600
         num_chunks = math.ceil(total_duration / chunk_duration)
+        log(job_id, f"Audio is {file_size/1_048_576:.1f} MB — splitting into {num_chunks} chunks ({total_duration:.0f}s total)")
 
         for i in range(num_chunks):
             chunk_start = i * chunk_duration
             chunk_path = video_path.parent / f"chunk_{i}.mp3"
-            update_job(job_id, message=f"Transcribing part {i+1}/{num_chunks} via Groq Whisper...")
+            # chunked: 47-63 spread across chunks
+            chunk_prog = 47 + int((i / num_chunks) * 16)
+            log(job_id, f"Transcribing chunk {i+1}/{num_chunks} ({chunk_start:.0f}s – {min(chunk_start+chunk_duration, total_duration):.0f}s)...")
+            update_job(job_id, progress=chunk_prog, message=f"Transcribing part {i+1}/{num_chunks} via Groq Whisper...")
 
-            cmd = ["ffmpeg", "-y", "-i", str(audio_path),
+            cmd = [FFMPEG, "-y", "-i", str(audio_path),
                    "-ss", str(chunk_start), "-t", str(chunk_duration),
                    "-ac", "1", "-ar", "16000", str(chunk_path)]
             run_cmd(cmd)
@@ -269,6 +328,14 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
                 s_end = seg.get("end", 0) if isinstance(seg, dict) else seg.end
                 s_text = (seg.get("text", "") if isinstance(seg, dict) else seg.text).strip()
 
+                # Drop hallucinated segments
+                no_speech   = seg.get("no_speech_prob", 0.0) if isinstance(seg, dict) else getattr(seg, "no_speech_prob", 0.0)
+                avg_logprob = seg.get("avg_logprob", 0.0)    if isinstance(seg, dict) else getattr(seg, "avg_logprob", 0.0)
+                if no_speech > 0.4 or avg_logprob < -1.0:
+                    log(job_id, f"  [hallucination] dropped seg '{s_text[:40]}' (no_speech={no_speech:.2f}, logprob={avg_logprob:.2f})")
+                    hallucinations_dropped += 1
+                    continue
+
                 seg_words = [w for w in top_words if w["start"] >= s_start + chunk_start - 0.05 and w["start"] < s_end + chunk_start + 0.3]
 
                 all_segments.append({
@@ -281,13 +348,15 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             chunk_path.unlink(missing_ok=True)
 
     audio_path.unlink(missing_ok=True)
-    update_job(job_id, progress=50, message="Transcription complete, analyzing virality...")
+    log(job_id, f"Transcription complete: {len(all_segments)} segments kept, {hallucinations_dropped} hallucinations dropped")
+    update_job(job_id, progress=65, message="Transcription complete, analyzing virality...")
     return all_segments
 
 
 # ── virality analysis via Ollama ──────────────────────────────────────────────
 async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int) -> list:
-    update_job(job_id, status="analyzing", progress=55, message="AI is identifying viral moments...")
+    log(job_id, f"Analyzing virality: {len(segments)} segments, max_clips={max_clips}, dur={min_dur}-{max_dur}s")
+    update_job(job_id, status="analyzing", progress=66, message="AI is identifying viral moments...")
 
     # Build transcript lines
     transcript_lines = []
@@ -309,8 +378,11 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
     clips_per_chunk = max(2, max_clips // len(chunks) + 1)
     all_clips = []
 
+    log(job_id, f"Transcript split into {len(chunks)} chunk(s) for Groq Llama analysis")
     for chunk_idx, transcript_text in enumerate(chunks):
-        analysis_progress = 55 + int((chunk_idx / len(chunks)) * 10)
+        # analyzing: 66-77 spread across chunks
+        analysis_progress = 66 + int((chunk_idx / len(chunks)) * 11)
+        log(job_id, f"Sending chunk {chunk_idx+1}/{len(chunks)} to Groq Llama ({len(transcript_text)} chars)...")
         update_job(job_id, progress=analysis_progress, message=f"AI analyzing part {chunk_idx+1}/{len(chunks)}...")
 
         prompt = f"""You are a viral short-form content expert. Analyze this video transcript segment and identify the {clips_per_chunk} most viral-worthy moments.
@@ -352,14 +424,17 @@ Return valid JSON array only, no markdown, no explanation."""
                     raw = raw[4:]
                 raw = raw.strip()
             chunk_clips = json.loads(raw)
+            log(job_id, f"  → chunk {chunk_idx+1} returned {len(chunk_clips)} clip candidates")
             all_clips.extend(chunk_clips)
         except Exception as e:
+            log(job_id, f"  !!! Groq analysis failed on chunk {chunk_idx+1}: {e}")
             raise RuntimeError(f"Groq analysis failed: {e}")
             continue
 
     # Sort by virality score and take top max_clips
     all_clips.sort(key=lambda x: x.get("virality_score", 0), reverse=True)
     clips = all_clips[:max_clips]
+    log(job_id, f"Top {len(clips)} clips selected (scores: {[c.get('virality_score') for c in clips]})")
 
     # Validate & clamp durations
     valid = []
@@ -524,11 +599,18 @@ def smooth_crop_trajectory(
     detections: list,
     clip_duration: float,
     fallback_crop_x: int,
-    max_speed_px_per_s: float = 80.0,
+    crop_w: int,
+    src_w: int,
+    max_speed_px_per_s: float = 50.0,
+    dead_zone_ratio: float = 0.60,
 ) -> list:
     """
-    Convert sparse detections to a smooth sendcmd-ready trajectory.
-    Returns [(time_s, crop_x), ...] with 0.0 and clip_duration bookends.
+    Dead-zone lazy-pan crop trajectory.
+
+    The crop only moves when the face exits the central dead_zone_ratio of the
+    frame (default 60 %).  Inside that zone the crop holds still, eliminating
+    the constant micro-jitter of always chasing the face center.  When a pan IS
+    needed it eases smoothly at max_speed_px_per_s.
     """
     if not detections:
         return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
@@ -545,17 +627,39 @@ def smooth_crop_trajectory(
     if not filtered:
         return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
 
-    # Bookend at 0 and clip_duration
-    if filtered[0][0] > 0:
-        filtered.insert(0, (0.0, filtered[0][1]))
-    if filtered[-1][0] < clip_duration:
-        filtered.append((round(clip_duration, 3), filtered[-1][1]))
+    # Dead zone: only reposition when face exits the safe band
+    # detections store crop_x-if-centered, so face_cx = crop_x + crop_w//2
+    safe_margin = int((1.0 - dead_zone_ratio) / 2.0 * crop_w)  # px from each edge
+    current_x = fallback_crop_x
+    # Only add t=0 bookend if no detection starts at 0 (avoids duplicate timestamps)
+    keyframes = [] if (filtered and filtered[0][0] < 0.001) else [(0.0, current_x)]
 
-    # Rate-limit: max max_speed_px_per_s pixels/second
-    smoothed = [filtered[0]]
-    for i in range(1, len(filtered)):
+    for t, centered_x in filtered:
+        face_cx = centered_x + crop_w // 2
+        left_bound  = current_x + safe_margin
+        right_bound = current_x + crop_w - safe_margin
+
+        if left_bound <= face_cx <= right_bound:
+            # Face is comfortably inside frame — hold position
+            target_x = current_x
+        elif face_cx < left_bound:
+            # Drifting toward left edge — move just enough to hit safe zone edge
+            target_x = max(0, face_cx - safe_margin)
+        else:
+            # Drifting toward right edge
+            target_x = min(src_w - crop_w, face_cx - (crop_w - safe_margin))
+
+        current_x = target_x
+        keyframes.append((round(t, 3), target_x))
+
+    if keyframes[-1][0] < clip_duration:
+        keyframes.append((round(clip_duration, 3), current_x))
+
+    # Rate-limit movement for smooth pans
+    smoothed = [keyframes[0]]
+    for i in range(1, len(keyframes)):
         t_prev, x_prev = smoothed[-1]
-        t_cur,  x_cur  = filtered[i]
+        t_cur,  x_cur  = keyframes[i]
         dt = max(t_cur - t_prev, 0.001)
         max_delta = int(max_speed_px_per_s * dt)
         x_cur = x_prev + max(-max_delta, min(max_delta, x_cur - x_prev))
@@ -568,7 +672,10 @@ def write_sendcmd_file(trajectory: list, output_path: Path) -> None:
     """Write FFmpeg sendcmd file that sets crop x at each keyframe."""
     lines = []
     for i, (t, x) in enumerate(trajectory):
-        t_end = trajectory[i + 1][0] - 0.001 if i + 1 < len(trajectory) else t + 3600
+        if i + 1 < len(trajectory):
+            t_end = max(t + 0.001, trajectory[i + 1][0] - 0.001)
+        else:
+            t_end = t + 3600
         lines.append(f"{t:.3f}-{t_end:.3f} crop x {x};")
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -581,7 +688,8 @@ async def create_clips(
     job_dir: Path,
     job_id: str,
 ) -> list:
-    update_job(job_id, status="clipping", progress=70, message="Cutting clips and burning subtitles...")
+    log(job_id, f"Rendering {len(clip_defs)} clips...")
+    update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
 
     results = []
     for idx, clip in enumerate(clip_defs):
@@ -589,12 +697,14 @@ async def create_clips(
         end   = clip["end"]
         dur   = end - start
 
-        progress = 70 + int((idx / len(clip_defs)) * 25)
+        log(job_id, f"Clip {idx+1}/{len(clip_defs)}: '{clip['title']}' [{start:.1f}s – {end:.1f}s] ({dur:.1f}s)")
+        # clipping: 78-98 spread across clips
+        progress = 78 + int((idx / len(clip_defs)) * 20)
         update_job(job_id, progress=progress, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']}")
 
         # Get video dimensions (assume 16:9 source → crop to 9:16 for shorts)
         probe_cmd = [
-            "ffprobe", "-v", "quiet", "-print_format", "json",
+            FFPROBE, "-v", "quiet", "-print_format", "json",
             "-show_streams", str(video_path)
         ]
         _, probe_out, _ = run_cmd(probe_cmd)
@@ -632,8 +742,10 @@ async def create_clips(
 
         # Smart speaker-tracking crop
         detections  = sample_face_positions(video_path, start, end, src_w, src_h)
-        trajectory  = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x)
+        log(job_id, f"  Face detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
+        trajectory  = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
         is_dynamic  = len(set(x for _, x in trajectory)) > 1
+        log(job_id, f"  Crop mode: {'dynamic pan' if is_dynamic else 'static'} (x={trajectory[0][1]})")
 
         if is_dynamic:
             sendcmd_path = job_dir / f"clip_{idx}_crop.txt"
@@ -654,7 +766,7 @@ async def create_clips(
             )
 
         ffmpeg_cmd = [
-            "ffmpeg", "-y",
+            FFMPEG, "-y",
             "-ss", str(start),
             "-i", str(video_path),
             "-t", str(dur),
@@ -668,12 +780,14 @@ async def create_clips(
             str(clip_path),
         ]
 
+        log(job_id, f"  Running FFmpeg for clip {idx+1}...")
         code, _, err = run_cmd(ffmpeg_cmd, cwd=str(job_dir))
         if code != 0:
-            print(f"FFmpeg error for clip {idx}: {err}")
+            log(job_id, f"  !!! FFmpeg FAILED for clip {idx+1}: {err[-300:]}")
             update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
             continue
 
+        log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
         results.append({
             **clip,
             "filename": clip_filename,
@@ -691,13 +805,18 @@ async def create_clips(
 async def run_pipeline(job_id: str, req: ClipRequest):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
+    log(job_id, f"=== PIPELINE START === url={req.url}")
 
     try:
         # 1. Download
+        log(job_id, "--- PHASE 1: DOWNLOAD ---")
         video_path = await download_video(req.url, job_dir, job_id)
+        log(job_id, f"Download done → {video_path} ({video_path.stat().st_size / 1_048_576:.1f} MB)")
 
         # 2. Transcribe
+        log(job_id, "--- PHASE 2: TRANSCRIBE ---")
         segments = await transcribe(video_path, job_id)
+        log(job_id, f"Transcription done → {len(segments)} segments")
 
         # Save transcript alongside output clips so it survives temp cleanup
         out_dir = OUTPUT_DIR / job_id
@@ -705,12 +824,15 @@ async def run_pipeline(job_id: str, req: ClipRequest):
         (out_dir / "transcript.json").write_text(json.dumps(segments, indent=2))
 
         # 3. Virality analysis
+        log(job_id, "--- PHASE 3: ANALYZE ---")
         clips = await analyze_virality(
             segments, job_id,
             req.max_clips, req.min_duration, req.max_duration,
         )
+        log(job_id, f"Analysis done → {len(clips)} clips selected")
 
         # 4. Cut + subtitle
+        log(job_id, "--- PHASE 4: CLIP ---")
         final_clips = await create_clips(video_path, clips, segments, job_dir, job_id)
 
         update_job(
@@ -720,8 +842,10 @@ async def run_pipeline(job_id: str, req: ClipRequest):
             message=f"Done! {len(final_clips)} clips created.",
             clips=final_clips,
         )
+        log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
 
     except Exception as e:
+        log(job_id, f"!!! PIPELINE ERROR: {e}")
         update_job(job_id, status="error", progress=0, message="Pipeline failed", error=str(e))
         raise
     finally:

@@ -61,7 +61,7 @@ const BORDER = `3px solid ${C.ink}`;
 const BORDER_SM = `2px solid ${C.ink}`;
 
 const STAGES = ["downloading", "transcribing", "analyzing", "clipping", "done"];
-const STAGE_LABELS = { downloading:"DOWNLOAD", transcribing:"TRANSCRIBE", analyzing:"ANALYZE", clipping:"CLIP", done:"DONE" };
+const STAGE_LABELS = { downloading:"DOWNLOAD", merging:"MERGE", transcribing:"TRANSCRIBE", analyzing:"ANALYZE", clipping:"CLIP", done:"DONE" };
 
 const KEYFRAMES = `
   *,*::before,*::after{box-sizing:border-box;image-rendering:pixelated}
@@ -218,11 +218,62 @@ function Toggle({ on, setOn, label, hint }) {
 /*  progress bar  */
 const ProgressBar = ({ progress, color = C.hot }) => (
   <div style={{height:24,background:C.paper,border:BORDER,padding:3}}>
-    <div style={{height:"100%",width:`${progress}%`,background:color,borderRight:`2px solid ${C.ink}`,transition:"width .25s",position:"relative",overflow:"hidden"}}>
+    <div style={{height:"100%",width:`${progress}%`,background:color,borderRight:`2px solid ${C.ink}`,transition:"width .08s linear",position:"relative",overflow:"hidden"}}>
       <div style={{position:"absolute",inset:0,backgroundImage:"repeating-linear-gradient(45deg,rgba(0,0,0,.12) 0 4px,transparent 4px 8px)"}}/>
     </div>
   </div>
 );
+
+/*  segmented 4-block progress bar  */
+function SegmentedProgressBar({ displayProgress, status }) {
+  const isDone = status === "done";
+  const currentIdx = PHASE_BLOCKS.findIndex(b => b.key === status);
+
+  return (
+    <div style={{display:"flex",gap:6}}>
+      {PHASE_BLOCKS.map((block, i) => {
+        const [start, end] = PHASE_RANGES[block.key];
+        let fill;
+        if (isDone || i < currentIdx) {
+          fill = 100;
+        } else if (i === currentIdx) {
+          fill = Math.min(100, Math.max(0, (displayProgress - start) / (end - start) * 100));
+        } else {
+          fill = 0;
+        }
+        const isActive = !isDone && i === currentIdx;
+        const isComplete = isDone || i < currentIdx;
+
+        return (
+          <div key={block.key} style={{flex:1,display:"flex",flexDirection:"column",gap:4}}>
+            <div className="pixel" style={{
+              fontSize:7, textAlign:"center",
+              color: isActive ? C.ink : isComplete ? C.signalDeep : C.dim,
+            }}>
+              {block.label}
+            </div>
+            <div style={{height:22,background:C.paper,border:`2px solid ${C.ink}`,padding:2,position:"relative",overflow:"hidden"}}>
+              <div style={{
+                height:"100%", width:`${fill}%`,
+                background: isComplete ? C.signal : block.color,
+                transition:"width .08s linear",
+                position:"relative", overflow:"hidden",
+              }}>
+                {isActive && <div style={{position:"absolute",inset:0,backgroundImage:"repeating-linear-gradient(45deg,rgba(0,0,0,.15) 0 4px,transparent 4px 8px)"}}/>}
+              </div>
+            </div>
+            <div className="pixel" style={{
+              fontSize:7, textAlign:"center",
+              color: isActive ? C.hotDeep : isComplete ? C.signalDeep : C.dim,
+            }}>
+              {isActive ? `${Math.round(fill)}%` : isComplete ? "DONE" : "--"}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /*  header  */
 function Header({ tab, setTab, ytStatus, onConnectYT, onLogout, jobActive }) {
@@ -236,7 +287,7 @@ function Header({ tab, setTab, ytStatus, onConnectYT, onLogout, jobActive }) {
             <div className="pixel" style={{fontSize:22,color:C.ink,lineHeight:1}}>
               <span style={{color:C.hotDeep}}>CLIP</span><span>FORGE</span>
             </div>
-            <div className="vt" style={{fontSize:18,color:C.dim2,marginTop:4}}>> press start to forge</div>
+            <div className="vt" style={{fontSize:18,color:C.dim2,marginTop:4}}>{`>`} roll tape to forge</div>
           </div>
         </div>
         <div style={{flex:1}}/>
@@ -276,18 +327,18 @@ function NewClip({ url, setUrl, maxClips, setMaxClips, minDur, setMinDur, maxDur
     <div className="fade" style={{padding:"32px 32px 64px",maxWidth:1320,margin:"0 auto"}}>
       <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.55fr) minmax(0,1fr)",gap:32,alignItems:"start"}}>
         <PixelCard color={C.cream} padding={32}>
-          <div className="pixel" style={{fontSize:10,color:C.hotDeep,marginBottom:16}}>> NEW JOB - STANDING BY</div>
+          <div className="pixel" style={{fontSize:10,color:C.hotDeep,marginBottom:16}}>{`>`} NEW JOB - STANDING BY</div>
           <h1 className="pixel" style={{fontSize:30,lineHeight:1.3,color:C.ink,marginBottom:14}}>
             Drop a long video.<br/>
             <span style={{color:C.signalDeep}}>Pull the moments<br/>that travel.</span>
           </h1>
           <p className="vt" style={{fontSize:22,color:C.dim2,lineHeight:1.4,marginBottom:28,maxWidth:560}}>
-            ! One YouTube link in. <strong style={{color:C.ink}}>Up to 10 viral-ready shorts</strong> out -- captions burned, hooks scored, ready to ship. -
+            ⚡ One YouTube link in. <strong style={{color:C.ink}}>Up to 10 viral-ready shorts</strong> out -- captions burned, hooks scored, ready to ship. ✂️
           </p>
 
           <div className="pixel" style={{fontSize:9,color:C.dim2,marginBottom:8}}>YOUTUBE URL</div>
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",background:C.paper,border:BORDER,boxShadow:valid?`4px 4px 0 ${C.signalDeep}`:`4px 4px 0 ${C.ink}`,marginBottom:24,transition:"box-shadow .15s"}}>
-            <span className="pixel" style={{fontSize:12,color:valid?C.signalDeep:C.dim}}>></span>
+            <span className="pixel" style={{fontSize:12,color:valid?C.signalDeep:C.dim}}>{`>`}</span>
             <input value={url} onChange={e=>setUrl(e.target.value)}
               onKeyDown={e=>e.key==="Enter"&&valid&&onSubmit()}
               placeholder="https://youtube.com/watch?v="
@@ -314,8 +365,8 @@ function NewClip({ url, setUrl, maxClips, setMaxClips, minDur, setMinDur, maxDur
           )}
 
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:18,borderTop:`2px dashed ${C.ink}33`,gap:14,flexWrap:"wrap"}}>
-            <div className="vt" style={{fontSize:18,color:C.dim2}}>CmdV to paste - Enter to forge - est. 2-4 min</div>
-            <PixelBtn color="hot" size="lg" onClick={onSubmit} disabled={!valid}>> ROLL TAPE</PixelBtn>
+            <div className="vt" style={{fontSize:18,color:C.dim2}}>Ctrl+V to paste - Enter to forge - est. 2-4 min</div>
+            <PixelBtn color="hot" size="lg" onClick={onSubmit} disabled={!valid}>{`>`} ROLL TAPE</PixelBtn>
           </div>
         </PixelCard>
 
@@ -324,10 +375,10 @@ function NewClip({ url, setUrl, maxClips, setMaxClips, minDur, setMinDur, maxDur
             <div className="pixel" style={{fontSize:10,color:C.dim2,marginBottom:14}}>WHAT WE LOOK FOR</div>
             <ul style={{listStyle:"none",margin:0,padding:0,display:"flex",flexDirection:"column",gap:14}}>
               {[
-                ["!","Tension shifts","Moments where energy changes register."],
-                ["$","Numbers & names","Specific dollar figures, ages, places."],
-                ["*","Contrarian frames","Statements that invite disagreement."],
-                ['"',"Confessions","First-person admissions land everywhere."],
+                ["⚡","Tension shifts","Moments where energy changes register."],
+                ["💰","Numbers & names","Specific dollar figures, ages, places."],
+                ["🌶️","Contrarian frames","Statements that invite disagreement."],
+                ["💬","Confessions","First-person admissions land everywhere."],
               ].map(([emoji,h,d]) => (
                 <li key={h} style={{display:"grid",gridTemplateColumns:"32px 1fr",gap:12,alignItems:"start"}}>
                   <div style={{fontSize:20}}>{emoji}</div>
@@ -341,7 +392,7 @@ function NewClip({ url, setUrl, maxClips, setMaxClips, minDur, setMinDur, maxDur
           </PixelCard>
 
           <PixelCard color={C.lavender} padding={20}>
-            <div className="pixel" style={{fontSize:10,color:C.ink,marginBottom:10}}>* TIP</div>
+            <div className="pixel" style={{fontSize:10,color:C.ink,marginBottom:10}}><span style={{fontSize:20}}>💁‍♂️</span> TIP</div>
             <p className="vt" style={{fontSize:18,color:C.ink,lineHeight:1.35}}>
               Long videos can take 5-10 min. Your job keeps swinging on the server even if you close this tab -- find it under <strong>ARCHIVE</strong>.
             </p>
@@ -374,7 +425,7 @@ function ProcessingTab({ job, onReset, ytStatus, onYTUpload, refreshJob }) {
           <p className="pixel" style={{fontSize:14,color:C.ink,lineHeight:1.5,marginBottom:24}}>
             {(job.error || "Something went wrong.").split("\n").pop()}
           </p>
-          <PixelBtn color="cream" onClick={onReset} size="lg">> TRY AGAIN</PixelBtn>
+          <PixelBtn color="cream" onClick={onReset} size="lg">{`>`} TRY AGAIN</PixelBtn>
         </PixelCard>
       </div>
     );
@@ -388,11 +439,63 @@ function ProcessingTab({ job, onReset, ytStatus, onYTUpload, refreshJob }) {
 }
 
 /*  LIVE PROCESSING  */
+// Max global progress each phase can creep to before server confirms next
+const PHASE_CEILINGS = { downloading: 36, merging: 39, transcribing: 64, analyzing: 76, clipping: 97 };
+
+// Segmented bar config — one block per phase
+const PHASE_BLOCKS = [
+  { key: "downloading",  label: "DOWNLOAD",   color: C.hot },
+  { key: "merging",      label: "MERGE",      color: C.peach },
+  { key: "transcribing", label: "TRANSCRIBE", color: C.amber },
+  { key: "analyzing",    label: "ANALYZE",    color: C.lavender },
+  { key: "clipping",     label: "CLIP",       color: C.signal },
+];
+
+// Global progress range [start, end] for each phase
+const PHASE_RANGES = {
+  downloading:  [0,  37],
+  merging:      [37, 40],
+  transcribing: [40, 65],
+  analyzing:    [65, 77],
+  clipping:     [77, 100],
+};
+
 function LiveProcessing({ job, onCancel }) {
-  const idx = STAGES.indexOf(job.status);
   const [elapsed, setElapsed] = useState(0);
+  const [displayProgress, setDisplayProgress] = useState(job.progress || 0);
+  const lastServerProgress = useRef(job.progress || 0);
+  const lastServerTime = useRef(Date.now());
+
   useEffect(() => { const i = setInterval(()=>setElapsed(s=>s+1),1000); return ()=>clearInterval(i); }, []);
+
+  // Snap to real server progress whenever it changes
+  useEffect(() => {
+    const p = job.progress || 0;
+    if (p !== lastServerProgress.current) {
+      lastServerProgress.current = p;
+      lastServerTime.current = Date.now();
+      setDisplayProgress(p);
+    }
+  }, [job.progress]);
+
+  // Creep the bar forward when server goes quiet (merge step, API calls, etc.)
+  useEffect(() => {
+    const ceiling = (PHASE_CEILINGS[job.status] ?? 97) * 0.97; // stop 3% below ceiling
+    const id = setInterval(() => {
+      if (Date.now() - lastServerTime.current > 1500) {
+        setDisplayProgress(p => p < ceiling ? Math.min(p + 0.2, ceiling) : p);
+      }
+    }, 300);
+    return () => clearInterval(id);
+  }, [job.status]);
+
   const elapsedStr = `${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,"0")}`;
+
+  // Phase-specific % for the sidebar big number
+  const [phaseStart, phaseEnd] = PHASE_RANGES[job.status] || [0, 100];
+  const phaseProgress = Math.min(100, Math.max(0,
+    (displayProgress - phaseStart) / (phaseEnd - phaseStart) * 100
+  ));
 
   return (
     <div className="fade" style={{padding:"32px 32px 64px",maxWidth:1320,margin:"0 auto",display:"grid",gridTemplateColumns:"minmax(0,1fr) 360px",gap:24,alignItems:"start"}}>
@@ -420,30 +523,14 @@ function LiveProcessing({ job, onCancel }) {
           </div>
 
           <div style={{marginTop:22}}>
-            <div className="pixel" style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.ink,marginBottom:8}}>
-              <span>OVERALL</span><span style={{color:C.hotDeep}}>{Math.round(job.progress||0)}%</span>
-            </div>
-            <ProgressBar progress={job.progress||0}/>
-          </div>
-
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginTop:18}}>
-            {STAGES.map((s,i) => {
-              const done=i<idx; const active=i===idx;
-              const bg = done ? C.signal : active ? C.amber : C.cream2;
-              return (
-                <div key={s} style={{textAlign:"center",padding:"10px 4px",background:bg,border:BORDER_SM,boxShadow:active?`2px 2px 0 ${C.ink}`:"none",transform:active?"translate(2px,2px)":"none"}}>
-                  <div className="pixel" style={{fontSize:14,color:C.ink,lineHeight:1}}>{done?"v":String(i+1).padStart(2,"0")}</div>
-                  <div className="pixel" style={{fontSize:7,color:C.ink,marginTop:6}}>{STAGE_LABELS[s]}</div>
-                </div>
-              );
-            })}
+            <SegmentedProgressBar displayProgress={displayProgress} status={job.status}/>
           </div>
         </PixelCard>
 
         <PixelCard color={C.paper} padding={20}>
           <div className="pixel" style={{fontSize:10,color:C.dim2,marginBottom:8}}>STATUS</div>
           <p className="vt" style={{fontSize:20,color:C.ink,lineHeight:1.35}}>
-            Large videos can take 5-10 minutes. The bar moves as each stage completes.
+            Large videos can take 5-10 minutes. Each block fills as that stage runs and locks when it completes.
           </p>
         </PixelCard>
       </div>
@@ -451,7 +538,7 @@ function LiveProcessing({ job, onCancel }) {
       <div style={{display:"flex",flexDirection:"column",gap:18}}>
         <PixelCard color={C.lavender} padding={22}>
           <div className="pixel" style={{fontSize:9,color:C.ink,marginBottom:10}}>JOB - {(job.job_id||"--").slice(0,12)}</div>
-          <div className="pixel" style={{fontSize:42,color:C.ink,lineHeight:1,marginBottom:6}}>{Math.round(job.progress||0)}<span style={{fontSize:18,color:C.dim2}}>%</span></div>
+          <div className="pixel" style={{fontSize:42,color:C.ink,lineHeight:1,marginBottom:6}}>{Math.round(phaseProgress)}<span style={{fontSize:18,color:C.dim2}}>%</span></div>
           <div className="vt" style={{fontSize:18,color:C.dim2,marginBottom:18}}>this stage</div>
           <Row k="STAGE"   v={STAGE_LABELS[job.status] || job.status?.toUpperCase()} color={C.hotDeep}/>
           <Row k="ELAPSED" v={elapsedStr}/>
@@ -592,7 +679,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
         <div style={{padding:"22px 22px",minWidth:0}}>
           <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
             <Tag bg={C.cream}>CLIP {String(idx+1).padStart(2,"0")}</Tag>
-            <Tag bg={C.cream}>{fmtTime(clip.start)} -> {fmtTime(clip.end)}</Tag>
+            <Tag bg={C.cream}>{fmtTime(clip.start)} -{`>`} {fmtTime(clip.end)}</Tag>
             <Tag bg={C.cream}>{clip.duration}S</Tag>
           </div>
           <h3 className="pixel" style={{fontSize:13,color:C.ink,lineHeight:1.5,marginBottom:10}}>
@@ -619,7 +706,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
           </PixelBtn>
           {ytConnected && (
             ytUp?.status === "done" ? (
-              <a href={ytUp.url} target="_blank" rel="noreferrer" className="pixel" style={{padding:"6px 12px",fontSize:9,color:C.ink,background:C.yt,border:BORDER,boxShadow:SHADOW_SM,textAlign:"center",textDecoration:"none",textTransform:"uppercase"}}>> YT ^</a>
+              <a href={ytUp.url} target="_blank" rel="noreferrer" className="pixel" style={{padding:"6px 12px",fontSize:9,color:C.ink,background:C.yt,border:BORDER,boxShadow:SHADOW_SM,textAlign:"center",textDecoration:"none",textTransform:"uppercase"}}>{`>`} YT ^</a>
             ) : (ytUp?.status === "uploading" || ytUp?.status === "queued") ? (
               <span className="pixel" style={{padding:"6px 12px",fontSize:9,color:C.ink,background:C.amber,border:BORDER,boxShadow:SHADOW_SM,textAlign:"center"}}>^ {ytUp.progress||0}%</span>
             ) : (
@@ -679,9 +766,9 @@ function Past({ jobs, onResume, onViewLive, onViewClips, onRefresh }) {
                 </span>
                 <span className="vt" style={{fontSize:16,color:C.dim2}}>{timeAgo(j.created_at)}</span>
                 <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
-                  {isDone && <PixelBtn color="lavender" size="sm" onClick={(e)=>{e.stopPropagation();onViewClips(j);}}>OPEN ></PixelBtn>}
+                  {isDone && <PixelBtn color="lavender" size="sm" onClick={(e)=>{e.stopPropagation();onViewClips(j);}}>OPEN {`>`}</PixelBtn>}
                   {isErr && <PixelBtn color="amber" size="sm" onClick={(e)=>{e.stopPropagation();onResume(j);}}>RETRY</PixelBtn>}
-                  {isProcessing && <PixelBtn color="hot" size="sm" onClick={(e)=>{e.stopPropagation();onViewLive(j);}}>LIVE ></PixelBtn>}
+                  {isProcessing && <PixelBtn color="hot" size="sm" onClick={(e)=>{e.stopPropagation();onViewLive(j);}}>LIVE {`>`}</PixelBtn>}
                 </div>
               </div>
             );

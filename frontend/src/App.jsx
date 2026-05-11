@@ -480,7 +480,9 @@ function LiveProcessing({ job, onCancel }) {
 
   // Creep the bar forward when server goes quiet (merge step, API calls, etc.)
   useEffect(() => {
-    const ceiling = (PHASE_CEILINGS[job.status] ?? 97) * 0.97; // stop 3% below ceiling
+    // Stop 0.5 units before phase end so server confirmation never snaps backwards
+    const phaseEnd = PHASE_RANGES[job.status]?.[1] ?? 100;
+    const ceiling = phaseEnd - 0.5;
     const id = setInterval(() => {
       if (Date.now() - lastServerTime.current > 1500) {
         setDisplayProgress(p => p < ceiling ? Math.min(p + 0.2, ceiling) : p);

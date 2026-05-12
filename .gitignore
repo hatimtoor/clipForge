@@ -8,6 +8,8 @@ dist/
 output/
 temp/
 jobs.json
+channels.json
+youtube_token.json
 server.log
 cookies.txt
 *.zip

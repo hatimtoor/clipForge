@@ -882,7 +882,7 @@ async def channel_poller():
             try:
                 print(f"[watchlist] Checking {ch.get('name', channel_id)}...", flush=True)
                 video = await fetch_latest_video(ch["url"])
-                channels_db[channel_id]["last_checked"] = datetime.utcnow().isoformat()
+                channels_db[channel_id]["last_checked"] = datetime.now(timezone.utc).isoformat()
                 if not video:
                     channels_db[channel_id]["status"] = "error"
                     save_channels(channels_db)
@@ -900,7 +900,7 @@ async def channel_poller():
                         "job_id": job_id, "status": "queued", "progress": 0,
                         "message": f"Queued by watchlist: {ch.get('name','')}",
                         "clips": [], "error": None, "url": video_url,
-                        "created_at": datetime.utcnow().isoformat(),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
                         "source": "watchlist", "channel_id": channel_id,
                     }
                     save_jobs(jobs)
@@ -915,7 +915,7 @@ async def channel_poller():
                     save_channels(channels_db)
             except Exception as e:
                 print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
-                channels_db[channel_id]["last_checked"] = datetime.utcnow().isoformat()
+                channels_db[channel_id]["last_checked"] = datetime.now(timezone.utc).isoformat()
                 save_channels(channels_db)
         await asyncio.sleep(30 * 60)
 
@@ -1030,7 +1030,7 @@ async def start_clip(req: ClipRequest, background_tasks: BackgroundTasks,
         "clips":     [],
         "error":     None,
         "url":       req.url,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     save_jobs(jobs)
     background_tasks.add_task(run_pipeline, job_id, req)
@@ -1309,10 +1309,10 @@ async def add_channel(req: ChannelRequest, _: None = Depends(require_auth)):
     channels_db[channel_id] = {
         "channel_id": channel_id, "url": req.url, "name": channel_name,
         "last_video_id": last_video_id, "last_video_title": None,
-        "last_checked": datetime.utcnow().isoformat(),
+        "last_checked": datetime.now(timezone.utc).isoformat(),
         "auto_upload": req.auto_upload,
         "max_clips": req.max_clips, "min_duration": req.min_duration, "max_duration": req.max_duration,
-        "added_at": datetime.utcnow().isoformat(), "status": "watching",
+        "added_at": datetime.now(timezone.utc).isoformat(), "status": "watching",
     }
     save_channels(channels_db)
     return channels_db[channel_id]
@@ -1349,7 +1349,7 @@ async def check_channel_now(channel_id: str, _: None = Depends(require_auth)):
         raise HTTPException(404, "Channel not found")
     ch = channels_db[channel_id]
     video = await fetch_latest_video(ch["url"])
-    channels_db[channel_id]["last_checked"] = datetime.utcnow().isoformat()
+    channels_db[channel_id]["last_checked"] = datetime.now(timezone.utc).isoformat()
     if not video:
         channels_db[channel_id]["status"] = "error"
         save_channels(channels_db)
@@ -1366,7 +1366,7 @@ async def check_channel_now(channel_id: str, _: None = Depends(require_auth)):
             "job_id": job_id, "status": "queued", "progress": 0,
             "message": f"Manual check: {ch.get('name','')}",
             "clips": [], "error": None, "url": video_url,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "source": "watchlist", "channel_id": channel_id,
         }
         save_jobs(jobs)

@@ -965,6 +965,94 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
 }
 
 /*  WATCHLIST  */
+function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking }) {
+  const [maxClips, setMaxClips] = useState(ch.max_clips ?? 3);
+  const [minDur,   setMinDur]   = useState(ch.min_duration ?? 30);
+  const [maxDur,   setMaxDur]   = useState(ch.max_duration ?? 90);
+
+  const patch = async (fields) => {
+    await authFetch(`${API}/api/channels/${ch.channel_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+  };
+
+  const adj = (val, setVal, min, max, delta, field) => {
+    const next = Math.min(max, Math.max(min, val + delta));
+    setVal(next);
+    patch({ [field]: next });
+  };
+
+  const Stepper = ({ label, val, setVal, min, max, step, field, suffix="" }) => (
+    <div>
+      <div className="pixel" style={{fontSize:7, color:C.dim2, marginBottom:5}}>{label}</div>
+      <div style={{display:"flex", border:BORDER_SM, boxShadow:`2px 2px 0 ${C.ink}`, background:C.paper}}>
+        <button onClick={() => adj(val, setVal, min, max, -step, field)} className="pixel"
+          style={{width:26, padding:"6px 0", background:"transparent", borderRight:`2px solid ${C.ink}`, fontSize:12, cursor:val>min?"pointer":"not-allowed", color:val>min?C.ink:C.dim}}>-</button>
+        <div className="pixel" style={{flex:1, textAlign:"center", padding:"6px 4px", fontSize:10, color:C.ink, minWidth:36}}>{val}{suffix}</div>
+        <button onClick={() => adj(val, setVal, min, max, +step, field)} className="pixel"
+          style={{width:26, padding:"6px 0", background:"transparent", borderLeft:`2px solid ${C.ink}`, fontSize:12, cursor:val<max?"pointer":"not-allowed", color:val<max?C.ink:C.dim}}>+</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <PixelCard color={C.cream} padding={0}>
+      <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"stretch"}}>
+        {/* Left: info + clip settings */}
+        <div style={{padding:"20px 22px", borderRight:BORDER}}>
+          <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:6, flexWrap:"wrap"}}>
+            <span className="pixel" style={{fontSize:12, color:C.ink}}>{ch.name}</span>
+            <Tag bg={statusColor(ch.status || "watching")} color={C.ink}>
+              {(ch.status || "WATCHING").toUpperCase()}
+            </Tag>
+          </div>
+          <div className="mono" style={{fontSize:12, color:C.dim2, marginBottom:10, wordBreak:"break-all"}}>{ch.url}</div>
+          <div style={{display:"flex", gap:18, flexWrap:"wrap", marginBottom:16}}>
+            <div>
+              <span className="pixel" style={{fontSize:7, color:C.dim2}}>LAST CHECKED </span>
+              <span className="vt" style={{fontSize:16, color:C.ink}}>{timeAgoShort(ch.last_checked)}</span>
+            </div>
+            {ch.last_video_title && (
+              <div style={{minWidth:0}}>
+                <span className="pixel" style={{fontSize:7, color:C.dim2}}>LAST VIDEO </span>
+                <span className="vt" style={{fontSize:16, color:C.ink, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"inline-block", maxWidth:340}}>{ch.last_video_title}</span>
+              </div>
+            )}
+          </div>
+          {/* Clip presets */}
+          <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, maxWidth:340}}>
+            <Stepper label="MAX CLIPS" val={maxClips} setVal={setMaxClips} min={1} max={10} step={1} field="max_clips"/>
+            <Stepper label="MIN DUR"   val={minDur}   setVal={setMinDur}   min={15} max={120} step={5} field="min_duration" suffix="s"/>
+            <Stepper label="MAX DUR"   val={maxDur}   setVal={setMaxDur}   min={30} max={180} step={10} field="max_duration" suffix="s"/>
+          </div>
+        </div>
+
+        {/* Right: controls */}
+        <div style={{padding:"20px 18px", display:"flex", flexDirection:"column", gap:10, justifyContent:"center", minWidth:170}}>
+          <button onClick={() => onToggleAutoUpload(ch)} className="pixel" style={{
+            padding:"10px 12px", fontSize:8, textAlign:"center",
+            background: ch.auto_upload ? C.signal : C.cream2,
+            color: C.ink, border: BORDER,
+            boxShadow: ch.auto_upload ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+            transform: ch.auto_upload ? "translate(2px,2px)" : "none",
+            cursor:"pointer", transition:"all .1s",
+            display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+          }}>
+            <span style={{fontSize:14, fontFamily:"sans-serif"}}>🎉</span>
+            {ch.auto_upload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
+          </button>
+          <PixelBtn color="amber" size="sm" onClick={() => onCheckNow(ch.channel_id)} disabled={checking}>
+            {checking ? "CHECKING..." : "CHECK NOW"}
+          </PixelBtn>
+          <PixelBtn color="danger" size="sm" onClick={() => onRemove(ch.channel_id)}>REMOVE</PixelBtn>
+        </div>
+      </div>
+    </PixelCard>
+  );
+}
+
 function Watchlist() {
   const [channels, setChannels] = useState([]);
   const [urlInput, setUrlInput] = useState("");
@@ -1084,63 +1172,14 @@ function Watchlist() {
       ) : (
         <div style={{display:"flex", flexDirection:"column", gap:14}}>
           {channels.map(ch => (
-            <PixelCard key={ch.channel_id} color={C.cream} padding={0}>
-              <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"stretch"}}>
-                {/* Left: channel info */}
-                <div style={{padding:"20px 22px", borderRight:BORDER}}>
-                  <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8, flexWrap:"wrap"}}>
-                    <span className="pixel" style={{fontSize:12, color:C.ink}}>{ch.name}</span>
-                    <Tag bg={statusColor(ch.status || "watching")} color={C.ink}>
-                      {(ch.status || "WATCHING").toUpperCase()}
-                    </Tag>
-                  </div>
-                  <div className="mono" style={{fontSize:12, color:C.dim2, marginBottom:10, wordBreak:"break-all"}}>{ch.url}</div>
-                  <div style={{display:"flex", gap:18, flexWrap:"wrap"}}>
-                    <div>
-                      <span className="pixel" style={{fontSize:7, color:C.dim2}}>LAST CHECKED </span>
-                      <span className="vt" style={{fontSize:16, color:C.ink}}>{timeAgoShort(ch.last_checked)}</span>
-                    </div>
-                    {ch.last_video_title && (
-                      <div style={{minWidth:0}}>
-                        <span className="pixel" style={{fontSize:7, color:C.dim2}}>LAST VIDEO </span>
-                        <span className="vt" style={{fontSize:16, color:C.ink, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"inline-block", maxWidth:300}}>{ch.last_video_title}</span>
-                      </div>
-                    )}
-                    <div>
-                      <span className="pixel" style={{fontSize:7, color:C.dim2}}>MAX CLIPS </span>
-                      <span className="vt" style={{fontSize:16, color:C.ink}}>{ch.max_clips}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right: controls */}
-                <div style={{padding:"20px 18px", display:"flex", flexDirection:"column", gap:10, justifyContent:"center", minWidth:160}}>
-                  {/* Auto-upload toggle */}
-                  <button
-                    onClick={() => handleToggleAutoUpload(ch)}
-                    className="pixel"
-                    style={{
-                      padding:"10px 12px", fontSize:8, textAlign:"center",
-                      background: ch.auto_upload ? C.signal : C.cream2,
-                      color: C.ink, border: BORDER,
-                      boxShadow: ch.auto_upload ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                      transform: ch.auto_upload ? "translate(2px,2px)" : "none",
-                      cursor:"pointer", transition:"all .1s",
-                      display:"flex", alignItems:"center", justifyContent:"center", gap:6,
-                    }}
-                  >
-                    <span style={{fontSize:14, fontFamily:"sans-serif"}}>🎉</span>
-                    {ch.auto_upload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
-                  </button>
-                  <PixelBtn color="amber" size="sm" onClick={() => handleCheckNow(ch.channel_id)} disabled={checkingId === ch.channel_id}>
-                    {checkingId === ch.channel_id ? "CHECKING..." : "CHECK NOW"}
-                  </PixelBtn>
-                  <PixelBtn color="danger" size="sm" onClick={() => handleRemove(ch.channel_id)}>
-                    REMOVE
-                  </PixelBtn>
-                </div>
-              </div>
-            </PixelCard>
+            <ChannelCard
+              key={ch.channel_id}
+              ch={ch}
+              onRemove={handleRemove}
+              onToggleAutoUpload={handleToggleAutoUpload}
+              onCheckNow={handleCheckNow}
+              checking={checkingId === ch.channel_id}
+            />
           ))}
         </div>
       )}

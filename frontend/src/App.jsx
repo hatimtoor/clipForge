@@ -984,6 +984,16 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
     patch({ [field]: next });
   };
 
+  const statusColor  = (s) => s === "error" ? C.hot : s === "watching" ? C.signal : C.amber;
+  const timeAgoShort = (iso) => {
+    if (!iso) return "never";
+    const d = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (d < 60) return `${d}s ago`;
+    if (d < 3600) return `${Math.floor(d/60)}m ago`;
+    if (d < 86400) return `${Math.floor(d/3600)}h ago`;
+    return `${Math.floor(d/86400)}d ago`;
+  };
+
   const Stepper = ({ label, val, setVal, min, max, step, field, suffix="" }) => (
     <div>
       <div className="pixel" style={{fontSize:7, color:C.dim2, marginBottom:5}}>{label}</div>

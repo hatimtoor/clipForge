@@ -1126,9 +1126,11 @@ function Watchlist() {
                       boxShadow: ch.auto_upload ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
                       transform: ch.auto_upload ? "translate(2px,2px)" : "none",
                       cursor:"pointer", transition:"all .1s",
+                      display:"flex", alignItems:"center", justifyContent:"center", gap:6,
                     }}
                   >
-                    {ch.auto_upload ? "^ AUTO-UPLOAD ON" : "^ AUTO-UPLOAD OFF"}
+                    <span style={{fontSize:14, fontFamily:"sans-serif"}}>🎉</span>
+                    {ch.auto_upload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
                   </button>
                   <PixelBtn color="amber" size="sm" onClick={() => handleCheckNow(ch.channel_id)} disabled={checkingId === ch.channel_id}>
                     {checkingId === ch.channel_id ? "CHECKING..." : "CHECK NOW"}

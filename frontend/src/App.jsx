@@ -1128,7 +1128,7 @@ function Watchlist() {
                       cursor:"pointer", transition:"all .1s",
                     }}
                   >
-                    {ch.auto_upload ? "⬆ AUTO-UPLOAD ON" : "⬆ AUTO-UPLOAD OFF"}
+                    {ch.auto_upload ? "^ AUTO-UPLOAD ON" : "^ AUTO-UPLOAD OFF"}
                   </button>
                   <PixelBtn color="amber" size="sm" onClick={() => handleCheckNow(ch.channel_id)} disabled={checkingId === ch.channel_id}>
                     {checkingId === ch.channel_id ? "CHECKING..." : "CHECK NOW"}

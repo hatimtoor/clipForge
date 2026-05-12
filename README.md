@@ -1,5 +1,7 @@
 # ✂️ ClipForge
 
+![ClipForge Login](screenshot-login.png)
+
 Turn any YouTube video into viral short-form clips — fully self-hosted.
 
 AI identifies the highest-engagement moments, cuts the video, crops to 9:16, and burns TikTok-style word-by-word captions automatically.

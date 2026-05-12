@@ -7,28 +7,39 @@ AI identifies the highest-engagement moments, cuts the video, crops to 9:16, and
 ## How It Works
 
 ```
-YouTube URL
-    │
-    ▼
-yt-dlp          ← downloads best quality mp4 (video + audio streams)
-    │
-    ▼
-FFmpeg          ← merges video and audio streams
-    │
-    ▼
-Groq Whisper    ← transcribes audio + word timestamps (whisper-large-v3)
-                   auto-chunks files >20 MB, filters hallucinations
-    │
-    ▼
-Groq Llama      ← scores transcript for virality, picks best moments
-                   (llama-3.3-70b-versatile)
-    │
-    ▼
-FFmpeg          ← smart 9:16 crop (face-tracking via OpenCV),
-                   cuts clips, burns karaoke-style captions
-    │
-    ▼
-Output clips    ← ready to upload to TikTok / Reels / Shorts
+┌─────────────────────────────────────┐
+│         🎬  YouTube URL             │
+└──────────────────┬──────────────────┘
+                   │
+          ╔════════▼════════╗
+          ║   📥  DOWNLOAD  ║  yt-dlp — best quality video + audio
+          ╚════════╤════════╝
+                   │
+          ╔════════▼════════╗
+          ║   🔀  MERGE     ║  FFmpeg — combines streams into mp4
+          ╚════════╤════════╝
+                   │
+          ╔════════▼════════╗
+          ║  🎙  TRANSCRIBE ║  Groq Whisper (whisper-large-v3)
+          ║                 ║  word-level timestamps · filters hallucinations
+          ║                 ║  auto-chunks files > 20 MB
+          ╚════════╤════════╝
+                   │
+          ╔════════▼════════╗
+          ║  🧠  ANALYZE    ║  Groq Llama (llama-3.3-70b-versatile)
+          ║                 ║  scores moments for virality
+          ║                 ║  picks the best clips
+          ╚════════╤════════╝
+                   │
+          ╔════════▼════════╗
+          ║  ✂️   CLIP       ║  FFmpeg — smart 9:16 crop (face-tracking)
+          ║                 ║  cuts clips · burns karaoke captions
+          ╚════════╤════════╝
+                   │
+┌──────────────────▼──────────────────┐
+│   🚀  Viral-ready shorts — upload   │
+│       to TikTok · Reels · Shorts    │
+└─────────────────────────────────────┘
 ```
 
 ## Requirements

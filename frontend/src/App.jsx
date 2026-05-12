@@ -319,7 +319,7 @@ function Header({ tab, setTab, ytStatus, onConnectYT, onLogout, jobActive }) {
         </div>
         <div style={{flex:1}}/>
         <nav style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          {[["new","HELLO"],["processing", jobActive?"LIVE":"WORK"],["history","ARCHIVE"]].map(([k,l]) => {
+          {[["new","HELLO"],["processing", jobActive?"LIVE":"WORK"],["watchlist","WATCHLIST"],["history","ARCHIVE"]].map(([k,l]) => {
             const active = tab===k;
             const col = k==="new"?C.signal : k==="processing"?C.hot : C.amber;
             return (
@@ -964,6 +964,198 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
   );
 }
 
+/*  WATCHLIST  */
+function Watchlist() {
+  const [channels, setChannels] = useState([]);
+  const [urlInput, setUrlInput] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState("");
+  const [checkingId, setCheckingId] = useState(null);
+
+  const fetchChannels = async () => {
+    try {
+      const res = await authFetch(`${API}/api/channels`);
+      const data = await res.json();
+      setChannels(data);
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchChannels();
+    const i = setInterval(fetchChannels, 15000);
+    return () => clearInterval(i);
+  }, []);
+
+  const handleAdd = async () => {
+    if (!urlInput.trim()) return;
+    setAdding(true); setAddError("");
+    try {
+      const res = await authFetch(`${API}/api/channels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: urlInput.trim(), auto_upload: false, max_clips: 3, min_duration: 30, max_duration: 90 }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        setAddError(d.detail || "Failed to add channel");
+      } else {
+        setUrlInput("");
+        fetchChannels();
+      }
+    } catch { setAddError("Cannot reach server."); }
+    setAdding(false);
+  };
+
+  const handleRemove = async (id) => {
+    await authFetch(`${API}/api/channels/${id}`, { method: "DELETE" });
+    fetchChannels();
+  };
+
+  const handleToggleAutoUpload = async (ch) => {
+    await authFetch(`${API}/api/channels/${ch.channel_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auto_upload: !ch.auto_upload }),
+    });
+    fetchChannels();
+  };
+
+  const handleCheckNow = async (id) => {
+    setCheckingId(id);
+    await authFetch(`${API}/api/channels/${id}/check`, { method: "POST" });
+    await fetchChannels();
+    setCheckingId(null);
+  };
+
+  const timeAgoShort = (iso) => {
+    if (!iso) return "never";
+    const d = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (d < 60) return `${d}s ago`;
+    if (d < 3600) return `${Math.floor(d/60)}m ago`;
+    if (d < 86400) return `${Math.floor(d/3600)}h ago`;
+    return `${Math.floor(d/86400)}d ago`;
+  };
+
+  const statusColor = (s) => s === "error" ? C.hot : s === "watching" ? C.signal : C.amber;
+
+  return (
+    <div className="fade" style={{padding:"32px 32px 64px", maxWidth:1320, margin:"0 auto"}}>
+      {/* Header */}
+      <div style={{marginBottom:24}}>
+        <div className="pixel" style={{fontSize:10, color:C.dim2, marginBottom:10}}>WATCHLIST</div>
+        <h1 className="pixel" style={{fontSize:26, color:C.ink}}>Channel monitor.</h1>
+        <p className="vt" style={{fontSize:18, color:C.dim2, marginTop:6}}>
+          Add channels — ClipForge checks every 30 min and clips new videos automatically.
+        </p>
+      </div>
+
+      {/* Add channel form */}
+      <PixelCard color={C.cream} padding={22} style={{marginBottom:24}}>
+        <div className="pixel" style={{fontSize:9, color:C.dim2, marginBottom:12}}>ADD CHANNEL</div>
+        <div style={{display:"flex", gap:10, alignItems:"flex-start", flexWrap:"wrap"}}>
+          <div style={{flex:1, minWidth:260, display:"flex", alignItems:"center", gap:10, padding:"12px 14px", background:C.paper, border:BORDER, boxShadow:SHADOW_SM}}>
+            <span className="pixel" style={{fontSize:12, color:C.dim}}>{`>`}</span>
+            <input
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAdd()}
+              placeholder="https://youtube.com/@channel or /channel/UCxxx"
+              className="mono"
+              style={{flex:1, background:"transparent", color:C.ink, fontSize:13, fontWeight:500, minWidth:0}}
+            />
+          </div>
+          <PixelBtn color="hot" onClick={handleAdd} disabled={adding || !urlInput.trim()}>
+            {adding ? "RESOLVING..." : "+ ADD"}
+          </PixelBtn>
+        </div>
+        {addError && (
+          <div className="pixel" style={{fontSize:9, color:C.hotDeep, marginTop:10, padding:"8px 10px", background:`${C.hot}44`, border:`2px solid ${C.hotDeep}`}}>
+            ! {addError}
+          </div>
+        )}
+      </PixelCard>
+
+      {/* Channel list */}
+      {channels.length === 0 ? (
+        <PixelCard color={C.paper} padding={48} style={{textAlign:"center"}}>
+          <div className="pixel" style={{fontSize:11, color:C.dim2, marginBottom:10}}>NO CHANNELS</div>
+          <p className="vt" style={{fontSize:20, color:C.dim2}}>Add a YouTube channel URL above to start monitoring.</p>
+        </PixelCard>
+      ) : (
+        <div style={{display:"flex", flexDirection:"column", gap:14}}>
+          {channels.map(ch => (
+            <PixelCard key={ch.channel_id} color={C.cream} padding={0}>
+              <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"stretch"}}>
+                {/* Left: channel info */}
+                <div style={{padding:"20px 22px", borderRight:BORDER}}>
+                  <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8, flexWrap:"wrap"}}>
+                    <span className="pixel" style={{fontSize:12, color:C.ink}}>{ch.name}</span>
+                    <Tag bg={statusColor(ch.status || "watching")} color={C.ink}>
+                      {(ch.status || "WATCHING").toUpperCase()}
+                    </Tag>
+                  </div>
+                  <div className="mono" style={{fontSize:12, color:C.dim2, marginBottom:10, wordBreak:"break-all"}}>{ch.url}</div>
+                  <div style={{display:"flex", gap:18, flexWrap:"wrap"}}>
+                    <div>
+                      <span className="pixel" style={{fontSize:7, color:C.dim2}}>LAST CHECKED </span>
+                      <span className="vt" style={{fontSize:16, color:C.ink}}>{timeAgoShort(ch.last_checked)}</span>
+                    </div>
+                    {ch.last_video_title && (
+                      <div style={{minWidth:0}}>
+                        <span className="pixel" style={{fontSize:7, color:C.dim2}}>LAST VIDEO </span>
+                        <span className="vt" style={{fontSize:16, color:C.ink, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"inline-block", maxWidth:300}}>{ch.last_video_title}</span>
+                      </div>
+                    )}
+                    <div>
+                      <span className="pixel" style={{fontSize:7, color:C.dim2}}>MAX CLIPS </span>
+                      <span className="vt" style={{fontSize:16, color:C.ink}}>{ch.max_clips}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: controls */}
+                <div style={{padding:"20px 18px", display:"flex", flexDirection:"column", gap:10, justifyContent:"center", minWidth:160}}>
+                  {/* Auto-upload toggle */}
+                  <button
+                    onClick={() => handleToggleAutoUpload(ch)}
+                    className="pixel"
+                    style={{
+                      padding:"10px 12px", fontSize:8, textAlign:"center",
+                      background: ch.auto_upload ? C.signal : C.cream2,
+                      color: C.ink, border: BORDER,
+                      boxShadow: ch.auto_upload ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                      transform: ch.auto_upload ? "translate(2px,2px)" : "none",
+                      cursor:"pointer", transition:"all .1s",
+                    }}
+                  >
+                    {ch.auto_upload ? "⬆ AUTO-UPLOAD ON" : "⬆ AUTO-UPLOAD OFF"}
+                  </button>
+                  <PixelBtn color="amber" size="sm" onClick={() => handleCheckNow(ch.channel_id)} disabled={checkingId === ch.channel_id}>
+                    {checkingId === ch.channel_id ? "CHECKING..." : "CHECK NOW"}
+                  </PixelBtn>
+                  <PixelBtn color="danger" size="sm" onClick={() => handleRemove(ch.channel_id)}>
+                    REMOVE
+                  </PixelBtn>
+                </div>
+              </div>
+            </PixelCard>
+          ))}
+        </div>
+      )}
+
+      {/* Info box */}
+      <PixelCard color={C.lavender} padding={18} style={{marginTop:24}}>
+        <div className="pixel" style={{fontSize:9, color:C.ink, marginBottom:8}}>HOW IT WORKS</div>
+        <div className="vt" style={{fontSize:17, color:C.ink, lineHeight:1.5}}>
+          Every 30 minutes ClipForge checks each channel for new videos.<br/>
+          <strong>AUTO-UPLOAD ON</strong> clips + uploads to YouTube automatically.<br/>
+          <strong>AUTO-UPLOAD OFF</strong> clips only, find them in ARCHIVE to review first.
+        </div>
+      </PixelCard>
+    </div>
+  );
+}
+
 /*  MAIN APP  */
 export default function App() {
   const [authed, setAuthed] = useState(!!sessionStorage.getItem("cf_auth"));
@@ -1131,6 +1323,8 @@ export default function App() {
           refreshJob={refreshJob}
         />
       )}
+
+      {tab === "watchlist" && <Watchlist />}
 
       {tab === "history" && (
         <Past

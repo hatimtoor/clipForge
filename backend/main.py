@@ -88,6 +88,9 @@ _oauth_states: dict = {}
 from jobs_store import load_jobs, save_jobs
 jobs: dict[str, dict] = load_jobs()
 
+from channels_store import load_channels, save_channels
+channels_db: dict = load_channels()
+
 # ── request / response models ─────────────────────────────────────────────────
 class ClipRequest(BaseModel):
     url: str
@@ -108,6 +111,19 @@ class YouTubeUploadRequest(BaseModel):
     description: str
     tags: list = []
     privacy_status: str = "public"
+
+class ChannelRequest(BaseModel):
+    url: str
+    auto_upload: bool = False
+    max_clips: int = 3
+    min_duration: int = 30
+    max_duration: int = 90
+
+class ChannelPatchRequest(BaseModel):
+    auto_upload: Optional[bool] = None
+    max_clips: Optional[int] = None
+    min_duration: Optional[int] = None
+    max_duration: Optional[int] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -833,11 +849,82 @@ async def create_clips(
     return results
 
 
+async def fetch_latest_video(channel_url: str) -> Optional[dict]:
+    cmd = [YTDLP, "--flat-playlist", "--playlist-end", "1", "-j", "--no-warnings"]
+    if COOKIES_FROM_BROWSER:
+        cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
+    elif COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(channel_url)
+    def _run():
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            return result.returncode, result.stdout.strip()
+        except Exception as e:
+            return -1, ""
+    code, out = await asyncio.to_thread(_run)
+    if code != 0 or not out:
+        return None
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return json.loads(line)
+            except:
+                pass
+    return None
+
+
+async def channel_poller():
+    await asyncio.sleep(15)  # brief startup delay
+    while True:
+        for channel_id, ch in list(channels_db.items()):
+            try:
+                print(f"[watchlist] Checking {ch.get('name', channel_id)}...", flush=True)
+                video = await fetch_latest_video(ch["url"])
+                channels_db[channel_id]["last_checked"] = datetime.utcnow().isoformat()
+                if not video:
+                    channels_db[channel_id]["status"] = "error"
+                    save_channels(channels_db)
+                    continue
+                video_id = video.get("id")
+                channels_db[channel_id]["status"] = "watching"
+                if video_id and video_id != ch.get("last_video_id"):
+                    print(f"[watchlist] New video: {video.get('title')} ({video_id})", flush=True)
+                    channels_db[channel_id]["last_video_id"] = video_id
+                    channels_db[channel_id]["last_video_title"] = video.get("title", "")
+                    save_channels(channels_db)
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+                    job_id = str(uuid.uuid4())
+                    jobs[job_id] = {
+                        "job_id": job_id, "status": "queued", "progress": 0,
+                        "message": f"Queued by watchlist: {ch.get('name','')}",
+                        "clips": [], "error": None, "url": video_url,
+                        "created_at": datetime.utcnow().isoformat(),
+                        "source": "watchlist", "channel_id": channel_id,
+                    }
+                    save_jobs(jobs)
+                    req = ClipRequest(
+                        url=video_url,
+                        max_clips=ch.get("max_clips", 3),
+                        min_duration=ch.get("min_duration", 30),
+                        max_duration=ch.get("max_duration", 90),
+                    )
+                    asyncio.create_task(run_pipeline(job_id, req, auto_upload=ch.get("auto_upload", False)))
+                else:
+                    save_channels(channels_db)
+            except Exception as e:
+                print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
+                channels_db[channel_id]["last_checked"] = datetime.utcnow().isoformat()
+                save_channels(channels_db)
+        await asyncio.sleep(30 * 60)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def run_pipeline(job_id: str, req: ClipRequest):
+async def run_pipeline(job_id: str, req: ClipRequest, auto_upload: bool = False):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
@@ -877,6 +964,19 @@ async def run_pipeline(job_id: str, req: ClipRequest):
             message=f"Done! {len(final_clips)} clips created.",
             clips=final_clips,
         )
+        if auto_upload and final_clips:
+            log(job_id, f"Auto-uploading {len(final_clips)} clips to YouTube...")
+            for i in range(len(final_clips)):
+                clip = final_clips[i]
+                desc = "\n\n".join(filter(None, [clip.get("hook",""), clip.get("reason",""), " ".join(f"#{t}" for t in clip.get("tags",[]))]))
+                upload_data = {
+                    "title": clip.get("title", f"Clip {i+1}"),
+                    "description": desc,
+                    "tags": clip.get("tags", []),
+                    "privacy_status": "public",
+                }
+                log(job_id, f"  Auto-uploading clip {i+1}/{len(final_clips)}...")
+                await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
 
     except Exception as e:
@@ -912,6 +1012,7 @@ async def watchdog():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(watchdog())
+    asyncio.create_task(channel_poller())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
@@ -1165,6 +1266,115 @@ async def get_youtube_upload_status(job_id: str, clip_index: int, _: None = Depe
     if clip_index >= len(clips):
         raise HTTPException(404, "Clip not found")
     return clips[clip_index].get("yt_upload", {"status": "none"})
+
+
+@app.get("/api/channels")
+async def list_channels(_: None = Depends(require_auth)):
+    return list(channels_db.values())
+
+
+@app.post("/api/channels")
+async def add_channel(req: ChannelRequest, _: None = Depends(require_auth)):
+    # Resolve channel name via yt-dlp
+    cmd = [YTDLP, "--flat-playlist", "--playlist-end", "1", "-j", "--no-warnings"]
+    if COOKIES_FROM_BROWSER:
+        cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
+    elif COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(req.url)
+    def _resolve():
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            return r.returncode, r.stdout.strip()
+        except:
+            return -1, ""
+    code, out = await asyncio.to_thread(_resolve)
+    channel_name = req.url
+    channel_id = str(uuid.uuid4())
+    last_video_id = None
+    if code == 0 and out:
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    data = json.loads(line)
+                    channel_name = data.get("channel") or data.get("uploader") or req.url
+                    channel_id = data.get("channel_id") or channel_id
+                    last_video_id = data.get("id")
+                    break
+                except:
+                    pass
+    if channel_id in channels_db:
+        raise HTTPException(400, "Channel already in watchlist")
+    channels_db[channel_id] = {
+        "channel_id": channel_id, "url": req.url, "name": channel_name,
+        "last_video_id": last_video_id, "last_video_title": None,
+        "last_checked": datetime.utcnow().isoformat(),
+        "auto_upload": req.auto_upload,
+        "max_clips": req.max_clips, "min_duration": req.min_duration, "max_duration": req.max_duration,
+        "added_at": datetime.utcnow().isoformat(), "status": "watching",
+    }
+    save_channels(channels_db)
+    return channels_db[channel_id]
+
+
+@app.delete("/api/channels/{channel_id}")
+async def remove_channel(channel_id: str, _: None = Depends(require_auth)):
+    if channel_id not in channels_db:
+        raise HTTPException(404, "Channel not found")
+    del channels_db[channel_id]
+    save_channels(channels_db)
+    return {"ok": True}
+
+
+@app.patch("/api/channels/{channel_id}")
+async def update_channel(channel_id: str, req: ChannelPatchRequest, _: None = Depends(require_auth)):
+    if channel_id not in channels_db:
+        raise HTTPException(404, "Channel not found")
+    if req.auto_upload is not None:
+        channels_db[channel_id]["auto_upload"] = req.auto_upload
+    if req.max_clips is not None:
+        channels_db[channel_id]["max_clips"] = req.max_clips
+    if req.min_duration is not None:
+        channels_db[channel_id]["min_duration"] = req.min_duration
+    if req.max_duration is not None:
+        channels_db[channel_id]["max_duration"] = req.max_duration
+    save_channels(channels_db)
+    return channels_db[channel_id]
+
+
+@app.post("/api/channels/{channel_id}/check")
+async def check_channel_now(channel_id: str, _: None = Depends(require_auth)):
+    if channel_id not in channels_db:
+        raise HTTPException(404, "Channel not found")
+    ch = channels_db[channel_id]
+    video = await fetch_latest_video(ch["url"])
+    channels_db[channel_id]["last_checked"] = datetime.utcnow().isoformat()
+    if not video:
+        channels_db[channel_id]["status"] = "error"
+        save_channels(channels_db)
+        return {"triggered": False, "reason": "Could not fetch channel"}
+    video_id = video.get("id")
+    channels_db[channel_id]["status"] = "watching"
+    if video_id and video_id != ch.get("last_video_id"):
+        channels_db[channel_id]["last_video_id"] = video_id
+        channels_db[channel_id]["last_video_title"] = video.get("title", "")
+        save_channels(channels_db)
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        job_id = str(uuid.uuid4())
+        jobs[job_id] = {
+            "job_id": job_id, "status": "queued", "progress": 0,
+            "message": f"Manual check: {ch.get('name','')}",
+            "clips": [], "error": None, "url": video_url,
+            "created_at": datetime.utcnow().isoformat(),
+            "source": "watchlist", "channel_id": channel_id,
+        }
+        save_jobs(jobs)
+        req = ClipRequest(url=video_url, max_clips=ch.get("max_clips",3), min_duration=ch.get("min_duration",30), max_duration=ch.get("max_duration",90))
+        asyncio.create_task(run_pipeline(job_id, req, auto_upload=ch.get("auto_upload", False)))
+        return {"triggered": True, "job_id": job_id, "video_title": video.get("title")}
+    save_channels(channels_db)
+    return {"triggered": False, "reason": "No new video found"}
 
 
 # Serve frontend (must be last)

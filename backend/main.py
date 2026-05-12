@@ -34,7 +34,8 @@ _ffprobe_winget = next(_WINGET_FFMPEG.glob("Gyan.FFmpeg*/*/bin/ffprobe.exe"), No
 FFMPEG  = _shutil.which("ffmpeg")  or (str(_ffmpeg_winget)  if _ffmpeg_winget  else "ffmpeg")
 FFPROBE = _shutil.which("ffprobe") or (str(_ffprobe_winget) if _ffprobe_winget else "ffprobe")
 
-# Cookies file for yt-dlp (YouTube auth)
+# Cookies for yt-dlp — browser takes priority (stays fresh), file is dev fallback
+COOKIES_FROM_BROWSER = os.getenv("COOKIES_FROM_BROWSER", "")  # e.g. "chromium"
 COOKIES_FILE = Path(__file__).parent.parent.parent / "cookies.txt"
 
 # youtubepot bot-bypass: only enabled when its sidecar service is configured
@@ -140,7 +141,9 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         "--no-playlist",
         "--newline",  # one progress line per update
     ]
-    if COOKIES_FILE.exists():
+    if COOKIES_FROM_BROWSER:
+        cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
+    elif COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
     if POTTOKEN_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]

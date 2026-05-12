@@ -65,6 +65,12 @@ CLIP_USER=admin
 CLIP_PASS=yourpassword
 ```
 
+**Optional — use browser cookies instead of cookies.txt (recommended for servers):**
+```
+COOKIES_FROM_BROWSER=chromium
+```
+When set, yt-dlp reads live cookies directly from the browser profile — they never expire. If not set, falls back to a `cookies.txt` file at the repo root.
+
 **Optional — YouTube upload integration:**
 ```
 YOUTUBE_CLIENT_ID=...

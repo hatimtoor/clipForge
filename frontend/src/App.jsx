@@ -345,7 +345,7 @@ function Header({ tab, setTab, ytStatus, onConnectYT, onLogout, jobActive }) {
 }
 
 /*  NEW CLIP  */
-function NewClip({ url, setUrl, maxClips, setMaxClips, minDur, setMinDur, maxDur, setMaxDur, onSubmit, error }) {
+function NewClip({ url, setUrl, maxClips, setMaxClips, minDur, setMinDur, maxDur, setMaxDur, reframe, setReframe, onSubmit, error }) {
   const [hooks, setHooks] = useState(true);
   const [captions, setCaptions] = useState(true);
   const valid = /youtu\.?be/.test(url);
@@ -380,9 +380,10 @@ function NewClip({ url, setUrl, maxClips, setMaxClips, minDur, setMinDur, maxDur
             <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber}/>
           </div>
 
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:24}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:24}}>
             <Toggle on={hooks} setOn={setHooks} label="HOOKS" hint="find the line that travels"/>
             <Toggle on={captions} setOn={setCaptions} label="CAPS" hint="burn word-by-word subs"/>
+            <Toggle on={reframe} setOn={setReframe} label="9:16" hint="auto-reframe speaker to portrait"/>
           </div>
 
           {error && (
@@ -1186,6 +1187,7 @@ export default function App() {
   const [maxClips, setMaxClips] = useState(5);
   const [minDur, setMinDur] = useState(30);
   const [maxDur, setMaxDur] = useState(90);
+  const [reframe, setReframe] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1267,7 +1269,7 @@ export default function App() {
       const res = await authFetch(`${API}/api/clip`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur }),
+        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe }),
       });
       const data = await res.json();
       setJobId(data.job_id);
@@ -1333,6 +1335,7 @@ export default function App() {
           maxClips={maxClips} setMaxClips={setMaxClips}
           minDur={minDur} setMinDur={setMinDur}
           maxDur={maxDur} setMaxDur={setMaxDur}
+          reframe={reframe} setReframe={setReframe}
           onSubmit={handleSubmit} error={error}
         />
       )}

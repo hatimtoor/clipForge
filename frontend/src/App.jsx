@@ -590,17 +590,6 @@ function Results({ job, onNew, ytStatus, onYTUpload }) {
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
-  const [blobUrl, setBlobUrl] = useState(null);
-
-  useEffect(() => {
-    if (!active) { setBlobUrl(null); return; }
-    let cancelled = false;
-    setBlobUrl(null);
-    authFetch(active.path).then(r=>r.blob()).then(b => {
-      if (!cancelled) setBlobUrl(URL.createObjectURL(b));
-    }).catch(()=>{});
-    return () => { cancelled = true; };
-  }, [active?.path]);
 
   return (
     <div className="fade" style={{padding:"32px 32px 64px",maxWidth:1380,margin:"0 auto"}}>
@@ -646,14 +635,7 @@ function Results({ job, onNew, ytStatus, onYTUpload }) {
             </div>
             <div style={{background:C.windowBg,border:BORDER,boxShadow:SHADOW,padding:0,overflow:"hidden"}}>
               <div style={{aspectRatio:"9/16",background:C.windowBg,position:"relative"}}>
-                {blobUrl ? (
-                  <video src={blobUrl} controls autoPlay style={{width:"100%",height:"100%",display:"block",background:"#000"}}/>
-                ) : (
-                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10}}>
-                    <div style={{width:24,height:24,border:`3px solid ${C.signal}`,borderTopColor:"transparent",animation:"spin .7s linear infinite"}}/>
-                    <span className="pixel" style={{fontSize:9,color:C.signal}}>LOADING</span>
-                  </div>
-                )}
+                <video src={active.path} controls autoPlay style={{width:"100%",height:"100%",display:"block",background:"#000"}}/>
               </div>
             </div>
             <div style={{marginTop:14}}>
@@ -668,7 +650,7 @@ function Results({ job, onNew, ytStatus, onYTUpload }) {
 }
 
 /*  ClipCard  */
-function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected, jobId }) {
+function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected }) {
   const [downloading, setDownloading] = useState(false);
   const handleDownload = async () => {
     setDownloading(true);
@@ -1124,17 +1106,6 @@ function Watchlist() {
     await fetchChannels();
     setCheckingId(null);
   };
-
-  const timeAgoShort = (iso) => {
-    if (!iso) return "never";
-    const d = Math.floor((Date.now() - new Date(iso)) / 1000);
-    if (d < 60) return `${d}s ago`;
-    if (d < 3600) return `${Math.floor(d/60)}m ago`;
-    if (d < 86400) return `${Math.floor(d/3600)}h ago`;
-    return `${Math.floor(d/86400)}d ago`;
-  };
-
-  const statusColor = (s) => s === "error" ? C.hot : s === "watching" ? C.signal : C.amber;
 
   return (
     <div className="fade" style={{padding:"32px 32px 64px", maxWidth:1320, margin:"0 auto"}}>

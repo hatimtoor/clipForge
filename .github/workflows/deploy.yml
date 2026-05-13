@@ -30,9 +30,9 @@ jobs:
           CLIP_USER: testuser
           CLIP_PASS: testpass
 
-  # ── 2. Verify frontend builds ───────────────────────────────────────────────
+  # ── 2. Build frontend in CI (Node 20) and upload dist as artifact ───────────
   build-frontend:
-    name: Frontend build check
+    name: Frontend build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -51,6 +51,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 1
+
   # ── 3. Deploy to server (only if both jobs pass) ────────────────────────────
   deploy:
     name: Deploy to server
@@ -58,7 +65,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH deploy
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend-dist/
+
+      - name: Deploy backend via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -74,13 +87,17 @@ jobs:
             echo ">>> Installing backend dependencies..."
             pip install -r backend/requirements.txt -q
 
-            echo ">>> Building frontend..."
-            cd frontend
-            npm install
-            npm run build
-            cd ..
-
             echo ">>> Restarting backend..."
             sudo systemctl restart clipforge
 
-            echo ">>> Deploy complete!"
+            echo ">>> Backend deploy complete!"
+
+      - name: Copy frontend build to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "frontend-dist/"
+          target: "/home/ubuntu/clipforge_new/frontend/dist"
+          strip_components: 1

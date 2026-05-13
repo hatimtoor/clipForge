@@ -12,6 +12,7 @@ from typing import Optional
 import secrets
 
 from dotenv import load_dotenv
+from reframe import reframe_to_portrait
 # Load from clipforge root (local dev) or server path
 _env = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(_env if _env.exists() else "/home/ubuntu/.env")
@@ -97,6 +98,7 @@ class ClipRequest(BaseModel):
     max_clips: int = 5
     min_duration: int = 30
     max_duration: int = 90
+    reframe: bool = False
 
 class JobStatus(BaseModel):
     job_id: str
@@ -738,6 +740,7 @@ async def create_clips(
     segments: list,
     job_dir: Path,
     job_id: str,
+    reframe: bool = False,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -837,6 +840,11 @@ async def create_clips(
             log(job_id, f"  !!! FFmpeg FAILED for clip {idx+1}: {err[-300:]}")
             update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
             continue
+
+        if reframe:
+            log(job_id, f"  Reframing clip {idx+1} to 9:16 portrait...")
+            applied = await asyncio.to_thread(reframe_to_portrait, clip_path, FFMPEG)
+            log(job_id, f"  Reframe {'applied' if applied else 'skipped (already portrait)'}")
 
         log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
         results.append({
@@ -955,7 +963,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, auto_upload: bool = False)
 
         # 4. Cut + subtitle
         log(job_id, "--- PHASE 4: CLIP ---")
-        final_clips = await create_clips(video_path, clips, segments, job_dir, job_id)
+        final_clips = await create_clips(video_path, clips, segments, job_dir, job_id, reframe=req.reframe)
 
         update_job(
             job_id,

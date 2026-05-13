@@ -4,13 +4,12 @@ After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/home/ubuntu/clipforge/clipper/backend
-Environment="PATH=/home/ubuntu/clipforge/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/ubuntu/clipforge/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/home/ubuntu/clipforge_new/backend
+ExecStart=uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/ubuntu/clipforge/server.log
-StandardError=append:/home/ubuntu/clipforge/server.log
+StandardOutput=append:/home/ubuntu/clipforge_new/server.log
+StandardError=append:/home/ubuntu/clipforge_new/server.log
 
 [Install]
 WantedBy=multi-user.target

@@ -591,6 +591,13 @@ function Results({ job, onNew, ytStatus, onYTUpload }) {
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
+  const previewRef = useRef(null);
+
+  useEffect(() => {
+    if (active && previewRef.current) {
+      previewRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [active]);
 
   return (
     <div className="fade" style={{padding:"32px 32px 64px",maxWidth:1380,margin:"0 auto"}}>
@@ -629,7 +636,7 @@ function Results({ job, onNew, ytStatus, onYTUpload }) {
         </div>
 
         {active && (
-          <div style={{position:"sticky",top:24}}>
+          <div ref={previewRef} style={{position:"sticky",top:24}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <div className="pixel" style={{fontSize:9,color:C.dim2}}>NOW PREVIEWING</div>
               <button onClick={()=>setActive(null)} className="pixel" style={{padding:"4px 8px",fontSize:9,background:C.cream,border:BORDER_SM,boxShadow:`2px 2px 0 ${C.ink}`,cursor:"pointer"}}>x</button>

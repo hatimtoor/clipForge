@@ -13,6 +13,7 @@ import secrets
 
 from dotenv import load_dotenv
 from reframe import reframe_to_portrait
+from groq_limiter import whisper_limiter, llama_limiter, groq_with_retry
 # Load from clipforge root (local dev) or server path
 _env = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(_env if _env.exists() else "/home/ubuntu/.env")
@@ -262,13 +263,17 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
         log(job_id, f"Audio is {file_size/1_048_576:.1f} MB — sending as single file to Whisper")
         update_job(job_id, progress=47, message="Transcribing audio via Groq Whisper...")
         audio_data = audio_path.read_bytes()
-        response = await asyncio.to_thread(
-            lambda: groq_client.audio.transcriptions.create(
-                file=("audio.mp3", audio_data),
-                model="whisper-large-v3",
-                response_format="verbose_json",
-                timestamp_granularities=["segment", "word"],
-            )
+        response = await groq_with_retry(
+            lambda: asyncio.to_thread(
+                lambda: groq_client.audio.transcriptions.create(
+                    file=("audio.mp3", audio_data),
+                    model="whisper-large-v3",
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment", "word"],
+                )
+            ),
+            limiter=whisper_limiter,
+            log_fn=lambda m: log(job_id, m),
         )
         # Groq returns words at top level, segments as dicts
         top_words = []
@@ -330,13 +335,17 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
 
             chunk_data = chunk_path.read_bytes()
             chunk_name = f"chunk_{i}.mp3"
-            response = await asyncio.to_thread(
-                lambda data=chunk_data, name=chunk_name: groq_client.audio.transcriptions.create(
-                    file=(name, data),
-                    model="whisper-large-v3",
-                    response_format="verbose_json",
-                    timestamp_granularities=["segment", "word"],
-                )
+            response = await groq_with_retry(
+                lambda data=chunk_data, name=chunk_name: asyncio.to_thread(
+                    lambda: groq_client.audio.transcriptions.create(
+                        file=(name, data),
+                        model="whisper-large-v3",
+                        response_format="verbose_json",
+                        timestamp_granularities=["segment", "word"],
+                    )
+                ),
+                limiter=whisper_limiter,
+                log_fn=lambda m: log(job_id, m),
             )
 
             # Groq returns words at top level
@@ -445,7 +454,11 @@ Return valid JSON array only, no markdown, no explanation."""
                     max_tokens=2000,
                 )
                 return r.choices[0].message.content.strip()
-            return await asyncio.to_thread(_sync)
+            return await groq_with_retry(
+                lambda t=temp: asyncio.to_thread(lambda: _sync(t)),
+                limiter=llama_limiter,
+                log_fn=lambda m: log(job_id, m),
+            )
 
         def _parse_raw(raw: str):
             # Strip markdown fences

@@ -79,12 +79,11 @@ def _face_cx(rgb_frame: np.ndarray, detector) -> float | None:
 def _motion_cx(prev_gray: np.ndarray, curr_gray: np.ndarray) -> float | None:
     """Centroid of significant inter-frame motion, or None if too little motion."""
     diff = cv2.absdiff(prev_gray, curr_gray)
-    diff = cv2.GaussianBlur(diff, (5, 5), 0)
-    _, mask = cv2.threshold(diff, 12, 255, cv2.THRESH_BINARY)
-    # Ignore bottom strip (static captions / lower-thirds)
-    mask[int(mask.shape[0] * 0.88):] = 0
+    diff = cv2.GaussianBlur(diff, (9, 9), 0)   # larger blur = less noise
+    _, mask = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)  # higher = less sensitive
+    mask[int(mask.shape[0] * 0.88):] = 0        # ignore caption strip
     M = cv2.moments(mask)
-    if M["m00"] < 500:
+    if M["m00"] < 1500:     # require more motion pixels before trusting centroid
         return None
     return float(M["m10"] / M["m00"])
 
@@ -96,7 +95,7 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
     rms       = _audio_rms_per_frame(clip_path, fps, ffmpeg)
     threshold = float(np.percentile(rms, 35)) if len(rms) else 0.0
 
-    sample_every = max(1, int(fps / 2))   # 2 samples per second
+    sample_every = max(1, int(fps))        # 1 sample per second — fewer, stabler
     sampled: dict[int, float] = {}
 
     detector  = _get_detector()
@@ -132,28 +131,43 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
     if total == 0:
         return np.array([vid_w // 2], dtype=int)
 
-    # Start from last known position if available, else centre
+    # Start from first known position if available, else centre
     default_cx = float(next(iter(sampled.values()))) if sampled else float(vid_w // 2)
     dense = np.full(total, default_cx)
 
     if sampled:
+        # Pre-filter outliers: reject any detection that jumps more than 25 % of
+        # frame width from the previous accepted detection — likely a noise spike.
+        max_jump = vid_w * 0.25
+        keys_raw = sorted(sampled)
+        filtered: dict[int, float] = {keys_raw[0]: sampled[keys_raw[0]]}
+        for k in keys_raw[1:]:
+            prev = list(filtered.values())[-1]
+            if abs(sampled[k] - prev) <= max_jump:
+                filtered[k] = sampled[k]
+        sampled = filtered
+
         keys = sorted(sampled)
         for k in keys:
             dense[k] = sampled[k]
 
-        # Linear interpolation between detections
+        # Linear interpolation between accepted detections
         for i in range(len(keys) - 1):
             f0, f1 = keys[i], keys[i + 1]
             t = np.linspace(0, 1, f1 - f0, endpoint=False)
             dense[f0:f1] = dense[f0] + t * (dense[f1] - dense[f0])
 
-        # Hold edge detections at the boundaries
         dense[: keys[0]]  = dense[keys[0]]
         dense[keys[-1] :] = dense[keys[-1]]
 
-    # Moving-average smooth: ~2 s window → camera-operator glide
-    window    = max(1, int(fps * 2))
-    cx_smooth = np.convolve(dense, np.ones(window) / window, mode="same")
+    # Gaussian smooth with 3-second sigma — much more natural camera movement
+    # than a box filter; nearby frames matter more than distant ones.
+    sigma  = fps * 3
+    half_w = int(3 * sigma)
+    x      = np.arange(-half_w, half_w + 1)
+    kernel = np.exp(-x ** 2 / (2 * sigma ** 2))
+    kernel /= kernel.sum()
+    cx_smooth = np.convolve(dense, kernel, mode="same")
     return np.clip(cx_smooth - crop_w / 2, 0, vid_w - crop_w).astype(int)
 
 

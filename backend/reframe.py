@@ -1,53 +1,35 @@
 """
-Auto-reframe: audio-guided smooth 9:16 portrait crop.
+Auto-reframe: audio-guided smooth 9:16 portrait crop using YOLOv8.
 
-Detection cascade (most-accurate to least, each is a fallback for the previous):
-  1. MediaPipe Face Detection  — fast, accurate for close / mid-range faces.
-  2. HOG Person Detector       — built into OpenCV, no download needed.
-                                 Detects full-body humans at any distance and
-                                 angle — exactly what TEDx/stage shots need.
-  3. Motion centroid           — frame-diff centroid for anything that moves
-                                 while audio is active.
-  4. Hold last known position  — never snap to centre during a gap.
-
-The MediaPipe TFLite model (~800 KB) is downloaded once and cached locally.
+Pipeline:
+  1. Audio RMS per frame — only search for the speaker during speech frames.
+  2. YOLOv8n person detection — works at any distance, angle, and lighting.
+     The ~6 MB model downloads once on first use, then is cached permanently.
+  3. Outlier rejection — discard detections that jump > 25 % of frame width.
+  4. Gaussian smooth (3 s sigma) — natural camera-operator glide, no jitter.
+  5. Per-frame FFmpeg pipe — encode the crop while preserving the audio track.
 """
 import subprocess
-import urllib.request
 import numpy as np
 import cv2
 from pathlib import Path
 
-from mediapipe.tasks import python as _mp_python
-from mediapipe.tasks.python import vision as _mp_vision
-from mediapipe import Image as _MpImage, ImageFormat as _MpFmt
+from ultralytics import YOLO
 
-_MODEL_URL  = (
-    "https://storage.googleapis.com/mediapipe-models/"
-    "face_detector/blaze_face_short_range/float16/1/"
-    "blaze_face_short_range.tflite"
-)
-_MODEL_PATH = Path(__file__).parent / "_face_detector.tflite"
-
-# HOG person detector — built into OpenCV, no extra install
-_HOG = cv2.HOGDescriptor()
-_HOG.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+_yolo: YOLO | None = None
 
 
-def _get_detector():
-    if not _MODEL_PATH.exists():
-        print("reframe: downloading face detector model (~800 KB)...", flush=True)
-        urllib.request.urlretrieve(_MODEL_URL, str(_MODEL_PATH))
-    opts = _mp_vision.FaceDetectorOptions(
-        base_options=_mp_python.BaseOptions(model_asset_path=str(_MODEL_PATH)),
-        min_detection_confidence=0.3,
-    )
-    return _mp_vision.FaceDetector.create_from_options(opts)
+def _get_yolo() -> YOLO:
+    global _yolo
+    if _yolo is None:
+        _yolo = YOLO("yolov8n.pt")   # ~6 MB, downloaded once by ultralytics
+    return _yolo
 
 
 # ── Audio energy ──────────────────────────────────────────────────────────────
 
 def _audio_rms_per_frame(clip_path: Path, fps: float, ffmpeg: str) -> np.ndarray:
+    """RMS energy per video frame extracted via FFmpeg. Empty array if no audio."""
     sr = 16_000
     result = subprocess.run(
         [ffmpeg, "-i", str(clip_path),
@@ -65,92 +47,47 @@ def _audio_rms_per_frame(clip_path: Path, fps: float, ffmpeg: str) -> np.ndarray
     ])
 
 
-# ── Detection helpers ─────────────────────────────────────────────────────────
+# ── Person detection ──────────────────────────────────────────────────────────
 
-def _face_cx(rgb_frame: np.ndarray, detector) -> float | None:
-    """Largest face center-x via MediaPipe, or None."""
-    result = detector.detect(_MpImage(image_format=_MpFmt.SRGB, data=rgb_frame))
-    if not result.detections:
-        return None
-    best = max(result.detections,
-               key=lambda d: d.bounding_box.width * d.bounding_box.height)
-    bb = best.bounding_box
-    return float(bb.origin_x + bb.width / 2)
-
-
-def _person_cx(frame: np.ndarray) -> float | None:
+def _person_cx(frame: np.ndarray, model: YOLO) -> float | None:
     """
-    HOG full-body person detector center-x, or None.
-    Resize to max 640 px wide first so it runs in reasonable time.
-    Works on stage / far-away shots where faces are too small for MediaPipe.
+    Run YOLOv8 and return the center-x of the largest detected person,
+    or None if no person is found.
     """
-    h, w = frame.shape[:2]
-    scale = min(1.0, 640.0 / w)
-    small = cv2.resize(frame, (int(w * scale), int(h * scale)))
-
-    rects, weights = _HOG.detectMultiScale(
-        small, winStride=(8, 8), padding=(4, 4), scale=1.05
-    )
-    if len(rects) == 0:
+    results = model(frame, classes=[0], verbose=False)   # class 0 = person
+    boxes   = results[0].boxes
+    if boxes is None or len(boxes) == 0:
         return None
-
-    best = rects[int(np.argmax(weights))]
-    x, y, bw, bh = best
-    return float((x + bw / 2) / scale)   # scale back to original coords
-
-
-def _motion_cx(prev_gray: np.ndarray, curr_gray: np.ndarray) -> float | None:
-    """Centroid of significant inter-frame motion, or None."""
-    diff = cv2.absdiff(prev_gray, curr_gray)
-    diff = cv2.GaussianBlur(diff, (9, 9), 0)
-    _, mask = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
-    mask[int(mask.shape[0] * 0.88):] = 0
-    M = cv2.moments(mask)
-    if M["m00"] < 1500:
-        return None
-    return float(M["m10"] / M["m00"])
+    xywh  = boxes.xywh.cpu().numpy()    # columns: cx, cy, w, h
+    areas = xywh[:, 2] * xywh[:, 3]
+    best  = xywh[int(areas.argmax())]
+    return float(best[0])               # center-x in pixels
 
 
 # ── Trajectory ────────────────────────────────────────────────────────────────
 
 def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
                             fps: float, ffmpeg: str) -> np.ndarray:
+    """Return an array of crop_x values (one per frame) ready for the encoder."""
     rms       = _audio_rms_per_frame(clip_path, fps, ffmpeg)
     threshold = float(np.percentile(rms, 35)) if len(rms) else 0.0
 
-    sample_every = max(1, int(fps))        # 1 sample per second
+    sample_every = max(1, int(fps))          # sample once per second
     sampled: dict[int, float] = {}
 
-    detector  = _get_detector()
-    cap       = cv2.VideoCapture(str(clip_path))
-    prev_gray = None
-    idx       = 0
+    model = _get_yolo()
+    cap   = cv2.VideoCapture(str(clip_path))
+    idx   = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-
-        curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         is_speech = (idx < len(rms) and rms[idx] >= threshold) or threshold == 0.0
-
         if is_speech and idx % sample_every == 0:
-            # 1. MediaPipe face detection
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            cx  = _face_cx(rgb, detector)
-
-            # 2. HOG person detection — catches far-away / stage speakers
-            if cx is None:
-                cx = _person_cx(frame)
-
-            # 3. Motion centroid — last visual fallback
-            if cx is None and prev_gray is not None:
-                cx = _motion_cx(prev_gray, curr_gray)
-
+            cx = _person_cx(frame, model)
             if cx is not None:
                 sampled[idx] = cx
-
-        prev_gray = curr_gray
         idx += 1
 
     cap.release()
@@ -158,24 +95,24 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
     if total == 0:
         return np.array([vid_w // 2], dtype=int)
 
+    # Default to first detection found; fall back to centre if none at all
     default_cx = float(next(iter(sampled.values()))) if sampled else float(vid_w // 2)
     dense = np.full(total, default_cx)
 
     if sampled:
-        # Reject detections that jump more than 25 % of frame width
-        max_jump  = vid_w * 0.25
-        keys_raw  = sorted(sampled)
+        # Reject detections that jump more than 25 % of frame width (noise)
+        max_jump = vid_w * 0.25
+        keys_raw = sorted(sampled)
         filtered: dict[int, float] = {keys_raw[0]: sampled[keys_raw[0]]}
         for k in keys_raw[1:]:
-            prev = list(filtered.values())[-1]
-            if abs(sampled[k] - prev) <= max_jump:
+            if abs(sampled[k] - list(filtered.values())[-1]) <= max_jump:
                 filtered[k] = sampled[k]
-        sampled = filtered
 
-        keys = sorted(sampled)
+        keys = sorted(filtered)
         for k in keys:
-            dense[k] = sampled[k]
+            dense[k] = filtered[k]
 
+        # Linearly interpolate between accepted detections
         for i in range(len(keys) - 1):
             f0, f1 = keys[i], keys[i + 1]
             t = np.linspace(0, 1, f1 - f0, endpoint=False)
@@ -184,13 +121,14 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
         dense[: keys[0]]  = dense[keys[0]]
         dense[keys[-1] :] = dense[keys[-1]]
 
-    # Gaussian smooth — 3-second sigma for natural camera-operator glide
+    # Gaussian smooth — 3-second sigma gives a natural camera-operator glide
     sigma  = fps * 3
     half_w = int(3 * sigma)
     x      = np.arange(-half_w, half_w + 1)
     kernel = np.exp(-x ** 2 / (2 * sigma ** 2))
     kernel /= kernel.sum()
     cx_smooth = np.convolve(dense, kernel, mode="same")
+
     return np.clip(cx_smooth - crop_w / 2, 0, vid_w - crop_w).astype(int)
 
 
@@ -199,7 +137,7 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
 def reframe_to_portrait(clip_path: Path, ffmpeg: str = "ffmpeg") -> bool:
     """
     Reframe clip_path in-place to 9:16 with audio-guided speaker tracking.
-    Returns True if applied, False if skipped (already portrait/square).
+    Returns True if applied, False if skipped (video already portrait/square).
     """
     cap   = cv2.VideoCapture(str(clip_path))
     vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -209,7 +147,6 @@ def reframe_to_portrait(clip_path: Path, ffmpeg: str = "ffmpeg") -> bool:
 
     crop_w = int(vid_h * 9 / 16)
     crop_h = vid_h
-
     if crop_w >= vid_w:
         return False
 

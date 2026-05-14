@@ -740,15 +740,39 @@ def smooth_crop_trajectory(
     return smoothed
 
 
-def write_sendcmd_file(trajectory: list, output_path: Path) -> None:
-    """Write FFmpeg sendcmd file that sets crop x at each keyframe."""
+def write_sendcmd_file(trajectory: list, output_path: Path, fps: float = 30.0) -> None:
+    """
+    Write FFmpeg sendcmd with per-frame crop x values, linearly interpolated
+    between sparse keyframes. With a 50px/s speed limit this means each frame
+    moves at most ~1.7px — smooth enough to be invisible.
+    """
+    if not trajectory:
+        return
+    if len(trajectory) == 1:
+        output_path.write_text(f"0-3600 crop x {trajectory[0][1]};\n", encoding="utf-8")
+        return
+
+    frame_dur = 1.0 / fps
     lines = []
-    for i, (t, x) in enumerate(trajectory):
-        if i + 1 < len(trajectory):
-            t_end = max(t + 0.001, trajectory[i + 1][0] - 0.001)
-        else:
-            t_end = t + 3600
-        lines.append(f"{t:.3f}-{t_end:.3f} crop x {x};")
+
+    for i in range(len(trajectory) - 1):
+        t0, x0 = trajectory[i]
+        t1, x1 = trajectory[i + 1]
+        dt = t1 - t0
+        if dt <= 0:
+            continue
+        n_frames = max(1, round(dt * fps))
+        for j in range(n_frames):
+            t_frame = t0 + j * frame_dur
+            alpha = j / n_frames
+            x_frame = int(round(x0 + alpha * (x1 - x0)))
+            t_end = t_frame + frame_dur
+            lines.append(f"{t_frame:.4f}-{t_end:.4f} crop x {x_frame};")
+
+    # Hold last position to end of clip
+    t_last, x_last = trajectory[-1]
+    lines.append(f"{t_last:.4f}-{t_last + 3600:.4f} crop x {x_last};")
+
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -785,6 +809,11 @@ async def create_clips(
         vstream = next((s for s in probe["streams"] if s["codec_type"] == "video"), None)
         src_w = int(vstream["width"])  if vstream else 1920
         src_h = int(vstream["height"]) if vstream else 1080
+        if vstream:
+            num, den = vstream.get("r_frame_rate", "30/1").split("/")
+            clip_fps = float(num) / max(1, float(den))
+        else:
+            clip_fps = 30.0
 
         # Crop to 9:16 then scale to 1080x1920
         crop_h = src_h
@@ -826,7 +855,7 @@ async def create_clips(
 
         if is_dynamic:
             sendcmd_path = job_dir / f"clip_{idx}_crop.txt"
-            write_sendcmd_file(trajectory, sendcmd_path)
+            write_sendcmd_file(trajectory, sendcmd_path, fps=clip_fps)
             sendcmd_filename = sendcmd_path.name
             vf_string = (
                 f"sendcmd=f={sendcmd_filename},"

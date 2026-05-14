@@ -12,7 +12,7 @@ from typing import Optional
 import secrets
 
 from dotenv import load_dotenv
-from reframe import reframe_to_portrait
+from reframe import _get_yolo, _speaking_person_cx
 from groq_limiter import whisper_limiter, llama_limiter, groq_with_retry
 # Load from clipforge root (local dev) or server path
 _env = Path(__file__).parent.parent.parent / ".env"
@@ -626,7 +626,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 # ── smart speaker-tracking crop ───────────────────────────────────────────────
 
-def sample_face_positions(
+def _yolo_sample_positions(
     video_path: Path,
     clip_start: float,
     clip_end: float,
@@ -634,32 +634,35 @@ def sample_face_positions(
     src_h: int,
     sample_interval: float = 1.0,
 ) -> list:
-    """Sample frames and detect face positions. Returns [(rel_time, crop_x), ...]."""
+    """
+    Sample frames with YOLO person detection + head-activity speaker selection.
+    Returns [(rel_time, crop_x), ...] compatible with smooth_crop_trajectory.
+    Works for far, angled, or small-on-screen speakers that Haar cascades miss.
+    """
     try:
-        import cv2
+        import cv2 as _cv2
     except ImportError:
-        print("opencv-python-headless not installed — using center crop")
         return []
 
     crop_w = min(int(src_h * 9 / 16), src_w)
-    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    cap = cv2.VideoCapture(str(video_path))
-    results = []
+    model  = _get_yolo()
+    cap    = _cv2.VideoCapture(str(video_path))
+    results: list = []
+    prev_frame = None
     t = clip_start
+
     while t < clip_end:
-        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+        cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000)
         ret, frame = cap.read()
         if not ret:
             break
-        small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-        gray  = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-        if len(faces) > 0:
-            fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
-            face_cx = (fx + fw // 2) * 2  # scale back to full resolution
-            crop_x  = max(0, min(face_cx - crop_w // 2, src_w - crop_w))
+        cx = _speaking_person_cx(frame, prev_frame, model)
+        if cx is not None:
+            crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
             results.append((round(t - clip_start, 3), crop_x))
+        prev_frame = frame
         t += sample_interval
+
     cap.release()
     return results
 
@@ -810,11 +813,15 @@ async def create_clips(
         # basename-only for filter paths — avoids Windows drive-letter colon issue
         ass_filename = ass_path.name
 
-        # Smart speaker-tracking crop
-        detections  = await asyncio.to_thread(sample_face_positions, video_path, start, end, src_w, src_h)
-        log(job_id, f"  Face detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
-        trajectory  = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
-        is_dynamic  = len(set(x for _, x in trajectory)) > 1
+        # Speaker-tracking crop: YOLO + dead-zone smooth when reframe=True,
+        # static center crop otherwise (fast path, good for already-centered content)
+        if reframe:
+            detections = await asyncio.to_thread(_yolo_sample_positions, video_path, start, end, src_w, src_h)
+            log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
+            trajectory = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
+        else:
+            trajectory = [(0.0, center_crop_x), (round(dur, 3), center_crop_x)]
+        is_dynamic = len(set(x for _, x in trajectory)) > 1
         log(job_id, f"  Crop mode: {'dynamic pan' if is_dynamic else 'static'} (x={trajectory[0][1]})")
 
         if is_dynamic:
@@ -856,11 +863,6 @@ async def create_clips(
             log(job_id, f"  !!! FFmpeg FAILED for clip {idx+1}: {err[-300:]}")
             update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
             continue
-
-        if reframe:
-            log(job_id, f"  Reframing clip {idx+1} to 9:16 portrait...")
-            applied = await asyncio.to_thread(reframe_to_portrait, clip_path, FFMPEG)
-            log(job_id, f"  Reframe {'applied' if applied else 'skipped (already portrait)'}")
 
         log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
         results.append({

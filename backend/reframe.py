@@ -1,27 +1,47 @@
 """
-Auto-reframe: audio + motion guided smooth 9:16 portrait crop.
-
-No model downloads required — uses only OpenCV and numpy (already installed).
+Auto-reframe: audio-guided smooth 9:16 portrait crop using MediaPipe.
 
 How it works:
-  1. Extract audio RMS per frame via FFmpeg.  Frames louder than the 35th-
-     percentile are tagged as "speech frames."
-  2. On each speech frame, compute a frame-difference image against the
-     previous frame.  The centroid of the high-motion region is where the
-     speaker is — their mouth, head, and hands move when they talk.
-  3. On silent frames, hold the last known position so the camera doesn't
-     snap back to centre during pauses.
-  4. Smooth the trajectory with a ~2 s moving-average so the pan glides
-     like a camera operator rather than jittering.
+  1. Extract audio RMS per frame via FFmpeg. Frames above the 35th-percentile
+     are tagged as "speech frames."
+  2. On speech frames, run MediaPipe Face Detection — handles far-away, angled,
+     and partially-visible faces that Haar cascades miss entirely.
+  3. On silent frames, hold the last known speaker position so the camera
+     doesn't drift back to centre during pauses.
+  4. Smooth the trajectory with a ~2 s moving-average (camera-operator glide).
   5. Pipe per-frame crops to FFmpeg, preserving the original audio track.
 
-Works at any distance and any face angle because it tracks motion, not faces.
-Best on static-camera footage (typical for podcasts / interviews / talks).
+The TFLite model (~800 KB) is downloaded once on first use and cached next to
+this file. Every subsequent run uses the cached copy — no re-download.
 """
 import subprocess
+import urllib.request
 import numpy as np
 import cv2
 from pathlib import Path
+
+from mediapipe.tasks import python as _mp_python
+from mediapipe.tasks.python import vision as _mp_vision
+from mediapipe import Image as _MpImage, ImageFormat as _MpFmt
+
+_MODEL_URL  = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "face_detector/blaze_face_short_range/float16/1/"
+    "blaze_face_short_range.tflite"
+)
+_MODEL_PATH = Path(__file__).parent / "_face_detector.tflite"
+
+
+def _get_detector():
+    """Download the TFLite model once, return a MediaPipe FaceDetector."""
+    if not _MODEL_PATH.exists():
+        print("reframe: downloading face detector model (~800 KB)...", flush=True)
+        urllib.request.urlretrieve(_MODEL_URL, str(_MODEL_PATH))
+    opts = _mp_vision.FaceDetectorOptions(
+        base_options=_mp_python.BaseOptions(model_asset_path=str(_MODEL_PATH)),
+        min_detection_confidence=0.4,
+    )
+    return _mp_vision.FaceDetector.create_from_options(opts)
 
 
 # ── Audio energy ──────────────────────────────────────────────────────────────
@@ -46,26 +66,18 @@ def _audio_rms_per_frame(clip_path: Path, fps: float, ffmpeg: str) -> np.ndarray
     ])
 
 
-# ── Motion centroid ───────────────────────────────────────────────────────────
+# ── Face detection ────────────────────────────────────────────────────────────
 
-def _motion_cx(prev_gray: np.ndarray, curr_gray: np.ndarray) -> float | None:
-    """
-    Return the horizontal centroid of significant motion between two frames,
-    or None if there isn't enough motion to be meaningful.
-    """
-    diff = cv2.absdiff(prev_gray, curr_gray)
-    # Blur slightly to merge nearby motion blobs
-    diff = cv2.GaussianBlur(diff, (5, 5), 0)
-    _, mask = cv2.threshold(diff, 12, 255, cv2.THRESH_BINARY)
-
-    # Ignore the very bottom strip (often text overlays / static captions)
-    h = mask.shape[0]
-    mask[int(h * 0.88):] = 0
-
-    M = cv2.moments(mask)
-    if M["m00"] < 500:   # not enough motion pixels — skip this frame
+def _largest_face_cx(rgb_frame: np.ndarray, detector) -> float | None:
+    """Return center-x (pixels) of the largest detected face, or None."""
+    mp_img = _MpImage(image_format=_MpFmt.SRGB, data=rgb_frame)
+    result = detector.detect(mp_img)
+    if not result.detections:
         return None
-    return float(M["m10"] / M["m00"])
+    best = max(result.detections,
+               key=lambda d: d.bounding_box.width * d.bounding_box.height)
+    bb = best.bounding_box
+    return float(bb.origin_x + bb.width / 2)
 
 
 # ── Trajectory ────────────────────────────────────────────────────────────────
@@ -76,53 +88,44 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
     rms       = _audio_rms_per_frame(clip_path, fps, ffmpeg)
     threshold = float(np.percentile(rms, 35)) if len(rms) else 0.0
 
-    sampled: dict[int, float] = {}   # frame_idx → speaker center x
+    sample_every = max(1, int(fps / 2))   # 2 samples per second
+    sampled: dict[int, float] = {}
 
-    cap       = cv2.VideoCapture(str(clip_path))
-    prev_gray = None
-    idx       = 0
-
+    detector = _get_detector()
+    cap = cv2.VideoCapture(str(clip_path))
+    idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-
-        curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        if prev_gray is not None:
+        if idx % sample_every == 0:
             is_speech = (idx < len(rms) and rms[idx] >= threshold) or threshold == 0.0
             if is_speech:
-                cx = _motion_cx(prev_gray, curr_gray)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                cx  = _largest_face_cx(rgb, detector)
                 if cx is not None:
                     sampled[idx] = cx
-
-        prev_gray = curr_gray
         idx += 1
-
     cap.release()
+
     total = idx
     if total == 0:
         return np.array([vid_w // 2], dtype=int)
 
-    # Build dense speaker-center array; default to video centre
     dense = np.full(total, float(vid_w // 2))
-
     if sampled:
         keys = sorted(sampled)
         for k in keys:
             dense[k] = sampled[k]
 
-        # Linear interpolation between detections
         for i in range(len(keys) - 1):
             f0, f1 = keys[i], keys[i + 1]
             t = np.linspace(0, 1, f1 - f0, endpoint=False)
             dense[f0:f1] = dense[f0] + t * (dense[f1] - dense[f0])
 
-        # Hold first/last detections at edges
         dense[: keys[0]]  = dense[keys[0]]
         dense[keys[-1] :] = dense[keys[-1]]
 
-    # Moving-average smooth: ~2 s window → camera-operator glide
     window    = max(1, int(fps * 2))
     cx_smooth = np.convolve(dense, np.ones(window) / window, mode="same")
     return np.clip(cx_smooth - crop_w / 2, 0, vid_w - crop_w).astype(int)
@@ -132,7 +135,7 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
 
 def reframe_to_portrait(clip_path: Path, ffmpeg: str = "ffmpeg") -> bool:
     """
-    Reframe clip_path in-place to 9:16 with audio+motion speaker tracking.
+    Reframe clip_path in-place to 9:16 portrait with audio-guided speaker tracking.
     Returns True if applied, False if skipped (already portrait/square).
     """
     cap   = cv2.VideoCapture(str(clip_path))

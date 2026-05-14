@@ -673,7 +673,7 @@ def smooth_crop_trajectory(
     fallback_crop_x: int,
     crop_w: int,
     src_w: int,
-    max_speed_px_per_s: float = 50.0,
+    max_speed_px_per_s: float = 400.0,
     dead_zone_ratio: float = 0.60,
 ) -> list:
     """

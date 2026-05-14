@@ -445,6 +445,18 @@ function ProcessingTab({ job, onReset, ytStatus, onYTUpload, refreshJob }) {
     );
   }
 
+  if (job.status === "cancelled") {
+    return (
+      <div className="fade" style={{padding:"32px 32px 64px",maxWidth:920,margin:"0 auto"}}>
+        <PixelCard color={C.amber} padding={32} style={{textAlign:"center"}}>
+          <div className="pixel" style={{fontSize:11,color:C.ink,marginBottom:12}}>JOB CANCELLED</div>
+          <p className="pixel" style={{fontSize:14,color:C.ink,lineHeight:1.5,marginBottom:24}}>The job was stopped. Any temp files have been cleaned up.</p>
+          <PixelBtn color="cream" onClick={onReset} size="lg">{`>`} NEW JOB</PixelBtn>
+        </PixelCard>
+      </div>
+    );
+  }
+
   if (job.status === "error") {
     return (
       <div className="fade" style={{padding:"32px 32px 64px",maxWidth:920,margin:"0 auto"}}>
@@ -490,6 +502,15 @@ function LiveProcessing({ job, onCancel }) {
   const [displayProgress, setDisplayProgress] = useState(job.progress || 0);
   const lastServerProgress = useRef(job.progress || 0);
   const lastServerTime = useRef(Date.now());
+  const [cancelling, setCancelling] = useState(false);
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      await authFetch(`${API}/api/jobs/${job.job_id}/cancel`, { method: "POST" });
+    } catch {}
+    onCancel();
+  };
 
   useEffect(() => { const i = setInterval(()=>setElapsed(s=>s+1),1000); return ()=>clearInterval(i); }, []);
 
@@ -572,7 +593,9 @@ function LiveProcessing({ job, onCancel }) {
           <Row k="ELAPSED" v={elapsedStr}/>
           <Row k="ETA"     v={`~${Math.max(1,4-Math.floor(elapsed/60))}M`}/>
           <div style={{marginTop:18}}>
-            <PixelBtn color="danger" full onClick={onCancel}>X CLOSE / NEW</PixelBtn>
+            <PixelBtn color="danger" full onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? "CANCELLING..." : "X CANCEL JOB"}
+            </PixelBtn>
           </div>
         </PixelCard>
       </div>
@@ -1205,7 +1228,7 @@ export default function App() {
   const [ytModal, setYtModal] = useState(null);
   const pollRef = useRef(null);
 
-  const isProcessing = loading || (job && !["done","error"].includes(job?.status));
+  const isProcessing = loading || (job && !["done","error","cancelled"].includes(job?.status));
 
   const fetchPastJobs = async () => {
     try {

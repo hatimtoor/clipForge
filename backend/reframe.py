@@ -1,13 +1,14 @@
 """
 Auto-reframe: audio-guided smooth 9:16 portrait crop using YOLOv8.
 
-Pipeline:
-  1. Audio RMS per frame — only search for the speaker during speech frames.
-  2. YOLOv8n person detection — works at any distance, angle, and lighting.
-     The ~6 MB model downloads once on first use, then is cached permanently.
-  3. Outlier rejection — discard detections that jump > 25 % of frame width.
-  4. Gaussian smooth (3 s sigma) — natural camera-operator glide, no jitter.
-  5. Per-frame FFmpeg pipe — encode the crop while preserving the audio track.
+Three fixes vs. the previous version:
+  1. No outlier rejection — speaker switches between hosts look like big jumps
+     and were being silently discarded. Every detection is now trusted.
+  2. 0.5 s Gaussian sigma instead of 3 s — fast enough to pan to a new speaker
+     within half a second, still smooth enough to avoid jitter.
+  3. Active-speaker selection — when multiple people are detected, pick the one
+     whose head region has the most inter-frame pixel change (moving mouth/head
+     = the person talking), not just the largest bounding box.
 """
 import subprocess
 import numpy as np
@@ -22,14 +23,14 @@ _yolo: YOLO | None = None
 def _get_yolo() -> YOLO:
     global _yolo
     if _yolo is None:
-        _yolo = YOLO("yolov8n.pt")   # ~6 MB, downloaded once by ultralytics
+        _yolo = YOLO("yolov8n.pt")
     return _yolo
 
 
 # ── Audio energy ──────────────────────────────────────────────────────────────
 
 def _audio_rms_per_frame(clip_path: Path, fps: float, ffmpeg: str) -> np.ndarray:
-    """RMS energy per video frame extracted via FFmpeg. Empty array if no audio."""
+    """RMS energy per video frame via FFmpeg PCM dump. Empty if no audio."""
     sr = 16_000
     result = subprocess.run(
         [ffmpeg, "-i", str(clip_path),
@@ -47,47 +48,82 @@ def _audio_rms_per_frame(clip_path: Path, fps: float, ffmpeg: str) -> np.ndarray
     ])
 
 
-# ── Person detection ──────────────────────────────────────────────────────────
+# ── Speaker selection ─────────────────────────────────────────────────────────
 
-def _person_cx(frame: np.ndarray, model: YOLO) -> float | None:
+def _speaking_person_cx(frame: np.ndarray, prev_frame: np.ndarray | None,
+                         model: YOLO) -> float | None:
     """
-    Run YOLOv8 and return the center-x of the largest detected person,
-    or None if no person is found.
+    Detect all people with YOLO, then return the center-x of whoever is
+    most likely speaking.
+
+    Speaking proxy: the person whose head region (top 35 % of their bounding
+    box) has the highest mean pixel difference vs. the previous frame.
+    This catches mouth and head movement without needing a separate landmark
+    model.  Falls back to largest-box selection when prev_frame is unavailable.
     """
-    results = model(frame, classes=[0], verbose=False)   # class 0 = person
+    results = model(frame, classes=[0], verbose=False)
     boxes   = results[0].boxes
     if boxes is None or len(boxes) == 0:
         return None
-    xywh  = boxes.xywh.cpu().numpy()    # columns: cx, cy, w, h
-    areas = xywh[:, 2] * xywh[:, 3]
-    best  = xywh[int(areas.argmax())]
-    return float(best[0])               # center-x in pixels
+
+    # xyxy: absolute pixel coords [x1, y1, x2, y2]
+    xyxy  = boxes.xyxy.cpu().numpy().astype(int)
+    xywh  = boxes.xywh.cpu().numpy()
+
+    if prev_frame is None or len(xyxy) == 1:
+        # Only one person, or no previous frame to diff against → largest box
+        areas = xywh[:, 2] * xywh[:, 3]
+        best  = int(areas.argmax())
+        return float(xywh[best, 0])
+
+    # Compute head-region activity for each detected person
+    h, w = frame.shape[:2]
+    scores = []
+    for x1, y1, x2, y2 in xyxy:
+        x1, y1, x2, y2 = (max(0, x1), max(0, y1),
+                           min(w, x2), min(h, y2))
+        box_h = y2 - y1
+        # Head region = top 35 % of the bounding box
+        head_y2 = y1 + max(1, int(box_h * 0.35))
+        curr_head = frame    [y1:head_y2, x1:x2].astype(np.float32)
+        prev_head = prev_frame[y1:head_y2, x1:x2].astype(np.float32)
+        if curr_head.size == 0:
+            scores.append(0.0)
+        else:
+            scores.append(float(np.mean(np.abs(curr_head - prev_head))))
+
+    best = int(np.argmax(scores))
+    return float(xywh[best, 0])
 
 
 # ── Trajectory ────────────────────────────────────────────────────────────────
 
 def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
                             fps: float, ffmpeg: str) -> np.ndarray:
-    """Return an array of crop_x values (one per frame) ready for the encoder."""
+    """Return crop_x (int) for every frame."""
     rms       = _audio_rms_per_frame(clip_path, fps, ffmpeg)
     threshold = float(np.percentile(rms, 35)) if len(rms) else 0.0
 
-    sample_every = max(1, int(fps))          # sample once per second
+    sample_every = max(1, int(fps / 2))      # sample twice per second
     sampled: dict[int, float] = {}
 
-    model = _get_yolo()
-    cap   = cv2.VideoCapture(str(clip_path))
-    idx   = 0
+    model      = _get_yolo()
+    cap        = cv2.VideoCapture(str(clip_path))
+    prev_frame : np.ndarray | None = None
+    idx        = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
         is_speech = (idx < len(rms) and rms[idx] >= threshold) or threshold == 0.0
         if is_speech and idx % sample_every == 0:
-            cx = _person_cx(frame, model)
+            cx = _speaking_person_cx(frame, prev_frame, model)
             if cx is not None:
                 sampled[idx] = cx
+
+        prev_frame = frame
         idx += 1
 
     cap.release()
@@ -95,24 +131,16 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
     if total == 0:
         return np.array([vid_w // 2], dtype=int)
 
-    # Default to first detection found; fall back to centre if none at all
+    # Build dense trajectory — default to first detection or centre
     default_cx = float(next(iter(sampled.values()))) if sampled else float(vid_w // 2)
     dense = np.full(total, default_cx)
 
     if sampled:
-        # Reject detections that jump more than 25 % of frame width (noise)
-        max_jump = vid_w * 0.25
-        keys_raw = sorted(sampled)
-        filtered: dict[int, float] = {keys_raw[0]: sampled[keys_raw[0]]}
-        for k in keys_raw[1:]:
-            if abs(sampled[k] - list(filtered.values())[-1]) <= max_jump:
-                filtered[k] = sampled[k]
-
-        keys = sorted(filtered)
+        keys = sorted(sampled)
         for k in keys:
-            dense[k] = filtered[k]
+            dense[k] = sampled[k]
 
-        # Linearly interpolate between accepted detections
+        # Linear interpolation between detections (no outlier filter)
         for i in range(len(keys) - 1):
             f0, f1 = keys[i], keys[i + 1]
             t = np.linspace(0, 1, f1 - f0, endpoint=False)
@@ -121,8 +149,8 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
         dense[: keys[0]]  = dense[keys[0]]
         dense[keys[-1] :] = dense[keys[-1]]
 
-    # Gaussian smooth — 3-second sigma gives a natural camera-operator glide
-    sigma  = fps * 3
+    # Gaussian smooth — 0.5 s sigma: fast speaker-switch response, no jitter
+    sigma  = max(1.0, fps * 0.5)
     half_w = int(3 * sigma)
     x      = np.arange(-half_w, half_w + 1)
     kernel = np.exp(-x ** 2 / (2 * sigma ** 2))
@@ -137,7 +165,7 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
 def reframe_to_portrait(clip_path: Path, ffmpeg: str = "ffmpeg") -> bool:
     """
     Reframe clip_path in-place to 9:16 with audio-guided speaker tracking.
-    Returns True if applied, False if skipped (video already portrait/square).
+    Returns True if applied, False if skipped (already portrait/square).
     """
     cap   = cv2.VideoCapture(str(clip_path))
     vid_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

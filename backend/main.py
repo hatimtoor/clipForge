@@ -90,6 +90,9 @@ _oauth_states: dict = {}
 from jobs_store import load_jobs, save_jobs
 jobs: dict[str, dict] = load_jobs()
 
+# Running asyncio tasks — keyed by job_id so they can be cancelled
+_running_tasks: dict[str, asyncio.Task] = {}
+
 from channels_store import load_channels, save_channels
 channels_db: dict = load_channels()
 
@@ -1000,11 +1003,16 @@ async def run_pipeline(job_id: str, req: ClipRequest, auto_upload: bool = False)
                 await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
 
+    except asyncio.CancelledError:
+        log(job_id, "=== PIPELINE CANCELLED ===")
+        update_job(job_id, status="cancelled", progress=0, message="Job cancelled by user.")
+        raise
     except Exception as e:
         log(job_id, f"!!! PIPELINE ERROR: {e}")
         update_job(job_id, status="error", progress=0, message="Pipeline failed", error=str(e))
         raise
     finally:
+        _running_tasks.pop(job_id, None)
         if job_dir.exists():
             shutil.rmtree(job_dir, ignore_errors=True)
 
@@ -1017,7 +1025,7 @@ async def watchdog():
         await asyncio.sleep(60)
         now = datetime.now(timezone.utc)
         for job_id, job in list(jobs.items()):
-            if job["status"] in ("done", "error"):
+            if job["status"] in ("done", "error", "cancelled"):
                 continue
             try:
                 created = datetime.fromisoformat(job["created_at"].replace("Z", "+00:00"))
@@ -1040,8 +1048,7 @@ async def startup_event():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/clip")
-async def start_clip(req: ClipRequest, background_tasks: BackgroundTasks,
-                     _: None = Depends(require_auth)):
+async def start_clip(req: ClipRequest, _: None = Depends(require_auth)):
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "job_id":    job_id,
@@ -1054,8 +1061,23 @@ async def start_clip(req: ClipRequest, background_tasks: BackgroundTasks,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     save_jobs(jobs)
-    background_tasks.add_task(run_pipeline, job_id, req)
+    task = asyncio.create_task(run_pipeline(job_id, req))
+    _running_tasks[job_id] = task
     return {"job_id": job_id}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str, _: None = Depends(require_auth)):
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    task = _running_tasks.get(job_id)
+    if task and not task.done():
+        task.cancel()
+        return {"ok": True}
+    status = jobs[job_id].get("status", "")
+    if status in ("done", "error", "cancelled"):
+        return {"ok": False, "reason": f"Job already {status}"}
+    return {"ok": False, "reason": "No running task found"}
 
 
 @app.get("/api/status/{job_id}")

@@ -592,8 +592,9 @@ function LiveProcessing({ job, onCancel }) {
           <Row k="STAGE"   v={STAGE_LABELS[job.status] || job.status?.toUpperCase()} color={C.hotDeep}/>
           <Row k="ELAPSED" v={elapsedStr}/>
           <Row k="ETA"     v={`~${Math.max(1,4-Math.floor(elapsed/60))}M`}/>
-          <div style={{marginTop:18}}>
-            <PixelBtn color="danger" full onClick={handleCancel} disabled={cancelling}>
+          <div style={{marginTop:18, display:"flex", flexDirection:"column", gap:8}}>
+            <PixelBtn color="danger" full onClick={onCancel}>X CLOSE / NEW</PixelBtn>
+            <PixelBtn color="cream" full onClick={handleCancel} disabled={cancelling}>
               {cancelling ? "CANCELLING..." : "X CANCEL JOB"}
             </PixelBtn>
           </div>

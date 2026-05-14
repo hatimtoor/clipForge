@@ -1,18 +1,16 @@
 """
 Auto-reframe: audio-guided smooth 9:16 portrait crop.
 
-Detection strategy (most-accurate to least, in fallback order):
-  1. MediaPipe Face Detection  — accurate for close / mid-range frontal faces.
-  2. Motion centroid           — frame-diff centroid during audio-active frames;
-                                 catches far-away / angled / profile speakers
-                                 where face detection fails.
-  3. Hold last known position  — never snap back to centre during a gap.
+Detection cascade (most-accurate to least, each is a fallback for the previous):
+  1. MediaPipe Face Detection  — fast, accurate for close / mid-range faces.
+  2. HOG Person Detector       — built into OpenCV, no download needed.
+                                 Detects full-body humans at any distance and
+                                 angle — exactly what TEDx/stage shots need.
+  3. Motion centroid           — frame-diff centroid for anything that moves
+                                 while audio is active.
+  4. Hold last known position  — never snap to centre during a gap.
 
-Trajectory is smoothed with a ~2 s moving-average so the pan glides like
-a camera operator. Frames are piped to FFmpeg to preserve the audio track.
-
-The MediaPipe TFLite model (~800 KB) is downloaded once on first use and
-cached next to this file.
+The MediaPipe TFLite model (~800 KB) is downloaded once and cached locally.
 """
 import subprocess
 import urllib.request
@@ -31,6 +29,10 @@ _MODEL_URL  = (
 )
 _MODEL_PATH = Path(__file__).parent / "_face_detector.tflite"
 
+# HOG person detector — built into OpenCV, no extra install
+_HOG = cv2.HOGDescriptor()
+_HOG.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+
 
 def _get_detector():
     if not _MODEL_PATH.exists():
@@ -38,7 +40,7 @@ def _get_detector():
         urllib.request.urlretrieve(_MODEL_URL, str(_MODEL_PATH))
     opts = _mp_vision.FaceDetectorOptions(
         base_options=_mp_python.BaseOptions(model_asset_path=str(_MODEL_PATH)),
-        min_detection_confidence=0.3,   # low threshold → catch distant faces
+        min_detection_confidence=0.3,
     )
     return _mp_vision.FaceDetector.create_from_options(opts)
 
@@ -76,14 +78,35 @@ def _face_cx(rgb_frame: np.ndarray, detector) -> float | None:
     return float(bb.origin_x + bb.width / 2)
 
 
+def _person_cx(frame: np.ndarray) -> float | None:
+    """
+    HOG full-body person detector center-x, or None.
+    Resize to max 640 px wide first so it runs in reasonable time.
+    Works on stage / far-away shots where faces are too small for MediaPipe.
+    """
+    h, w = frame.shape[:2]
+    scale = min(1.0, 640.0 / w)
+    small = cv2.resize(frame, (int(w * scale), int(h * scale)))
+
+    rects, weights = _HOG.detectMultiScale(
+        small, winStride=(8, 8), padding=(4, 4), scale=1.05
+    )
+    if len(rects) == 0:
+        return None
+
+    best = rects[int(np.argmax(weights))]
+    x, y, bw, bh = best
+    return float((x + bw / 2) / scale)   # scale back to original coords
+
+
 def _motion_cx(prev_gray: np.ndarray, curr_gray: np.ndarray) -> float | None:
-    """Centroid of significant inter-frame motion, or None if too little motion."""
+    """Centroid of significant inter-frame motion, or None."""
     diff = cv2.absdiff(prev_gray, curr_gray)
-    diff = cv2.GaussianBlur(diff, (9, 9), 0)   # larger blur = less noise
-    _, mask = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)  # higher = less sensitive
-    mask[int(mask.shape[0] * 0.88):] = 0        # ignore caption strip
+    diff = cv2.GaussianBlur(diff, (9, 9), 0)
+    _, mask = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+    mask[int(mask.shape[0] * 0.88):] = 0
     M = cv2.moments(mask)
-    if M["m00"] < 1500:     # require more motion pixels before trusting centroid
+    if M["m00"] < 1500:
         return None
     return float(M["m10"] / M["m00"])
 
@@ -95,7 +118,7 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
     rms       = _audio_rms_per_frame(clip_path, fps, ffmpeg)
     threshold = float(np.percentile(rms, 35)) if len(rms) else 0.0
 
-    sample_every = max(1, int(fps))        # 1 sample per second — fewer, stabler
+    sample_every = max(1, int(fps))        # 1 sample per second
     sampled: dict[int, float] = {}
 
     detector  = _get_detector()
@@ -112,11 +135,15 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
         is_speech = (idx < len(rms) and rms[idx] >= threshold) or threshold == 0.0
 
         if is_speech and idx % sample_every == 0:
-            # 1. Try MediaPipe face detection
+            # 1. MediaPipe face detection
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             cx  = _face_cx(rgb, detector)
 
-            # 2. Fall back to motion centroid if no face found
+            # 2. HOG person detection — catches far-away / stage speakers
+            if cx is None:
+                cx = _person_cx(frame)
+
+            # 3. Motion centroid — last visual fallback
             if cx is None and prev_gray is not None:
                 cx = _motion_cx(prev_gray, curr_gray)
 
@@ -131,15 +158,13 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
     if total == 0:
         return np.array([vid_w // 2], dtype=int)
 
-    # Start from first known position if available, else centre
     default_cx = float(next(iter(sampled.values()))) if sampled else float(vid_w // 2)
     dense = np.full(total, default_cx)
 
     if sampled:
-        # Pre-filter outliers: reject any detection that jumps more than 25 % of
-        # frame width from the previous accepted detection — likely a noise spike.
-        max_jump = vid_w * 0.25
-        keys_raw = sorted(sampled)
+        # Reject detections that jump more than 25 % of frame width
+        max_jump  = vid_w * 0.25
+        keys_raw  = sorted(sampled)
         filtered: dict[int, float] = {keys_raw[0]: sampled[keys_raw[0]]}
         for k in keys_raw[1:]:
             prev = list(filtered.values())[-1]
@@ -151,7 +176,6 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
         for k in keys:
             dense[k] = sampled[k]
 
-        # Linear interpolation between accepted detections
         for i in range(len(keys) - 1):
             f0, f1 = keys[i], keys[i + 1]
             t = np.linspace(0, 1, f1 - f0, endpoint=False)
@@ -160,8 +184,7 @@ def _build_crop_trajectory(clip_path: Path, vid_w: int, crop_w: int,
         dense[: keys[0]]  = dense[keys[0]]
         dense[keys[-1] :] = dense[keys[-1]]
 
-    # Gaussian smooth with 3-second sigma — much more natural camera movement
-    # than a box filter; nearby frames matter more than distant ones.
+    # Gaussian smooth — 3-second sigma for natural camera-operator glide
     sigma  = fps * 3
     half_w = int(3 * sigma)
     x      = np.arange(-half_w, half_w + 1)

@@ -12,7 +12,11 @@ from typing import Optional
 import secrets
 
 from dotenv import load_dotenv
-from reframe import _get_yolo, _speaking_person_cx
+try:
+    from reframe import _get_yolo, _speaking_person_cx
+    _REFRAME_AVAILABLE = True
+except ImportError:
+    _REFRAME_AVAILABLE = False
 from groq_limiter import whisper_limiter, llama_limiter, groq_with_retry
 # Load from clipforge root (local dev) or server path
 _env = Path(__file__).parent.parent.parent / ".env"
@@ -639,6 +643,8 @@ def _yolo_sample_positions(
     Returns [(rel_time, crop_x), ...] compatible with smooth_crop_trajectory.
     Works for far, angled, or small-on-screen speakers that Haar cascades miss.
     """
+    if not _REFRAME_AVAILABLE:
+        return []
     try:
         import cv2 as _cv2
     except ImportError:

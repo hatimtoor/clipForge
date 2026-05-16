@@ -63,7 +63,7 @@ export default function Header() {
               const active = path === k;
               const col = k === "hello" ? C.signal : k === "work" ? C.hot : C.amber;
               return (
-                <button key={k} onClick={() => navigate(`/${k}`)} className="pixel" style={{
+                <button key={k} onClick={() => navigate(k === "work" && jobActive ? `/work?job=${jobActive}` : `/${k}`)} className="pixel" style={{
                   background: active ? col : C.cream, color: C.ink,
                   padding: "10px 16px", fontSize: 11, border: BORDER,
                   boxShadow: active ? `0px 0px 0 ${C.ink}` : SHADOW_SM,

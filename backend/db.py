@@ -28,9 +28,10 @@ def db_create_job(data: dict) -> dict:
 
 def db_get_job(job_id: str) -> Optional[dict]:
     try:
-        r = get_db().table("jobs").select("*").eq("id", job_id).single().execute()
-        return r.data
-    except Exception:
+        r = get_db().table("jobs").select("*").eq("id", job_id).execute()
+        return r.data[0] if r.data else None
+    except Exception as e:
+        print(f"[db_get_job] error for {job_id}: {e}", flush=True)
         return None
 
 
@@ -74,9 +75,10 @@ def db_create_channel(data: dict) -> dict:
 
 def db_get_channel(channel_id: str) -> Optional[dict]:
     try:
-        r = get_db().table("channels").select("*").eq("id", channel_id).single().execute()
-        return r.data
-    except Exception:
+        r = get_db().table("channels").select("*").eq("id", channel_id).execute()
+        return r.data[0] if r.data else None
+    except Exception as e:
+        print(f"[db_get_channel] error for {channel_id}: {e}", flush=True)
         return None
 
 

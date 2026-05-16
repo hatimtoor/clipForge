@@ -1246,8 +1246,10 @@ async def cancel_job(job_id: str, user=Depends(require_auth)):
 async def get_status(job_id: str, user=Depends(require_auth)):
     job = db_get_job(job_id)
     if not job:
+        print(f"[status] 404 job_id={job_id} user={user.id}", flush=True)
         raise HTTPException(404, "Job not found")
     if job.get("user_id") != user.id:
+        print(f"[status] 403 job_id={job_id} owner={job.get('user_id')} requester={user.id}", flush=True)
         raise HTTPException(403, "Forbidden")
     return _j(_enrich_clips(job))
 

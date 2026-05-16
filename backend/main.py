@@ -30,7 +30,7 @@ import sys as _sys
 _local_venv_bin = "Scripts" if _sys.platform == "win32" else "bin"
 _local_venv_exe = "yt-dlp.exe" if _sys.platform == "win32" else "yt-dlp"
 _local_venv = Path(__file__).parent.parent.parent / "venv" / _local_venv_bin / _local_venv_exe
-YTDLP = _shutil.which("yt-dlp") or (str(_local_venv) if _local_venv.exists() else "/home/ubuntu/clipforge/venv/bin/yt-dlp")
+YTDLP = _shutil.which("yt-dlp") or str(_local_venv)
 
 # ffmpeg/ffprobe binaries: prefer PATH, then winget install location, then server fallback
 _WINGET_FFMPEG = Path.home() / "AppData/Local/Microsoft/WinGet/Packages"

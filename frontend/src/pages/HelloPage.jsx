@@ -9,7 +9,7 @@ import { authFetch } from "../lib/supabase";
 export default function HelloPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { isPro } = useApp();
+  const { isPro, setJobActive } = useApp();
 
   const [url, setUrl] = useState(searchParams.get("url") || "");
   const [maxClips, setMaxClips] = useState(5);
@@ -36,6 +36,7 @@ export default function HelloPage() {
         setLoading(false);
         return;
       }
+      setJobActive(data.job_id);
       navigate(`/work?job=${data.job_id}`);
     } catch {
       setError("Failed to start job. Is the server running?");

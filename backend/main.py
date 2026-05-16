@@ -1,6 +1,5 @@
 import os
 import json
-import uuid
 import asyncio
 import subprocess
 import re
@@ -8,8 +7,6 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-
-import secrets
 
 from dotenv import load_dotenv
 try:
@@ -22,8 +19,10 @@ from groq_limiter import whisper_limiter, llama_limiter, groq_with_retry
 _env = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(_env if _env.exists() else "/home/ubuntu/.env")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-CLIP_USER    = os.getenv("CLIP_USER", "admin")
-CLIP_PASS    = os.getenv("CLIP_PASS", "")
+
+# Google's OAuth server always returns extra scopes (openid, userinfo.*).
+# This tells oauthlib to accept a superset of the requested scopes without raising.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 # yt-dlp binary: prefer PATH, then local venv, then server fallback
 import shutil as _shutil
@@ -52,25 +51,59 @@ YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_REDIRECT_URI  = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000/api/youtube/callback")
 
 from groq import Groq
+from supabase import create_client as _sb_create_client
 
-import base64
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 
-def require_auth(x_clip_auth: str = Header(default="")):
-    try:
-        user, pw = base64.b64decode(x_clip_auth).decode().split(":", 1)
-    except Exception:
+from r2 import upload_clip, presigned_url, stream_clip, download_clip_to_temp, R2_ENABLED
+from db import (
+    db_create_job, db_get_job, db_update_job, db_get_user_jobs,
+    db_get_active_jobs, db_update_clip_yt_upload,
+    db_create_channel, db_get_channel, db_get_user_channels,
+    db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
+    db_get_youtube_token, db_upsert_youtube_token,
+    db_get_profile, db_check_and_reset_quota, db_increment_clips_used,
+    FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
+)
+
+SUPABASE_URL     = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+
+_sb_auth_client = None
+
+def _get_sb_auth():
+    global _sb_auth_client
+    if _sb_auth_client is None:
+        _sb_auth_client = _sb_create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    return _sb_auth_client
+
+
+async def require_auth(authorization: str = Header(default="")):
+    """Validate Supabase JWT. Returns the Supabase user object."""
+    if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
-    ok = (
-        secrets.compare_digest(user.encode(), CLIP_USER.encode()) and
-        secrets.compare_digest(pw.encode(), CLIP_PASS.encode())
-    )
-    if not ok:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = authorization[7:]
+    try:
+        result = _get_sb_auth().auth.get_user(token)
+        if not result or not result.user:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        return result.user
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+async def require_pro(user=Depends(require_auth)):
+    """Validate Supabase JWT and enforce Pro plan."""
+    profile = db_check_and_reset_quota(user.id)
+    if profile.get("plan", "free") != "pro":
+        raise HTTPException(status_code=403, detail="This feature requires a Pro plan. Upgrade to unlock.")
+    return user
 
 app = FastAPI(title="ClipForge API")
 
@@ -87,18 +120,10 @@ OUTPUT_DIR = BASE_DIR / "output"
 TEMP_DIR   = BASE_DIR / "temp"
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
-YOUTUBE_TOKEN_FILE = BASE_DIR / "youtube_token.json"
-_oauth_states: dict = {}
-
-# ── persistent job store ─────────────────────────────────────────────────────
-from jobs_store import load_jobs, save_jobs
-jobs: dict[str, dict] = load_jobs()
+_oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ...}
 
 # Running asyncio tasks — keyed by job_id so they can be cancelled
 _running_tasks: dict[str, asyncio.Task] = {}
-
-from channels_store import load_channels, save_channels
-channels_db: dict = load_channels()
 
 # ── request / response models ─────────────────────────────────────────────────
 class ClipRequest(BaseModel):
@@ -145,8 +170,35 @@ def log(job_id: str, msg: str):
 
 
 def update_job(job_id: str, **kwargs):
-    jobs[job_id].update(kwargs)
-    save_jobs(jobs)
+    db_update_job(job_id, kwargs)
+
+
+def _j(job: dict) -> dict:
+    """Add job_id alias so frontend code expecting job_id stays unchanged."""
+    return {**job, "job_id": job["id"]} if job else job
+
+
+def _enrich_clips(job: dict) -> dict:
+    """Inject presigned R2 URLs into clip objects so the browser loads video directly from R2."""
+    if not R2_ENABLED or job.get("status") != "done":
+        return job
+    clips = job.get("clips") or []
+    if not clips:
+        return job
+    job_id = job.get("id", "")
+    enriched = []
+    for clip in clips:
+        filename = clip.get("filename", "")
+        if filename and job_id:
+            url = presigned_url(job_id, filename)
+            enriched.append({**clip, "presigned_url": url} if url else clip)
+        else:
+            enriched.append(clip)
+    return {**job, "clips": enriched}
+
+def _c(ch: dict) -> dict:
+    """Add channel_id alias so frontend code expecting channel_id stays unchanged."""
+    return {**ch, "channel_id": ch["id"]} if ch else ch
 
 
 def run_cmd(cmd: list[str], cwd=None) -> tuple[int, str, str]:
@@ -182,6 +234,8 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
     # Stream 1 (video) maps to progress 2-25, stream 2 (audio) maps to 25-36
     _stream = [0]           # current stream index (0-based)
     _last_logged_pct = [-10]
+    import queue as _queue
+    _progress_q: _queue.Queue = _queue.Queue()
 
     def _run_download():
         p = subprocess.Popen(
@@ -214,18 +268,39 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
                 else:
                     prog = 25 + int(pct * 0.11)
                     msg = f"Downloading audio... {pct:.0f}%"
-                update_job(job_id, progress=prog, message=msg)
+                _progress_q.put({"progress": prog, "message": msg})
             elif "[Merger]" in line or "[VideoConvertor]" in line:
                 log(job_id, f"Merge started: {line.strip()}")
-                update_job(job_id, status="merging", progress=37, message="Merging video and audio streams...")
+                _progress_q.put({"status": "merging", "progress": 37, "message": "Merging video and audio streams..."})
             elif "Deleting original file" in line or "Already downloaded" in line:
                 log(job_id, "Merge finalizing...")
-                update_job(job_id, status="merging", progress=39, message="Finalizing download...")
+                _progress_q.put({"status": "merging", "progress": 39, "message": "Finalizing download..."})
         p.wait()
+        _progress_q.put(None)  # sentinel — signals drainer to stop
         return p.returncode, "".join(tail)
 
     loop = asyncio.get_event_loop()
-    returncode, tail = await loop.run_in_executor(None, _run_download)
+    download_future = loop.run_in_executor(None, _run_download)
+
+    # Drain progress updates from the event loop thread so the Supabase
+    # httpx client is never called from the thread-pool executor.
+    done = False
+    while not done:
+        await asyncio.sleep(0.2)
+        while True:
+            try:
+                item = _progress_q.get_nowait()
+                if item is None:
+                    done = True
+                    break
+                update_job(job_id, **item)
+            except _queue.Empty:
+                break
+        # If the future raised an exception the sentinel may never arrive.
+        if not done and download_future.done():
+            done = True
+
+    returncode, tail = await download_future
     if returncode != 0:
         log(job_id, f"yt-dlp failed (exit {returncode})")
         raise RuntimeError(f"yt-dlp failed: {tail[-500:]}")
@@ -900,6 +975,13 @@ async def create_clips(
             continue
 
         log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
+        if R2_ENABLED:
+            try:
+                upload_clip(clip_path, job_id, clip_filename)
+                clip_path.unlink(missing_ok=True)
+                log(job_id, f"  Uploaded to R2, removed from disk")
+            except Exception as e:
+                log(job_id, f"  R2 upload failed (clip kept locally): {e}")
         results.append({
             **clip,
             "filename": clip_filename,
@@ -939,45 +1021,43 @@ async def fetch_latest_video(channel_url: str) -> Optional[dict]:
 async def channel_poller():
     await asyncio.sleep(15)  # brief startup delay
     while True:
-        for channel_id, ch in list(channels_db.items()):
+        for ch in db_get_all_channels():
+            channel_id = ch["id"]
             try:
                 print(f"[watchlist] Checking {ch.get('name', channel_id)}...", flush=True)
                 video = await fetch_latest_video(ch["url"])
-                channels_db[channel_id]["last_checked"] = datetime.now(timezone.utc).isoformat()
+                db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
                 if not video:
-                    channels_db[channel_id]["status"] = "error"
-                    save_channels(channels_db)
+                    db_update_channel(channel_id, {"status": "error"})
                     continue
                 video_id = video.get("id")
-                channels_db[channel_id]["status"] = "watching"
+                db_update_channel(channel_id, {"status": "watching"})
                 if video_id and video_id != ch.get("last_video_id"):
                     print(f"[watchlist] New video: {video.get('title')} ({video_id})", flush=True)
-                    channels_db[channel_id]["last_video_id"] = video_id
-                    channels_db[channel_id]["last_video_title"] = video.get("title", "")
-                    save_channels(channels_db)
+                    db_update_channel(channel_id, {
+                        "last_video_id": video_id,
+                        "last_video_title": video.get("title", ""),
+                    })
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
-                    job_id = str(uuid.uuid4())
-                    jobs[job_id] = {
-                        "job_id": job_id, "status": "queued", "progress": 0,
+                    user_id = ch.get("user_id", "")
+                    job = db_create_job({
+                        "user_id": user_id,
+                        "status": "queued", "progress": 0,
                         "message": f"Queued by watchlist: {ch.get('name','')}",
                         "clips": [], "error": None, "url": video_url,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
                         "source": "watchlist", "channel_id": channel_id,
-                    }
-                    save_jobs(jobs)
+                    })
+                    job_id = job["id"]
                     req = ClipRequest(
                         url=video_url,
                         max_clips=ch.get("max_clips", 3),
                         min_duration=ch.get("min_duration", 30),
                         max_duration=ch.get("max_duration", 90),
                     )
-                    asyncio.create_task(run_pipeline(job_id, req, auto_upload=ch.get("auto_upload", False)))
-                else:
-                    save_channels(channels_db)
+                    asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False)))
             except Exception as e:
                 print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
-                channels_db[channel_id]["last_checked"] = datetime.now(timezone.utc).isoformat()
-                save_channels(channels_db)
+                db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
         await asyncio.sleep(30 * 60)
 
 
@@ -985,7 +1065,7 @@ async def channel_poller():
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def run_pipeline(job_id: str, req: ClipRequest, auto_upload: bool = False):
+async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
@@ -1025,6 +1105,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, auto_upload: bool = False)
             message=f"Done! {len(final_clips)} clips created.",
             clips=final_clips,
         )
+        if user_id and final_clips:
+            db_increment_clips_used(user_id, len(final_clips))
         if auto_upload and final_clips:
             log(job_id, f"Auto-uploading {len(final_clips)} clips to YouTube...")
             for i in range(len(final_clips)):
@@ -1037,7 +1119,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, auto_upload: bool = False)
                     "privacy_status": "public",
                 }
                 log(job_id, f"  Auto-uploading clip {i+1}/{len(final_clips)}...")
-                await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data)
+                await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data, user_id)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
 
     except asyncio.CancelledError:
@@ -1057,21 +1139,35 @@ async def run_pipeline(job_id: str, req: ClipRequest, auto_upload: bool = False)
 
 # ── Job timeout watchdog ───────────────────────────────────────────────────────
 async def watchdog():
-    """Auto-fail jobs stuck for more than 15 minutes."""
+    """Auto-fail jobs with no DB activity for 20 minutes, or older than 90 minutes."""
     while True:
         await asyncio.sleep(60)
         now = datetime.now(timezone.utc)
-        for job_id, job in list(jobs.items()):
-            if job["status"] in ("done", "error", "cancelled"):
-                continue
+        for job in db_get_active_jobs():
+            job_id = job["id"]
             try:
-                created = datetime.fromisoformat(job["created_at"].replace("Z", "+00:00"))
+                # Prefer updated_at (tracks last activity) over created_at (tracks age)
+                ts_str = job.get("updated_at") or job.get("created_at", "")
+                if not ts_str:
+                    continue
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                idle_minutes = (now - ts).total_seconds() / 60
+
+                created_str = job.get("created_at", ts_str)
+                created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
                 if created.tzinfo is None:
                     created = created.replace(tzinfo=timezone.utc)
                 age_minutes = (now - created).total_seconds() / 60
-                if age_minutes > 15:
-                    update_job(job_id, status="error", progress=0,
-                               message="Pipeline failed", error="Job timed out after 15 minutes")
+
+                # Kill if stuck (no update for 20 min) OR if total age exceeds 90 min
+                if idle_minutes > 20 or age_minutes > 90:
+                    reason = "no progress for 20 minutes" if idle_minutes > 20 else "exceeded 90-minute limit"
+                    db_update_job(job_id, {
+                        "status": "error", "progress": 0,
+                        "message": "Pipeline failed", "error": f"Job timed out ({reason})",
+                    })
             except Exception:
                 pass
 
@@ -1085,60 +1181,97 @@ async def startup_event():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/clip")
-async def start_clip(req: ClipRequest, _: None = Depends(require_auth)):
-    job_id = str(uuid.uuid4())
-    jobs[job_id] = {
-        "job_id":    job_id,
-        "status":    "queued",
-        "progress":  0,
-        "message":   "Queued...",
-        "clips":     [],
-        "error":     None,
-        "url":       req.url,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    save_jobs(jobs)
-    task = asyncio.create_task(run_pipeline(job_id, req))
+async def start_clip(req: ClipRequest, user=Depends(require_auth)):
+    profile = db_check_and_reset_quota(user.id)
+    plan = profile.get("plan", "free")
+    clips_used = profile.get("clips_used", 0)
+    max_clips_per_job = PRO_MAX_CLIPS_PER_JOB if plan == "pro" else FREE_MAX_CLIPS_PER_JOB
+    if plan != "pro" and clips_used >= FREE_MONTHLY_CLIP_LIMIT:
+        raise HTTPException(403, f"Monthly clip limit reached ({FREE_MONTHLY_CLIP_LIMIT} clips). Upgrade to Pro for unlimited clips.")
+    if req.reframe and plan != "pro":
+        raise HTTPException(403, "Auto-reframe (9:16) requires a Pro plan. Upgrade to unlock.")
+    req.max_clips = min(req.max_clips, max_clips_per_job)
+    job = db_create_job({
+        "user_id": user.id,
+        "status": "queued",
+        "progress": 0,
+        "message": "Queued...",
+        "clips": [],
+        "error": None,
+        "url": req.url,
+        "reframe": req.reframe,
+        "max_clips": req.max_clips,
+        "min_duration": req.min_duration,
+        "max_duration": req.max_duration,
+    })
+    job_id = job["id"]
+    task = asyncio.create_task(run_pipeline(job_id, req, user_id=user.id))
     _running_tasks[job_id] = task
     return {"job_id": job_id}
 
 
 @app.post("/api/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str, _: None = Depends(require_auth)):
-    if job_id not in jobs:
+async def cancel_job(job_id: str, user=Depends(require_auth)):
+    job = db_get_job(job_id)
+    if not job:
         raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
     task = _running_tasks.get(job_id)
     if task and not task.done():
         task.cancel()
         return {"ok": True}
-    status = jobs[job_id].get("status", "")
+    status = job.get("status", "")
     if status in ("done", "error", "cancelled"):
         return {"ok": False, "reason": f"Job already {status}"}
     return {"ok": False, "reason": "No running task found"}
 
 
 @app.get("/api/status/{job_id}")
-async def get_status(job_id: str, _: None = Depends(require_auth)):
-    if job_id not in jobs:
+async def get_status(job_id: str, user=Depends(require_auth)):
+    job = db_get_job(job_id)
+    if not job:
         raise HTTPException(404, "Job not found")
-    return jobs[job_id]
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    return _j(_enrich_clips(job))
 
 
 @app.get("/api/jobs")
-async def list_jobs(_: None = Depends(require_auth)):
-    return list(jobs.values())
+async def list_jobs(user=Depends(require_auth)):
+    return [_j(j) for j in db_get_user_jobs(user.id)]
+
+
+@app.get("/api/profile")
+async def get_profile(user=Depends(require_auth)):
+    profile = db_check_and_reset_quota(user.id)
+    return {
+        "plan": profile.get("plan", "free"),
+        "clips_used": profile.get("clips_used", 0),
+        "clips_limit": FREE_MONTHLY_CLIP_LIMIT,
+    }
 
 
 @app.get("/clips/{job_id}/{filename}")
 async def serve_clip(job_id: str, filename: str):
+    from fastapi.responses import RedirectResponse
     clip_path = OUTPUT_DIR / job_id / filename
-    if not clip_path.exists():
-        raise HTTPException(404, "Clip not found")
-    return FileResponse(str(clip_path), media_type="video/mp4")
+    if clip_path.exists():
+        return FileResponse(str(clip_path), media_type="video/mp4")
+    if R2_ENABLED:
+        url = presigned_url(job_id, filename)
+        if url:
+            return RedirectResponse(url, status_code=307)
+    raise HTTPException(404, "Clip not found")
 
 
 @app.get("/api/transcript/{job_id}")
-async def get_transcript(job_id: str, _: None = Depends(require_auth)):
+async def get_transcript(job_id: str, user=Depends(require_auth)):
+    job = db_get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
     transcript_path = OUTPUT_DIR / job_id / "transcript.json"
     if not transcript_path.exists():
         raise HTTPException(404, "Transcript not found")
@@ -1149,16 +1282,16 @@ async def get_transcript(job_id: str, _: None = Depends(require_auth)):
 # YOUTUBE INTEGRATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_youtube_credentials():
-    """Load stored YouTube OAuth credentials and refresh if expired."""
-    if not YOUTUBE_TOKEN_FILE.exists():
+def get_youtube_credentials(user_id: str):
+    """Load stored YouTube OAuth credentials for a user and refresh if expired."""
+    token_data = db_get_youtube_token(user_id)
+    if not token_data:
         return None
     try:
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request as GRequest
-        token_data = json.loads(YOUTUBE_TOKEN_FILE.read_text())
         creds = Credentials(
-            token=token_data.get("token"),
+            token=token_data.get("access_token"),
             refresh_token=token_data.get("refresh_token"),
             token_uri="https://oauth2.googleapis.com/token",
             client_id=YOUTUBE_CLIENT_ID,
@@ -1167,33 +1300,42 @@ def get_youtube_credentials():
         )
         if creds.expired and creds.refresh_token:
             creds.refresh(GRequest())
-            YOUTUBE_TOKEN_FILE.write_text(json.dumps({
-                "token": creds.token,
-                "refresh_token": creds.refresh_token,
-            }))
+            db_upsert_youtube_token(user_id, creds.token, creds.refresh_token)
         return creds
     except Exception:
         return None
 
 
-def do_youtube_upload(job_id: str, clip_index: int, req_data: dict):
+def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str = ""):
     """Upload a clip to YouTube (runs in background thread)."""
     try:
         from googleapiclient.discovery import build as yt_build
         from googleapiclient.http import MediaFileUpload
 
-        creds = get_youtube_credentials()
+        creds = get_youtube_credentials(user_id)
         if not creds:
-            jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "error", "error": "Not authenticated with YouTube"}
-            save_jobs(jobs)
+            db_update_clip_yt_upload(job_id, clip_index, {"status": "error", "error": "Not authenticated with YouTube"})
             return
 
-        clip = jobs[job_id]["clips"][clip_index]
-        clip_file = OUTPUT_DIR / job_id / clip["filename"]
-        if not clip_file.exists():
-            jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "error", "error": "Clip file not found"}
-            save_jobs(jobs)
+        job = db_get_job(job_id)
+        if not job:
             return
+        clips = job.get("clips", [])
+        if clip_index >= len(clips):
+            return
+        clip = clips[clip_index]
+        clip_file = OUTPUT_DIR / job_id / clip["filename"]
+        temp_file = None
+        if not clip_file.exists():
+            if R2_ENABLED:
+                temp_file = download_clip_to_temp(job_id, clip["filename"])
+                if not temp_file:
+                    db_update_clip_yt_upload(job_id, clip_index, {"status": "error", "error": "Clip not found in storage"})
+                    return
+                clip_file = temp_file
+            else:
+                db_update_clip_yt_upload(job_id, clip_index, {"status": "error", "error": "Clip file not found"})
+                return
 
         youtube = yt_build("youtube", "v3", credentials=creds)
 
@@ -1218,8 +1360,7 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict):
         }
 
         media = MediaFileUpload(str(clip_file), mimetype="video/mp4", chunksize=256 * 1024, resumable=True)
-        jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "uploading", "progress": 0}
-        save_jobs(jobs)
+        db_update_clip_yt_upload(job_id, clip_index, {"status": "uploading", "progress": 0})
 
         request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
         response = None
@@ -1228,26 +1369,26 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict):
             if status:
                 total = getattr(status, "total_size", None) or getattr(status, "resumable_total", None)
                 prog = int(status.resumable_progress / total * 100) if total else 0
-                jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "uploading", "progress": prog}
-                save_jobs(jobs)
+                db_update_clip_yt_upload(job_id, clip_index, {"status": "uploading", "progress": prog})
 
         video_id = response["id"]
-        jobs[job_id]["clips"][clip_index]["yt_upload"] = {
+        db_update_clip_yt_upload(job_id, clip_index, {
             "status": "done",
             "progress": 100,
             "video_id": video_id,
             "url": f"https://youtube.com/watch?v={video_id}",
-        }
-        save_jobs(jobs)
+        })
 
     except Exception as e:
-        jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "error", "error": str(e)}
-        save_jobs(jobs)
+        db_update_clip_yt_upload(job_id, clip_index, {"status": "error", "error": str(e)})
+    finally:
+        if temp_file and temp_file.exists():
+            temp_file.unlink(missing_ok=True)
 
 
 @app.get("/api/youtube/status")
-async def youtube_status(_: None = Depends(require_auth)):
-    creds = get_youtube_credentials()
+async def youtube_status(user=Depends(require_pro)):
+    creds = get_youtube_credentials(user.id)
     if not creds:
         return {"connected": False}
     try:
@@ -1263,7 +1404,7 @@ async def youtube_status(_: None = Depends(require_auth)):
 
 
 @app.get("/api/youtube/auth")
-async def youtube_auth(_: None = Depends(require_auth)):
+async def youtube_auth(user=Depends(require_pro)):
     if not YOUTUBE_CLIENT_ID or not YOUTUBE_CLIENT_SECRET:
         raise HTTPException(400, "YouTube OAuth not configured. Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env")
     try:
@@ -1282,7 +1423,7 @@ async def youtube_auth(_: None = Depends(require_auth)):
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
         auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
-        _oauth_states[state] = getattr(flow, "code_verifier", None)
+        _oauth_states[state] = {"user_id": user.id, "code_verifier": getattr(flow, "code_verifier", None)}
         return {"auth_url": auth_url}
     except Exception as e:
         raise HTTPException(500, f"OAuth setup failed: {e}")
@@ -1296,6 +1437,9 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
         return HTMLResponse("<script>window.opener?.postMessage({type:'youtube_auth_error',error:'Invalid state'},'*');window.close();</script>")
     try:
         from google_auth_oauthlib.flow import Flow
+        state_data = _oauth_states[state]
+        user_id = state_data["user_id"] if isinstance(state_data, dict) else ""
+        code_verifier = state_data.get("code_verifier") if isinstance(state_data, dict) else state_data
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -1310,13 +1454,9 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
             state=state,
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
-        code_verifier = _oauth_states.get(state)
         flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
-        YOUTUBE_TOKEN_FILE.write_text(json.dumps({
-            "token": creds.token,
-            "refresh_token": creds.refresh_token,
-        }))
+        db_upsert_youtube_token(user_id, creds.token, creds.refresh_token)
         _oauth_states.pop(state, None)
         return HTMLResponse("<script>window.opener?.postMessage({type:'youtube_auth_success'},'*');window.close();</script>")
     except Exception as e:
@@ -1326,36 +1466,40 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
 @app.post("/api/youtube/upload/{job_id}/{clip_index}")
 async def start_youtube_upload(
     job_id: str, clip_index: int, req: YouTubeUploadRequest,
-    background_tasks: BackgroundTasks, _: None = Depends(require_auth),
+    background_tasks: BackgroundTasks, user=Depends(require_pro),
 ):
-    if job_id not in jobs:
+    job = db_get_job(job_id)
+    if not job:
         raise HTTPException(404, "Job not found")
-    if clip_index >= len(jobs[job_id].get("clips", [])):
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    if clip_index >= len(job.get("clips", [])):
         raise HTTPException(404, "Clip not found")
-    jobs[job_id]["clips"][clip_index]["yt_upload"] = {"status": "queued", "progress": 0}
-    save_jobs(jobs)
-    background_tasks.add_task(do_youtube_upload, job_id, clip_index, req.model_dump())
+    db_update_clip_yt_upload(job_id, clip_index, {"status": "queued", "progress": 0})
+    background_tasks.add_task(do_youtube_upload, job_id, clip_index, req.model_dump(), user.id)
     return {"status": "queued"}
 
 
 @app.get("/api/youtube/upload_status/{job_id}/{clip_index}")
-async def get_youtube_upload_status(job_id: str, clip_index: int, _: None = Depends(require_auth)):
-    if job_id not in jobs:
+async def get_youtube_upload_status(job_id: str, clip_index: int, user=Depends(require_pro)):
+    job = db_get_job(job_id)
+    if not job:
         raise HTTPException(404, "Job not found")
-    clips = jobs[job_id].get("clips", [])
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    clips = job.get("clips", [])
     if clip_index >= len(clips):
         raise HTTPException(404, "Clip not found")
     return clips[clip_index].get("yt_upload", {"status": "none"})
 
 
 @app.get("/api/channels")
-async def list_channels(_: None = Depends(require_auth)):
-    return list(channels_db.values())
+async def list_channels(user=Depends(require_pro)):
+    return [_c(ch) for ch in db_get_user_channels(user.id)]
 
 
 @app.post("/api/channels")
-async def add_channel(req: ChannelRequest, _: None = Depends(require_auth)):
-    # Resolve channel name via yt-dlp
+async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
     cmd = [YTDLP, "--flat-playlist", "--playlist-end", "1", "-j", "--no-warnings"]
     if COOKIES_FROM_BROWSER:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
@@ -1370,7 +1514,6 @@ async def add_channel(req: ChannelRequest, _: None = Depends(require_auth)):
             return -1, ""
     code, out = await asyncio.to_thread(_resolve)
     channel_name = req.url
-    channel_id = str(uuid.uuid4())
     last_video_id = None
     if code == 0 and out:
         for line in out.splitlines():
@@ -1379,81 +1522,76 @@ async def add_channel(req: ChannelRequest, _: None = Depends(require_auth)):
                 try:
                     data = json.loads(line)
                     channel_name = data.get("channel") or data.get("uploader") or req.url
-                    channel_id = data.get("channel_id") or channel_id
                     last_video_id = data.get("id")
                     break
                 except:
                     pass
-    if channel_id in channels_db:
+    existing = db_get_user_channels(user.id)
+    if any(c.get("url") == req.url for c in existing):
         raise HTTPException(400, "Channel already in watchlist")
-    channels_db[channel_id] = {
-        "channel_id": channel_id, "url": req.url, "name": channel_name,
-        "last_video_id": last_video_id, "last_video_title": None,
+    ch_data = db_create_channel({
+        "user_id": user.id,
+        "url": req.url,
+        "name": channel_name,
+        "last_video_id": last_video_id,
+        "last_video_title": None,
         "last_checked": datetime.now(timezone.utc).isoformat(),
         "auto_upload": req.auto_upload,
-        "max_clips": req.max_clips, "min_duration": req.min_duration, "max_duration": req.max_duration,
-        "added_at": datetime.now(timezone.utc).isoformat(), "status": "watching",
-    }
-    save_channels(channels_db)
-    return channels_db[channel_id]
+        "max_clips": req.max_clips,
+        "min_duration": req.min_duration,
+        "max_duration": req.max_duration,
+        "status": "watching",
+    })
+    return _c(ch_data)
 
 
 @app.delete("/api/channels/{channel_id}")
-async def remove_channel(channel_id: str, _: None = Depends(require_auth)):
-    if channel_id not in channels_db:
+async def remove_channel(channel_id: str, user=Depends(require_pro)):
+    if not db_channel_owned_by(channel_id, user.id):
         raise HTTPException(404, "Channel not found")
-    del channels_db[channel_id]
-    save_channels(channels_db)
+    db_delete_channel(channel_id)
     return {"ok": True}
 
 
 @app.patch("/api/channels/{channel_id}")
-async def update_channel(channel_id: str, req: ChannelPatchRequest, _: None = Depends(require_auth)):
-    if channel_id not in channels_db:
+async def update_channel(channel_id: str, req: ChannelPatchRequest, user=Depends(require_pro)):
+    if not db_channel_owned_by(channel_id, user.id):
         raise HTTPException(404, "Channel not found")
-    if req.auto_upload is not None:
-        channels_db[channel_id]["auto_upload"] = req.auto_upload
-    if req.max_clips is not None:
-        channels_db[channel_id]["max_clips"] = req.max_clips
-    if req.min_duration is not None:
-        channels_db[channel_id]["min_duration"] = req.min_duration
-    if req.max_duration is not None:
-        channels_db[channel_id]["max_duration"] = req.max_duration
-    save_channels(channels_db)
-    return channels_db[channel_id]
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if updates:
+        db_update_channel(channel_id, updates)
+    return _c(db_get_channel(channel_id))
 
 
 @app.post("/api/channels/{channel_id}/check")
-async def check_channel_now(channel_id: str, _: None = Depends(require_auth)):
-    if channel_id not in channels_db:
+async def check_channel_now(channel_id: str, user=Depends(require_pro)):
+    if not db_channel_owned_by(channel_id, user.id):
         raise HTTPException(404, "Channel not found")
-    ch = channels_db[channel_id]
+    ch = db_get_channel(channel_id)
     video = await fetch_latest_video(ch["url"])
-    channels_db[channel_id]["last_checked"] = datetime.now(timezone.utc).isoformat()
+    db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
     if not video:
-        channels_db[channel_id]["status"] = "error"
-        save_channels(channels_db)
+        db_update_channel(channel_id, {"status": "error"})
         return {"triggered": False, "reason": "Could not fetch channel"}
     video_id = video.get("id")
-    channels_db[channel_id]["status"] = "watching"
+    db_update_channel(channel_id, {"status": "watching"})
     if video_id and video_id != ch.get("last_video_id"):
-        channels_db[channel_id]["last_video_id"] = video_id
-        channels_db[channel_id]["last_video_title"] = video.get("title", "")
-        save_channels(channels_db)
+        db_update_channel(channel_id, {
+            "last_video_id": video_id,
+            "last_video_title": video.get("title", ""),
+        })
         video_url = f"https://www.youtube.com/watch?v={video_id}"
-        job_id = str(uuid.uuid4())
-        jobs[job_id] = {
-            "job_id": job_id, "status": "queued", "progress": 0,
+        job = db_create_job({
+            "user_id": user.id,
+            "status": "queued", "progress": 0,
             "message": f"Manual check: {ch.get('name','')}",
             "clips": [], "error": None, "url": video_url,
-            "created_at": datetime.now(timezone.utc).isoformat(),
             "source": "watchlist", "channel_id": channel_id,
-        }
-        save_jobs(jobs)
-        req = ClipRequest(url=video_url, max_clips=ch.get("max_clips",3), min_duration=ch.get("min_duration",30), max_duration=ch.get("max_duration",90))
-        asyncio.create_task(run_pipeline(job_id, req, auto_upload=ch.get("auto_upload", False)))
+        })
+        job_id = job["id"]
+        clip_req = ClipRequest(url=video_url, max_clips=ch.get("max_clips", 3), min_duration=ch.get("min_duration", 30), max_duration=ch.get("max_duration", 90))
+        asyncio.create_task(run_pipeline(job_id, clip_req, user_id=user.id, auto_upload=ch.get("auto_upload", False)))
         return {"triggered": True, "job_id": job_id, "video_title": video.get("title")}
-    save_channels(channels_db)
     return {"triggered": False, "reason": "No new video found"}
 
 

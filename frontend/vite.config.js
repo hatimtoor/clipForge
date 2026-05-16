@@ -6,7 +6,10 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:8000',
-      '/clips': 'http://localhost:8000',
+      '/clips': {
+        target: 'http://localhost:8000',
+        followRedirects: false,
+      },
     }
   }
 })

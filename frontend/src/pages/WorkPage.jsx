@@ -352,6 +352,7 @@ export default function WorkPage() {
   const [ytModal, setYtModal] = useState(null);
   const [loading, setLoading] = useState(!!jobId);
   const pollRef = useRef(null);
+  const isTerminalRef = useRef(false);
 
   const isTerminal = (status) => ["done", "error", "cancelled"].includes(status);
 
@@ -364,7 +365,7 @@ export default function WorkPage() {
   };
 
   useEffect(() => {
-    if (!jobId) { setJobActive(false); return; }
+    if (!jobId) { setJobActive(null); return; }
     clearInterval(pollRef.current);
 
     // fetch immediately
@@ -372,21 +373,24 @@ export default function WorkPage() {
       setLoading(false);
       if (!data) return;
       setJob(data);
-      setJobActive(!isTerminal(data.status));
-      if (!isTerminal(data.status)) {
+      const terminal = isTerminal(data.status);
+      isTerminalRef.current = terminal;
+      setJobActive(terminal ? null : jobId);
+      if (!terminal) {
         pollRef.current = setInterval(async () => {
           const d = await fetchJob(jobId);
           if (!d) return;
           setJob(d);
           if (isTerminal(d.status)) {
             clearInterval(pollRef.current);
-            setJobActive(false);
+            isTerminalRef.current = true;
+            setJobActive(null);
           }
         }, 1000);
       }
     });
 
-    return () => { clearInterval(pollRef.current); setJobActive(false); };
+    return () => { clearInterval(pollRef.current); if (isTerminalRef.current) setJobActive(null); };
   }, [jobId]);
 
   const refreshJob = async () => {

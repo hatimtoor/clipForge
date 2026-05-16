@@ -24,13 +24,28 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # This tells oauthlib to accept a superset of the requested scopes without raising.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-# yt-dlp binary: prefer PATH, then local venv, then server fallback
+# yt-dlp binary: probe all realistic locations in priority order
 import shutil as _shutil
 import sys as _sys
 _local_venv_bin = "Scripts" if _sys.platform == "win32" else "bin"
 _local_venv_exe = "yt-dlp.exe" if _sys.platform == "win32" else "yt-dlp"
-_local_venv = Path(__file__).parent.parent.parent / "venv" / _local_venv_bin / _local_venv_exe
-YTDLP = _shutil.which("yt-dlp") or str(_local_venv)
+def _find_ytdlp() -> str:
+    # 1. Active PATH (works when venv is activated or yt-dlp is system-installed)
+    found = _shutil.which("yt-dlp")
+    if found:
+        return found
+    # 2. Probe candidate paths — server layout vs local-dev layout vs user install
+    _candidates = [
+        Path(__file__).parent.parent / "venv" / _local_venv_bin / _local_venv_exe,          # server: repo/venv
+        Path(__file__).parent.parent.parent / "venv" / _local_venv_bin / _local_venv_exe,   # local dev: clipper/../venv
+        Path.home() / ".local" / "bin" / "yt-dlp",                                           # pip install --user
+        Path("/usr/local/bin/yt-dlp"),                                                        # sudo pip install
+    ]
+    for p in _candidates:
+        if p.exists():
+            return str(p)
+    return "yt-dlp"  # last resort — will fail clearly at runtime if missing
+YTDLP = _find_ytdlp()
 
 # ffmpeg/ffprobe binaries: prefer PATH, then winget install location, then server fallback
 _WINGET_FFMPEG = Path.home() / "AppData/Local/Microsoft/WinGet/Packages"

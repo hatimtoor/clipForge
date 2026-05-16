@@ -29,7 +29,7 @@ export default function App() {
   const [authed, setAuthed] = useState(null);
   const [profile, setProfile] = useState({ plan: "free", clips_used: 0, clips_limit: 10 });
   const [ytStatus, setYtStatus] = useState({ connected: false });
-  const [jobActive, setJobActive] = useState(false);
+  const [jobActive, setJobActive] = useState(null); // null | jobId string
 
   const isPro = profile.plan === "pro";
 

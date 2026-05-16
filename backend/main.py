@@ -1598,7 +1598,22 @@ async def check_channel_now(channel_id: str, user=Depends(require_pro)):
 # Serve frontend (must be last)
 FRONTEND_BUILD = BASE_DIR / "frontend" / "dist"
 if FRONTEND_BUILD.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_BUILD), html=True), name="frontend")
+    # Serve Vite's bundled JS/CSS/images under /assets
+    _assets_dir = FRONTEND_BUILD / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Catch-all that serves index.html so React Router handles all client-side routes."""
+    if FRONTEND_BUILD.exists():
+        candidate = FRONTEND_BUILD / full_path
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        index = FRONTEND_BUILD / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+    raise HTTPException(404, "Frontend not built")
 
 
 if __name__ == "__main__":

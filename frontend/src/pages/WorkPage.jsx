@@ -351,6 +351,7 @@ export default function WorkPage() {
   const [job, setJob] = useState(null);
   const [ytModal, setYtModal] = useState(null);
   const [loading, setLoading] = useState(!!jobId);
+  const [fetchError, setFetchError] = useState(false);
   const pollRef = useRef(null);
   const isTerminalRef = useRef(false);
 
@@ -365,13 +366,16 @@ export default function WorkPage() {
   };
 
   useEffect(() => {
-    if (!jobId) { setJobActive(null); return; }
+    if (!jobId) { setJobActive(null); setLoading(false); return; }
+    setLoading(true);
+    setFetchError(false);
+    setJob(null);
     clearInterval(pollRef.current);
 
     // fetch immediately
     fetchJob(jobId).then(data => {
       setLoading(false);
-      if (!data) return;
+      if (!data) { setFetchError(true); return; }
       setJob(data);
       const terminal = isTerminal(data.status);
       isTerminalRef.current = terminal;
@@ -409,6 +413,23 @@ export default function WorkPage() {
         <div style={{ padding: "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
           <PixelCard color={C.cream} padding={48} style={{ textAlign: "center" }}>
             <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Loading...</p>
+          </PixelCard>
+        </div>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div style={{ minHeight: "100vh" }}>
+        <style>{KEYFRAMES}</style>
+        <Header />
+        <div className="fade" style={{ padding: "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
+          <PixelCard color={C.hot} padding={48} style={{ textAlign: "center" }}>
+            <div className="pixel" style={{ fontSize: 11, color: C.ink, marginBottom: 14 }}>! JOB NOT FOUND</div>
+            <h2 className="pixel" style={{ fontSize: 22, color: C.ink, marginBottom: 18 }}>Could not load this job.</h2>
+            <p className="vt" style={{ fontSize: 20, color: C.ink, marginBottom: 24 }}>It may have expired or the server is unreachable.</p>
+            <PixelBtn color="cream" onClick={goNew}>{`>`} NEW CLIP</PixelBtn>
           </PixelCard>
         </div>
       </div>

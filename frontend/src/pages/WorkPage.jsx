@@ -114,6 +114,8 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
 // ── ClipCard ───────────────────────────────────────────────────────────────────
 function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected }) {
   const [downloading, setDownloading] = useState(false);
+  const isMobile = useMobile();
+
   const handleDownload = async () => {
     if (clip.presigned_url) {
       const a = document.createElement("a");
@@ -133,9 +135,43 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
       URL.revokeObjectURL(url);
     } finally { setDownloading(false); }
   };
+
   const ytUp = clip.yt_upload;
   const score = clip.virality_score || 0;
   const fillBlocks = Math.round(score / 2);
+
+  if (isMobile) {
+    return (
+      <div style={{ background: cardColor, border: BORDER, boxShadow: SHADOW_SM }}>
+        <div style={{ padding: "14px 16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Tag bg={C.cream}>CLIP {String(idx + 1).padStart(2, "0")}</Tag>
+            <Tag bg={C.cream}>{clip.duration}S</Tag>
+            <span className="pixel" style={{ fontSize: 8, color: C.dim2, marginLeft: "auto" }}>{score.toFixed(1)}/10</span>
+          </div>
+          <h3 className="pixel" style={{ fontSize: 10, color: C.ink, lineHeight: 1.5, marginBottom: 12 }}>{clip.title || `Clip ${idx + 1}`}</h3>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <PixelBtn color="cream" size="sm" onClick={onPreview}>{isActive ? "|| HIDE" : "> PLAY"}</PixelBtn>
+            <PixelBtn color="cream" size="sm" onClick={handleDownload} disabled={downloading}>{downloading ? "..." : "v MP4"}</PixelBtn>
+            {ytConnected && (
+              ytUp?.status === "done"
+                ? <a href={ytUp.url} target="_blank" rel="noreferrer" className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.yt, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textDecoration: "none", textTransform: "uppercase" }}>{`>`} YT ^</a>
+                : (ytUp?.status === "uploading" || ytUp?.status === "queued")
+                  ? <span className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center" }}>^ {ytUp.progress || 0}%</span>
+                  : <PixelBtn color="yt" size="sm" onClick={onYTUpload}>^ YT</PixelBtn>
+            )}
+          </div>
+        </div>
+        {isActive && (
+          <div style={{ borderTop: BORDER }}>
+            <div style={{ aspectRatio: "9/16", background: C.windowBg, maxHeight: "70vh" }}>
+              <video src={clip.presigned_url || clip.path} controls autoPlay preload="auto" style={{ width: "100%", height: "100%", display: "block" }} />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ background: cardColor, border: BORDER, boxShadow: isActive ? `8px 8px 0 ${C.ink}` : SHADOW, transform: isActive ? "translate(-3px,-3px)" : "none", transition: "transform .1s, box-shadow .1s" }}>
@@ -226,7 +262,7 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew }) {
           )}
         </div>
 
-        {active && (
+        {!isMobile && active && (
           <div ref={previewRef} style={{ position: "sticky", top: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div className="pixel" style={{ fontSize: 9, color: C.dim2 }}>NOW PREVIEWING</div>

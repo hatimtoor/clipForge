@@ -4,6 +4,7 @@ import { PixelBtn, PixelCard, Tag } from "../components/ui";
 import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
+import { useMobile } from "../hooks/useMobile";
 
 function UpgradeGate() {
   return (
@@ -26,6 +27,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
   const [maxClips, setMaxClips] = useState(ch.max_clips ?? 3);
   const [minDur,   setMinDur]   = useState(ch.min_duration ?? 30);
   const [maxDur,   setMaxDur]   = useState(ch.max_duration ?? 90);
+  const isMobile = useMobile();
 
   const patch = async (fields) => {
     await authFetch(`/api/channels/${ch.channel_id}`, {
@@ -66,8 +68,8 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
 
   return (
     <PixelCard color={C.cream} padding={0}>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", alignItems: "stretch" }}>
-        <div style={{ padding: "20px 22px", borderRight: BORDER }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) auto", alignItems: "stretch" }}>
+        <div style={{ padding: isMobile ? "16px" : "20px 22px", borderRight: isMobile ? "none" : BORDER, borderBottom: isMobile ? BORDER : "none" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
             <span className="pixel" style={{ fontSize: 12, color: C.ink }}>{ch.name}</span>
             <Tag bg={statusColor(ch.status || "watching")} color={C.ink}>{(ch.status || "WATCHING").toUpperCase()}</Tag>
@@ -81,18 +83,18 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
             {ch.last_video_title && (
               <div style={{ minWidth: 0 }}>
                 <span className="pixel" style={{ fontSize: 7, color: C.dim2 }}>LAST VIDEO </span>
-                <span className="vt" style={{ fontSize: 16, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", maxWidth: 340 }}>{ch.last_video_title}</span>
+                <span className="vt" style={{ fontSize: 16, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", maxWidth: isMobile ? "100%" : 340 }}>{ch.last_video_title}</span>
               </div>
             )}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, maxWidth: 340 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
             <Stepper label="MAX CLIPS" val={maxClips} setVal={setMaxClips} min={1} max={10} step={1} field="max_clips" />
             <Stepper label="MIN DUR"   val={minDur}   setVal={setMinDur}   min={15} max={120} step={5}  field="min_duration" suffix="s" />
             <Stepper label="MAX DUR"   val={maxDur}   setVal={setMaxDur}   min={30} max={180} step={10} field="max_duration" suffix="s" />
           </div>
         </div>
 
-        <div style={{ padding: "20px 18px", display: "flex", flexDirection: "column", gap: 10, justifyContent: "center", minWidth: 170 }}>
+        <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: isMobile ? "row" : "column", flexWrap: "wrap", gap: 10, justifyContent: isMobile ? "flex-start" : "center", minWidth: isMobile ? "auto" : 170 }}>
           <button onClick={() => onToggleAutoUpload(ch)} className="pixel" style={{
             padding: "10px 12px", fontSize: 8, textAlign: "center",
             background: ch.auto_upload ? C.signal : C.cream2,
@@ -122,6 +124,7 @@ function WatchlistContent() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
   const [checkingId, setCheckingId] = useState(null);
+  const isMobile = useMobile();
 
   const fetchChannels = async () => {
     try {
@@ -181,7 +184,7 @@ function WatchlistContent() {
   };
 
   return (
-    <div className="fade" style={{ padding: "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
+    <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
       <div style={{ marginBottom: 24 }}>
         <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>WATCHLIST</div>
         <h1 className="pixel" style={{ fontSize: 26, color: C.ink }}>Channel monitor.</h1>
@@ -193,7 +196,7 @@ function WatchlistContent() {
       <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24 }}>
         <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD CHANNEL</div>
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 260, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM }}>
+          <div style={{ flex: 1, minWidth: isMobile ? 0 : 260, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM }}>
             <span className="pixel" style={{ fontSize: 12, color: C.dim }}>{`>`}</span>
             <input value={urlInput} onChange={e => setUrlInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdd()}
               placeholder="https://youtube.com/@channel or /channel/UCxxx"

@@ -115,6 +115,13 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
 function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected }) {
   const [downloading, setDownloading] = useState(false);
   const isMobile = useMobile();
+  const previewRef = useRef(null);
+
+  useEffect(() => {
+    if (isActive && isMobile && previewRef.current) {
+      setTimeout(() => previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+    }
+  }, [isActive, isMobile]);
 
   const handleDownload = async () => {
     if (clip.presigned_url) {
@@ -163,10 +170,9 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
           </div>
         </div>
         {isActive && (
-          <div style={{ borderTop: BORDER }}>
-            <div style={{ aspectRatio: "9/16", background: C.windowBg, maxHeight: "70vh" }}>
-              <video src={clip.presigned_url || clip.path} controls autoPlay preload="auto" style={{ width: "100%", height: "100%", display: "block" }} />
-            </div>
+          <div ref={previewRef} style={{ borderTop: BORDER, background: C.windowBg }}>
+            <video src={clip.presigned_url || clip.path} controls autoPlay preload="auto"
+              style={{ width: "100%", display: "block" }} />
           </div>
         )}
       </div>

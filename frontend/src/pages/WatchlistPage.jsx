@@ -67,11 +67,11 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
   );
 
   return (
-    <PixelCard color={C.cream} padding={0}>
+    <PixelCard color={C.cream} padding={0} style={isMobile ? { boxShadow: "none" } : {}}>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) auto", alignItems: "stretch" }}>
         <div style={{ padding: isMobile ? "16px" : "20px 22px", borderRight: isMobile ? "none" : BORDER, borderBottom: isMobile ? BORDER : "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-            <span className="pixel" style={{ fontSize: 12, color: C.ink }}>{ch.name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap", minWidth: 0 }}>
+            <span className="pixel" style={{ fontSize: 12, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: isMobile ? "60vw" : "none" }}>{ch.name}</span>
             <Tag bg={statusColor(ch.status || "watching")} color={C.ink}>{(ch.status || "WATCHING").toUpperCase()}</Tag>
           </div>
           <div className="mono" style={{ fontSize: 12, color: C.dim2, marginBottom: 10, wordBreak: "break-all" }}>{ch.url}</div>
@@ -193,7 +193,7 @@ function WatchlistContent() {
         </p>
       </div>
 
-      <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24 }}>
+      <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24, boxShadow: isMobile ? "none" : undefined }}>
         <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD CHANNEL</div>
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: isMobile ? 0 : 260, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM }}>
@@ -214,11 +214,11 @@ function WatchlistContent() {
       </PixelCard>
 
       {loading ? (
-        <PixelCard color={C.paper} padding={48} style={{ textAlign: "center" }}>
+        <PixelCard color={C.paper} padding={48} style={{ textAlign: "center", boxShadow: isMobile ? "none" : undefined }}>
           <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Loading...</p>
         </PixelCard>
       ) : channels.length === 0 ? (
-        <PixelCard color={C.paper} padding={48} style={{ textAlign: "center" }}>
+        <PixelCard color={C.paper} padding={48} style={{ textAlign: "center", boxShadow: isMobile ? "none" : undefined }}>
           <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 10 }}>NO CHANNELS</div>
           <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Add a YouTube channel URL above to start monitoring.</p>
         </PixelCard>
@@ -235,7 +235,7 @@ function WatchlistContent() {
         </div>
       )}
 
-      <PixelCard color={C.lavender} padding={18} style={{ marginTop: 24 }}>
+      <PixelCard color={C.lavender} padding={18} style={{ marginTop: 24, boxShadow: isMobile ? "none" : undefined }}>
         <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 8 }}>HOW IT WORKS</div>
         <div className="vt" style={{ fontSize: 17, color: C.ink, lineHeight: 1.5 }}>
           Every 30 minutes ClipForge checks each channel for new videos.<br />
@@ -250,7 +250,7 @@ function WatchlistContent() {
 export default function WatchlistPage() {
   const { isPro } = useApp();
   return (
-    <div style={{ minHeight: "100vh" }}>
+    <div style={{ minHeight: "100vh", overflowX: "clip" }}>
       <style>{KEYFRAMES}</style>
       <Header />
       {isPro ? <WatchlistContent /> : <UpgradeGate />}

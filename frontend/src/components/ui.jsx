@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { C, SHADOW, SHADOW_SM, BORDER, BORDER_SM } from "../lib/theme";
+import { useMobile } from "../hooks/useMobile";
 
 // ── pixel sprites ──────────────────────────────────────────────────────────────
 export const ANVIL      = ["...........","...XXXXX...","..XGGGGGX..",".XGGGGGGGX.","XGGGGGGGGGX","XGGGGGGGGGX","..XGGGGGX..","...XGGGX...","..XGGGGGX..",".XXXXXXXXX.","XXXXXXXXXXX"];
@@ -115,11 +116,11 @@ export const ProgressBar = ({ progress, color = C.hot }) => (
 
 // ── Phase constants ───────────────────────────────────────────────────────────
 export const PHASE_BLOCKS = [
-  { key: "downloading",  label: "DOWNLOAD",   color: C.hot },
-  { key: "merging",      label: "MERGE",      color: C.peach },
-  { key: "transcribing", label: "TRANSCRIBE", color: C.amber },
-  { key: "analyzing",    label: "ANALYZE",    color: C.lavender },
-  { key: "clipping",     label: "CLIP",       color: C.signal },
+  { key: "downloading",  label: "DOWNLOAD",   short: "DL",  color: C.hot },
+  { key: "merging",      label: "MERGE",      short: "MX",  color: C.peach },
+  { key: "transcribing", label: "TRANSCRIBE", short: "TX",  color: C.amber },
+  { key: "analyzing",    label: "ANALYZE",    short: "AN",  color: C.lavender },
+  { key: "clipping",     label: "CLIP",       short: "CLP", color: C.signal },
 ];
 
 export const PHASE_RANGES = {
@@ -134,21 +135,22 @@ export const PHASE_RANGES = {
 export function PhaseSteps({ status }) {
   const isDone = status === "done";
   const currentIdx = PHASE_BLOCKS.findIndex(s => s.key === status);
+  const isMobile = useMobile();
   return (
-    <div style={{ display: "flex", gap: 6 }}>
+    <div style={{ display: "flex", gap: isMobile ? 4 : 6 }}>
       {PHASE_BLOCKS.map((step, i) => {
         const isActive   = !isDone && i === currentIdx;
         const isComplete = isDone || i < currentIdx;
         return (
           <div key={step.key} style={{
-            flex: 1, padding: "12px 4px", textAlign: "center",
+            flex: 1, padding: isMobile ? "8px 2px" : "12px 4px", textAlign: "center",
             background: isComplete || isActive ? step.color : C.cream2,
             border: BORDER,
             boxShadow: isActive ? `4px 4px 0 ${C.ink}` : `2px 2px 0 ${C.ink}`,
             transform: isActive ? "translate(-2px,-2px)" : "none",
             transition: "transform .1s, box-shadow .1s",
           }}>
-            <div className="pixel" style={{ fontSize: 7, color: C.ink }}>{step.label}</div>
+            <div className="pixel" style={{ fontSize: isMobile ? 6 : 7, color: C.ink }}>{isMobile ? step.short : step.label}</div>
           </div>
         );
       })}
@@ -160,8 +162,9 @@ export function PhaseSteps({ status }) {
 export function SegmentedProgressBar({ displayProgress, status }) {
   const isDone = status === "done";
   const currentIdx = PHASE_BLOCKS.findIndex(b => b.key === status);
+  const isMobile = useMobile();
   return (
-    <div style={{ display: "flex", gap: 6 }}>
+    <div style={{ display: "flex", gap: isMobile ? 4 : 6 }}>
       {PHASE_BLOCKS.map((block, i) => {
         const [start, end] = PHASE_RANGES[block.key];
         let fill;

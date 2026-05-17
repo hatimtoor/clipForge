@@ -360,9 +360,16 @@ export default function WorkPage() {
   const fetchJob = async (id) => {
     try {
       const res = await authFetch(`/api/status/${id}`);
-      if (!res.ok) return null;
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(`[WorkPage] /api/status/${id} → ${res.status}`, body);
+        return null;
+      }
       return await res.json();
-    } catch { return null; }
+    } catch (e) {
+      console.error(`[WorkPage] fetchJob network error:`, e);
+      return null;
+    }
   };
 
   useEffect(() => {

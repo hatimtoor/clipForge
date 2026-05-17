@@ -58,7 +58,7 @@ export default function HelloPage() {
               Drop a long video.<br />
               <span style={{ color: C.signalDeep }}>Pull the moments<br />that travel.</span>
             </h1>
-            <p className="vt" style={{ fontSize: 22, color: C.dim2, lineHeight: 1.4, marginBottom: 28, maxWidth: 560 }}>
+            <p className="vt" style={{ fontSize: isMobile ? 18 : 22, color: C.dim2, lineHeight: 1.4, marginBottom: 28 }}>
               ⚡ One YouTube link in. <strong style={{ color: C.ink }}>Up to 10 viral-ready shorts</strong> out — captions burned, hooks scored, ready to ship. ✂️
             </p>
 
@@ -108,7 +108,7 @@ export default function HelloPage() {
             </div>
           </PixelCard>
 
-          <aside style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <aside style={{ display: isMobile ? "none" : "flex", flexDirection: "column", gap: 18 }}>
             <PixelCard color={C.paper} padding={22}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>WHAT WE LOOK FOR</div>
               <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 14 }}>

@@ -27,8 +27,9 @@ export const BORDER_SM = `2px solid ${C.ink}`;
 export const KEYFRAMES = `
   *,*::before,*::after{box-sizing:border-box;image-rendering:pixelated}
   html,body,#root{min-height:100vh}
+  html{overflow-x:hidden}
   body{
-    margin:0; color:${C.ink};
+    margin:0; color:${C.ink}; overflow-x:hidden;
     font-family:'JetBrains Mono',ui-monospace,monospace;
     background:linear-gradient(180deg,#b8a5e8 0%,#d8b6e0 30%,#f4c4d8 55%,#ffd2b8 80%,#ffe8c8 100%);
     background-attachment:fixed;

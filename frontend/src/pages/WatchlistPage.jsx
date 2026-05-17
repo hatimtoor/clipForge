@@ -94,7 +94,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
           </div>
         </div>
 
-        <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: isMobile ? "row" : "column", flexWrap: "wrap", gap: 10, justifyContent: isMobile ? "flex-start" : "center", minWidth: isMobile ? "auto" : 170 }}>
+        <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", minWidth: isMobile ? "auto" : 170 }}>
           <button onClick={() => onToggleAutoUpload(ch)} className="pixel" style={{
             padding: "10px 12px", fontSize: 8, textAlign: "center",
             background: ch.auto_upload ? C.signal : C.cream2,

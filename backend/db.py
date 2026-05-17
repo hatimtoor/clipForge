@@ -170,7 +170,12 @@ def db_check_and_reset_quota(user_id: str) -> dict:
 
 
 def db_increment_clips_used(user_id: str, count: int) -> None:
+    from datetime import datetime, timezone
     profile = db_get_profile(user_id)
-    if profile:
-        new_count = (profile.get("clips_used") or 0) + count
-        get_db().table("profiles").update({"clips_used": new_count}).eq("id", user_id).execute()
+    if not profile:
+        return
+    new_count = (profile.get("clips_used") or 0) + count
+    updates: dict = {"clips_used": new_count}
+    if not profile.get("clips_reset_at"):
+        updates["clips_reset_at"] = datetime.now(timezone.utc).isoformat()
+    get_db().table("profiles").update(updates).eq("id", user_id).execute()

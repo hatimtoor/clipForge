@@ -73,13 +73,13 @@ export default function HelloPage() {
               {valid && <Tag color={C.signalDeep} bg={C.signal}>v OK</Tag>}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "1fr 1fr 1fr", gap: 14, marginBottom: 24 }}>
               <NumField label="MAX CLIPS" value={maxClips} setValue={setMaxClips} min={1} max={10} step={1} bg={C.lavender} />
               <NumField label="MIN DUR" suffix="s" value={minDur} setValue={setMinDur} min={15} max={60} step={5} bg={C.peach} />
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro

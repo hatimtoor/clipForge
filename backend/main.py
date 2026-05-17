@@ -931,7 +931,8 @@ async def create_clips(
             video_height=out_h,
         )
 
-        clip_filename = f"clip_{idx+1}_{clip['title'][:30].replace(' ','_')}.mp4"
+        safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])
+        clip_filename = f"clip_{idx+1}_{safe_title}.mp4"
         clip_path = OUTPUT_DIR / job_id / clip_filename
         clip_path.parent.mkdir(exist_ok=True)
 

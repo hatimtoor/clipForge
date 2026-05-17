@@ -13,6 +13,8 @@ import HelloPage    from "./pages/HelloPage";
 import WorkPage     from "./pages/WorkPage";
 import WatchlistPage from "./pages/WatchlistPage";
 import ArchivePage  from "./pages/ArchivePage";
+import PrivacyPage  from "./pages/PrivacyPage";
+import TermsPage    from "./pages/TermsPage";
 
 function PrivateRoute({ children }) {
   const [authed, setAuthed] = useState(null); // null = checking
@@ -75,6 +77,8 @@ export default function App() {
           <Route path="/work"      element={<PrivateRoute><WorkPage /></PrivateRoute>} />
           <Route path="/watchlist" element={<PrivateRoute><WatchlistPage /></PrivateRoute>} />
           <Route path="/archive"   element={<PrivateRoute><ArchivePage /></PrivateRoute>} />
+          <Route path="/privacy"   element={<PrivacyPage />} />
+          <Route path="/terms"     element={<TermsPage />} />
           <Route path="*"          element={<Navigate to="/hello" replace />} />
         </Routes>
       </AppContext.Provider>

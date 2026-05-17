@@ -119,7 +119,12 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
 
   useEffect(() => {
     if (isActive && isMobile && previewRef.current) {
-      setTimeout(() => previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+      setTimeout(() => {
+        const el = previewRef.current;
+        if (!el) return;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - 12;
+        window.scrollTo({ top: y, behavior: "smooth" });
+      }, 120);
     }
   }, [isActive, isMobile]);
 

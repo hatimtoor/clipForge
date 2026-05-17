@@ -47,12 +47,12 @@ export default function HelloPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh" }}>
+    <div style={{ minHeight: "100vh", overflowX: "clip" }}>
       <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 16px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.55fr) minmax(0,1fr)", gap: isMobile ? 16 : 32, alignItems: "start" }}>
-          <PixelCard color={C.cream} padding={isMobile ? 18 : 32}>
+          <PixelCard color={C.cream} padding={isMobile ? 18 : 32} style={isMobile ? { boxShadow: "none" } : {}}>
             <div className="pixel" style={{ fontSize: 10, color: C.hotDeep, marginBottom: 16 }}>{`>`} NEW JOB - STANDING BY</div>
             <h1 className="pixel" style={{ fontSize: isMobile ? 20 : 30, lineHeight: 1.3, color: C.ink, marginBottom: 14 }}>
               Drop a long video.<br />
@@ -63,7 +63,7 @@ export default function HelloPage() {
             </p>
 
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>YOUTUBE URL</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: C.paper, border: BORDER, boxShadow: valid ? `4px 4px 0 ${C.signalDeep}` : `4px 4px 0 ${C.ink}`, marginBottom: 24, transition: "box-shadow .15s" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: C.paper, border: BORDER, boxShadow: isMobile ? "none" : (valid ? `4px 4px 0 ${C.signalDeep}` : `4px 4px 0 ${C.ink}`), marginBottom: 24, transition: "box-shadow .15s" }}>
               <span className="pixel" style={{ fontSize: 12, color: valid ? C.signalDeep : C.dim }}>{`>`}</span>
               <input value={url} onChange={e => setUrl(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && valid && handleSubmit()}
@@ -108,8 +108,8 @@ export default function HelloPage() {
             </div>
           </PixelCard>
 
-          <aside style={{ display: isMobile ? "none" : "flex", flexDirection: "column", gap: 18 }}>
-            <PixelCard color={C.paper} padding={22}>
+          <aside style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <PixelCard color={C.paper} padding={22} style={isMobile ? { boxShadow: "none" } : {}}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>WHAT WE LOOK FOR</div>
               <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 14 }}>
                 {[
@@ -129,7 +129,7 @@ export default function HelloPage() {
               </ul>
             </PixelCard>
 
-            <PixelCard color={C.lavender} padding={20}>
+            <PixelCard color={C.lavender} padding={20} style={isMobile ? { boxShadow: "none" } : {}}>
               <div className="pixel" style={{ fontSize: 10, color: C.ink, marginBottom: 10 }}><span style={{ fontSize: 20 }}>💁‍♂️</span> TIP</div>
               <p className="vt" style={{ fontSize: 18, color: C.ink, lineHeight: 1.35 }}>
                 Long videos can take 5-10 min. Your job keeps running on the server even if you close this tab — find it under <strong>ARCHIVE</strong>.

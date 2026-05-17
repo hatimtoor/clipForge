@@ -68,7 +68,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
 
   return (
     <PixelCard color={C.cream} padding={0} style={isMobile ? { boxShadow: "none" } : {}}>
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) auto", alignItems: "stretch" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto", alignItems: "stretch" }}>
         <div style={{ padding: isMobile ? "16px" : "20px 22px", borderRight: isMobile ? "none" : BORDER, borderBottom: isMobile ? BORDER : "none" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap", minWidth: 0 }}>
             <span className="pixel" style={{ fontSize: 12, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: isMobile ? "60vw" : "none" }}>{ch.name}</span>

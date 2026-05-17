@@ -221,6 +221,26 @@ def run_cmd(cmd: list[str], cwd=None) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+async def run_cmd_async(cmd: list[str], cwd=None) -> tuple[int, str, str]:
+    """Async subprocess wrapper — killed immediately when the asyncio task is cancelled."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+    )
+    try:
+        stdout, stderr = await proc.communicate()
+        return proc.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+    except asyncio.CancelledError:
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        raise
+
+
 # ── download ──────────────────────────────────────────────────────────────────
 async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
     log(job_id, f"Downloading: {url}")
@@ -340,7 +360,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
     audio_path = video_path.parent / "audio.mp3"
     cmd = [FFMPEG, "-y", "-i", str(video_path), "-q:a", "0", "-map", "a",
            "-ac", "1", "-ar", "16000", str(audio_path)]
-    code, _, err = await asyncio.to_thread(run_cmd, cmd)
+    code, _, err = await run_cmd_async(cmd)
     if code != 0:
         log(job_id, f"Audio extraction FAILED: {err[-300:]}")
         raise RuntimeError(f"Audio extraction failed: {err}")
@@ -428,7 +448,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             cmd = [FFMPEG, "-y", "-i", str(audio_path),
                    "-ss", str(chunk_start), "-t", str(chunk_duration),
                    "-ac", "1", "-ar", "16000", str(chunk_path)]
-            await asyncio.to_thread(run_cmd, cmd)
+            await run_cmd_async(cmd)
 
             chunk_data = chunk_path.read_bytes()
             chunk_name = f"chunk_{i}.mp3"
@@ -984,7 +1004,7 @@ async def create_clips(
         ]
 
         log(job_id, f"  Running FFmpeg for clip {idx+1}...")
-        code, _, err = await asyncio.to_thread(run_cmd, ffmpeg_cmd, str(job_dir))
+        code, _, err = await run_cmd_async(ffmpeg_cmd, str(job_dir))
         if code != 0:
             log(job_id, f"  !!! FFmpeg FAILED for clip {idx+1}: {err[-300:]}")
             update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
@@ -1233,14 +1253,14 @@ async def cancel_job(job_id: str, user=Depends(require_auth)):
         raise HTTPException(404, "Job not found")
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
-    task = _running_tasks.get(job_id)
-    if task and not task.done():
-        task.cancel()
-        return {"ok": True}
     status = job.get("status", "")
     if status in ("done", "error", "cancelled"):
         return {"ok": False, "reason": f"Job already {status}"}
-    return {"ok": False, "reason": "No running task found"}
+    db_update_job(job_id, {"status": "cancelled", "progress": 0, "message": "Job cancelled by user."})
+    task = _running_tasks.get(job_id)
+    if task and not task.done():
+        task.cancel()
+    return {"ok": True}
 
 
 @app.get("/api/status/{job_id}")

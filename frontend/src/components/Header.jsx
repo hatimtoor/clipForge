@@ -4,12 +4,14 @@ import { C, SHADOW_SM, BORDER } from "../lib/theme";
 import { PixelSprite, ANVIL, ANVIL_PAL } from "./ui";
 import { useApp } from "../context/AppContext";
 import { supabase, authFetch } from "../lib/supabase";
+import { useMobile } from "../hooks/useMobile";
 
 export default function Header() {
   const { profile, isPro, ytStatus, refreshYtStatus, jobActive } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
   const [ytError, setYtError] = useState("");
+  const isMobile = useMobile();
 
   const path = location.pathname.replace("/", "") || "hello";
   const ytConnected = ytStatus?.connected;
@@ -44,28 +46,29 @@ export default function Header() {
 
   return (
     <>
-      <header style={{ position: "relative", padding: "24px 32px 0" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 24, maxWidth: 1320, margin: "0 auto", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }} onClick={() => navigate("/hello")}>
-            <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={5} />
+      <header style={{ position: "relative", padding: isMobile ? "14px 16px 0" : "24px 32px 0" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: isMobile ? 12 : 24, maxWidth: 1320, margin: "0 auto", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => navigate("/hello")}>
+            <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={isMobile ? 4 : 5} />
             <div>
-              <div className="pixel" style={{ fontSize: 22, color: C.ink, lineHeight: 1 }}>
+              <div className="pixel" style={{ fontSize: isMobile ? 16 : 22, color: C.ink, lineHeight: 1 }}>
                 <span style={{ color: C.hotDeep }}>CLIP</span><span>FORGE</span>
               </div>
-              <div className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 4 }}>{`>`} roll tape to forge</div>
+              {!isMobile && <div className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 4 }}>{`>`} roll tape to forge</div>}
             </div>
           </div>
 
           <div style={{ flex: 1 }} />
 
-          <nav style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <nav style={{ display: "flex", gap: isMobile ? 6 : 10, flexWrap: "wrap", alignItems: "center" }}>
             {NAV.map(([k, l]) => {
               const active = path === k;
               const col = k === "hello" ? C.signal : k === "work" ? C.hot : C.amber;
               return (
                 <button key={k} onClick={() => navigate(k === "work" && jobActive ? `/work?job=${jobActive}` : `/${k}`)} className="pixel" style={{
                   background: active ? col : C.cream, color: C.ink,
-                  padding: "10px 16px", fontSize: 11, border: BORDER,
+                  padding: isMobile ? "8px 10px" : "10px 16px",
+                  fontSize: isMobile ? 9 : 11, border: BORDER,
                   boxShadow: active ? `0px 0px 0 ${C.ink}` : SHADOW_SM,
                   transform: active ? "translate(3px,3px)" : "translate(0,0)",
                   cursor: "pointer", textTransform: "uppercase", position: "relative",
@@ -77,7 +80,7 @@ export default function Header() {
               );
             })}
 
-            {isPro && (ytConnected
+            {isPro && !isMobile && (ytConnected
               ? <span className="pixel" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 14px", fontSize: 9, background: C.yt, color: C.ink, border: BORDER, boxShadow: SHADOW_SM }}>
                   * {ytStatus.channel_name || "YT"}
                 </span>
@@ -85,19 +88,19 @@ export default function Header() {
             )}
 
             {!isPro && (
-              <span className="pixel" style={{ padding: "6px 10px", fontSize: 8, background: C.amber, color: C.ink, border: BORDER, boxShadow: SHADOW_SM }}>
+              <span className="pixel" style={{ padding: isMobile ? "5px 8px" : "6px 10px", fontSize: 8, background: C.amber, color: C.ink, border: BORDER, boxShadow: SHADOW_SM }}>
                 FREE {profile.clips_used}/{profile.clips_limit}
               </span>
             )}
 
             <button onClick={() => supabase.auth.signOut()} className="pixel" title="Sign out"
-              style={{ padding: "10px 12px", fontSize: 11, background: C.cream, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer" }}>X</button>
+              style={{ padding: isMobile ? "8px 10px" : "10px 12px", fontSize: isMobile ? 9 : 11, background: C.cream, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer" }}>X</button>
           </nav>
         </div>
       </header>
 
       {ytError && (
-        <div style={{ maxWidth: 1320, margin: "0 auto", padding: "0 32px" }}>
+        <div style={{ maxWidth: 1320, margin: "0 auto", padding: isMobile ? "0 16px" : "0 32px" }}>
           <div className="pixel" style={{ padding: "10px 14px", background: `${C.hot}55`, border: `2px solid ${C.hotDeep}`, color: C.hotDeep, fontSize: 9, marginTop: 14 }}>! {ytError}</div>
         </div>
       )}

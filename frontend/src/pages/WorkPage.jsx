@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES, fmtTime } from "../lib/theme";
+import { useMobile } from "../hooks/useMobile";
 import {
   PixelBtn, PixelCard, Tag, Field, ProgressBar,
   PixelSprite, ANVIL, ANVIL_PAL, HAMMER, HAMMER_PAL,
@@ -185,13 +186,14 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew }) {
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
   const previewRef = useRef(null);
+  const isMobile = useMobile();
 
   useEffect(() => {
     if (active && previewRef.current) previewRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [active]);
 
   return (
-    <div className="fade" style={{ padding: "32px 32px 64px", maxWidth: 1380, margin: "0 auto" }}>
+    <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1380, margin: "0 auto" }}>
       <PixelCard color={C.signal} padding={26} style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, flexWrap: "wrap" }}>
           <div>
@@ -204,7 +206,7 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew }) {
         </div>
       </PixelCard>
 
-      <div style={{ display: "grid", gridTemplateColumns: active ? "minmax(0,1fr) 340px" : "1fr", gap: 28, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: (!isMobile && active) ? "minmax(0,1fr) 340px" : "1fr", gap: 28, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
           {clips.map((c, i) => (
             <ClipCard
@@ -253,6 +255,7 @@ function LiveProcessing({ job, onCancel }) {
   const lastServerProgress = useRef(job.progress || 0);
   const lastServerTime = useRef(Date.now());
   const [cancelling, setCancelling] = useState(false);
+  const isMobile = useMobile();
 
   const handleCancel = async () => {
     setCancelling(true);
@@ -286,7 +289,7 @@ function LiveProcessing({ job, onCancel }) {
   const phaseProgress = Math.min(100, Math.max(0, (displayProgress - phaseStart) / (phaseEnd - phaseStart) * 100));
 
   return (
-    <div className="fade" style={{ padding: "32px 32px 64px", maxWidth: 1320, margin: "0 auto", display: "grid", gridTemplateColumns: "minmax(0,1fr) 360px", gap: 24, alignItems: "start" }}>
+    <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) 360px", gap: 24, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
         <PixelCard color={C.cream} padding={28}>
           <div className="pixel" style={{ fontSize: 10, color: C.hotDeep, marginBottom: 14 }}>* LIVE - {elapsedStr}</div>

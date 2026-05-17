@@ -4,12 +4,14 @@ import { C, BORDER, SHADOW_SM, KEYFRAMES, timeAgo } from "../lib/theme";
 import { PixelBtn, PixelCard, Tag } from "../components/ui";
 import Header from "../components/Header";
 import { authFetch } from "../lib/supabase";
+import { useMobile } from "../hooks/useMobile";
 
 export default function ArchivePage() {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const isMobile = useMobile();
 
   const fetchJobs = async () => {
     try {
@@ -33,7 +35,7 @@ export default function ArchivePage() {
     <div style={{ minHeight: "100vh" }}>
       <style>{KEYFRAMES}</style>
       <Header />
-      <div className="fade" style={{ padding: "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
+      <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 20, gap: 18, flexWrap: "wrap" }}>
           <div>
             <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>ARCHIVE - {jobs.length} JOBS</div>
@@ -57,6 +59,32 @@ export default function ArchivePage() {
           <PixelCard color={C.cream} padding={48} style={{ textAlign: "center" }}>
             <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>No jobs to show. Forge some clips first.</p>
           </PixelCard>
+        ) : isMobile ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {filtered.map((j) => {
+              const isDone = j.status === "done";
+              const isErr  = j.status === "error";
+              const isProc = !["done", "error"].includes(j.status);
+              return (
+                <PixelCard key={j.job_id} color={C.cream} padding={16}
+                  style={{ cursor: isProc ? "pointer" : "default" }}
+                  onClick={() => isProc && navigate(`/work?job=${j.job_id}`)}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                    <Tag bg={isDone ? C.signal : isErr ? C.hot : C.amber}>* {j.status?.toUpperCase()}</Tag>
+                    <span className="vt" style={{ fontSize: 15, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
+                    {isDone && j.clips?.length > 0 && <span className="pixel" style={{ fontSize: 8, color: C.ink }}>{j.clips.length} CLIPS</span>}
+                  </div>
+                  <div className="mono" style={{ fontSize: 12, color: C.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: isErr ? 6 : 10 }}>{j.url}</div>
+                  {isErr && <div className="vt" style={{ fontSize: 15, color: C.hotDeep, marginBottom: 8 }}>! {j.error?.split("\n").pop()}</div>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {isDone && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
+                    {isErr  && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(`/hello?url=${encodeURIComponent(j.url)}`); }}>RETRY</PixelBtn>}
+                    {isProc && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
+                  </div>
+                </PixelCard>
+              );
+            })}
+          </div>
         ) : (
           <PixelCard color={C.cream} padding={0}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 200px", padding: "12px 20px", borderBottom: `3px solid ${C.ink}`, gap: 14, background: C.cream2 }}>

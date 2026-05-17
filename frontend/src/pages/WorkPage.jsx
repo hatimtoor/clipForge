@@ -253,7 +253,7 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew }) {
         </div>
       </PixelCard>
 
-      <div style={{ display: "grid", gridTemplateColumns: (!isMobile && active) ? "minmax(0,1fr) 340px" : "1fr", gap: 28, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: (!isMobile && active) ? "minmax(0,1fr) 340px" : "minmax(0,1fr)", gap: 28, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
           {clips.map((c, i) => (
             <ClipCard
@@ -336,7 +336,7 @@ function LiveProcessing({ job, onCancel }) {
   const phaseProgress = Math.min(100, Math.max(0, (displayProgress - phaseStart) / (phaseEnd - phaseStart) * 100));
 
   return (
-    <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1fr) 360px", gap: 24, alignItems: "start" }}>
+    <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto", display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) 360px", gap: 24, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
         <PixelCard color={C.cream} padding={28}>
           <div className="pixel" style={{ fontSize: 10, color: C.hotDeep, marginBottom: 14 }}>* LIVE - {elapsedStr}</div>

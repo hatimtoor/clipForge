@@ -1,16 +1,17 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { C, SHADOW_SM, BORDER, KEYFRAMES } from "../lib/theme";
 import { PixelSprite, ANVIL, ANVIL_PAL, PixelBtn, Field, Tag } from "../components/ui";
 import { supabase } from "../lib/supabase";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState("signin");
+  const [mode, setMode] = useState(searchParams.get("mode") === "signup" ? "signup" : "signin");
   const [signupDone, setSignupDone] = useState(false);
   const [googleHover, setGoogleHover] = useState(false);
 

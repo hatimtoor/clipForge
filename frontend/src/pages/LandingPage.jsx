@@ -3,7 +3,7 @@ import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES } from "../lib/theme
 import { PixelSprite, ANVIL, ANVIL_PAL, HAMMER, HAMMER_PAL, PixelBtn, PixelCard, Tag } from "../components/ui";
 import { useMobile } from "../hooks/useMobile";
 
-function LandingHeader({ onGetStarted }) {
+function LandingHeader({ onLogin, onSignup }) {
   const isMobile = useMobile();
   return (
     <header style={{ padding: isMobile ? "14px 16px" : "24px 40px", display: "flex", alignItems: "center", gap: 16, maxWidth: 1320, margin: "0 auto" }}>
@@ -15,14 +15,14 @@ function LandingHeader({ onGetStarted }) {
       </div>
       <div style={{ flex: 1 }} />
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <PixelBtn color="cream" size="sm" onClick={onGetStarted}>LOG IN</PixelBtn>
-        <PixelBtn color="hot" size="sm" onClick={onGetStarted}>GET STARTED</PixelBtn>
+        <PixelBtn color="cream" size="sm" onClick={onLogin}>LOG IN</PixelBtn>
+        <PixelBtn color="hot" size="sm" onClick={onSignup}>GET STARTED</PixelBtn>
       </div>
     </header>
   );
 }
 
-function HeroSection({ onGetStarted, isMobile }) {
+function HeroSection({ onSignup, isMobile }) {
   return (
     <section style={{ padding: isMobile ? "40px 16px 56px" : "72px 40px 96px", maxWidth: 1320, margin: "0 auto", textAlign: "center" }}>
       <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, padding: "8px 16px", marginBottom: 28 }}>
@@ -40,7 +40,7 @@ function HeroSection({ onGetStarted, isMobile }) {
       </p>
 
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, justifyContent: "center", alignItems: "center", marginBottom: 56 }}>
-        <PixelBtn color="hot" size="lg" onClick={onGetStarted}>
+        <PixelBtn color="hot" size="lg" onClick={onSignup}>
           &gt; FORGE MY FIRST CLIPS — FREE
         </PixelBtn>
         <div className="vt" style={{ fontSize: 18, color: C.dim2 }}>No credit card · 10 free clips/month</div>
@@ -160,7 +160,50 @@ function FeaturesSection({ isMobile }) {
   );
 }
 
-function PricingSection({ onGetStarted, isMobile }) {
+function WatchlistSection({ onSignup, isMobile }) {
+  return (
+    <section style={{ padding: isMobile ? "40px 16px" : "72px 40px", background: `${C.ink}08` }}>
+      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
+        <PixelCard color={C.lavender} padding={isMobile ? 24 : 40}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 24 : 48, alignItems: "center" }}>
+            <div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: C.ink, border: BORDER, padding: "6px 14px", marginBottom: 18 }}>
+                <span className="pixel" style={{ fontSize: 8, color: C.lavender }}>PRO FEATURE</span>
+              </div>
+              <h2 className="pixel" style={{ fontSize: isMobile ? 14 : 22, color: C.ink, lineHeight: 1.5, marginBottom: 16 }}>
+                Watchlist.<br />
+                <span style={{ color: C.lavenderDeep }}>Set it. Forget it.<br />Never miss a clip.</span>
+              </h2>
+              <p className="vt" style={{ fontSize: isMobile ? 18 : 22, color: C.dim2, lineHeight: 1.5, marginBottom: 24 }}>
+                Add any YouTube channel to your watchlist. ClipForge monitors it automatically — the moment a new video drops, it starts clipping. Wake up to ready-to-post shorts every morning without touching a thing.
+              </p>
+              <PixelBtn color="lavender" size="md" onClick={onSignup}>&gt; GET PRO — START AUTOMATING</PixelBtn>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {[
+                { emoji: "📡", title: "CHANNEL MONITORING", desc: "Add any YouTube channel URL. ClipForge polls for new uploads automatically." },
+                { emoji: "⚡", title: "INSTANT PROCESSING", desc: "New video detected? Clipping starts within minutes. No manual trigger needed." },
+                { emoji: "📥", title: "CLIPS WAITING FOR YOU", desc: "Log in and find your shorts already rendered, captioned, and scored." },
+                { emoji: "🔗", title: "DIRECT YT UPLOAD", desc: "Pair with YouTube auto-upload and clips go live the same day they're created." },
+              ].map(step => (
+                <div key={step.title} style={{ display: "flex", gap: 14, alignItems: "flex-start", background: `${C.cream}88`, border: BORDER_SM, padding: "14px 16px" }}>
+                  <span style={{ fontSize: 22, lineHeight: 1 }}>{step.emoji}</span>
+                  <div>
+                    <div className="pixel" style={{ fontSize: 8, color: C.ink, marginBottom: 4 }}>{step.title}</div>
+                    <div className="vt" style={{ fontSize: 16, color: C.dim2, lineHeight: 1.3 }}>{step.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </PixelCard>
+      </div>
+    </section>
+  );
+}
+
+function PricingSection({ onSignup, isMobile }) {
   const free = [
     "10 clips per month",
     "3 clips per job",
@@ -201,7 +244,7 @@ function PricingSection({ onGetStarted, isMobile }) {
                 </li>
               ))}
             </ul>
-            <PixelBtn color="cream" full onClick={onGetStarted}>START FREE</PixelBtn>
+            <PixelBtn color="cream" full onClick={onSignup}>START FREE</PixelBtn>
           </PixelCard>
 
           {/* Pro */}
@@ -219,7 +262,7 @@ function PricingSection({ onGetStarted, isMobile }) {
                 </li>
               ))}
             </ul>
-            <PixelBtn color="signal" full onClick={onGetStarted}>GET PRO</PixelBtn>
+            <PixelBtn color="signal" full onClick={onSignup}>GET PRO</PixelBtn>
           </PixelCard>
         </div>
 
@@ -253,16 +296,18 @@ export default function LandingPage() {
   const navigate = useNavigate();
   const isMobile = useMobile();
 
-  const onGetStarted = () => navigate("/login");
+  const onLogin  = () => navigate("/login");
+  const onSignup = () => navigate("/login?mode=signup");
 
   return (
     <div style={{ minHeight: "100vh", overflowX: "clip" }}>
       <style>{KEYFRAMES}</style>
-      <LandingHeader onGetStarted={onGetStarted} />
-      <HeroSection onGetStarted={onGetStarted} isMobile={isMobile} />
+      <LandingHeader onLogin={onLogin} onSignup={onSignup} />
+      <HeroSection onSignup={onSignup} isMobile={isMobile} />
       <HowItWorksSection isMobile={isMobile} />
       <FeaturesSection isMobile={isMobile} />
-      <PricingSection onGetStarted={onGetStarted} isMobile={isMobile} />
+      <WatchlistSection onSignup={onSignup} isMobile={isMobile} />
+      <PricingSection onSignup={onSignup} isMobile={isMobile} />
       <Footer isMobile={isMobile} />
     </div>
   );

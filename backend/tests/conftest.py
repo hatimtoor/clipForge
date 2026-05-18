@@ -1,6 +1,7 @@
 import os
 import sys
 import pytest
+from contextlib import ExitStack
 from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi import Header, HTTPException
 
@@ -55,24 +56,39 @@ MOCK_PROFILE = {
 }
 
 
+def _mock_db_get_job(job_id):
+    return MOCK_JOB if job_id == MOCK_JOB["id"] else None
+
+
+_PATCHES = [
+    ("main.run_pipeline",            dict(new_callable=AsyncMock)),
+    ("main.db_create_job",           dict(return_value=MOCK_JOB)),
+    ("main.db_get_job",              dict(side_effect=_mock_db_get_job)),
+    ("main.db_update_job",           {}),
+    ("main.db_get_user_jobs",        dict(return_value=[MOCK_JOB])),
+    ("main.db_get_active_jobs",      dict(return_value=[])),
+    ("main.db_get_user_channels",    dict(return_value=[])),
+    ("main.db_get_all_channels",     dict(return_value=[])),
+    ("main.db_create_channel",       dict(return_value={"id": "ch-1", "channel_id": "ch-1"})),
+    ("main.db_get_channel",          dict(return_value=None)),
+    ("main.db_channel_owned_by",     dict(return_value=False)),
+    ("main.db_update_channel",       {}),
+    ("main.db_delete_channel",       {}),
+    ("main.db_get_youtube_token",    dict(return_value=None)),
+    ("main.db_upsert_youtube_token", {}),
+    ("main.db_delete_youtube_token", {}),
+    ("main.db_get_profile",          dict(return_value=MOCK_PROFILE)),
+    ("main.db_update_clip_yt_upload",{}),
+    ("main.db_check_and_reset_quota",dict(return_value=MOCK_PROFILE)),
+    ("main.db_increment_clips_used", {}),
+]
+
+
 @pytest.fixture(scope="session")
 def client():
-    with patch("main.run_pipeline", new_callable=AsyncMock), \
-         patch("main.db_create_job", return_value=MOCK_JOB), \
-         patch("main.db_get_job", return_value=MOCK_JOB), \
-         patch("main.db_update_job"), \
-         patch("main.db_get_user_jobs", return_value=[MOCK_JOB]), \
-         patch("main.db_get_active_jobs", return_value=[]), \
-         patch("main.db_get_user_channels", return_value=[]), \
-         patch("main.db_get_all_channels", return_value=[]), \
-         patch("main.db_create_channel", return_value={"id": "ch-1", "channel_id": "ch-1"}), \
-         patch("main.db_get_channel", return_value=None), \
-         patch("main.db_channel_owned_by", return_value=False), \
-         patch("main.db_update_channel"), \
-         patch("main.db_delete_channel"), \
-         patch("main.db_get_youtube_token", return_value=None), \
-         patch("main.db_check_and_reset_quota", return_value=MOCK_PROFILE), \
-         patch("main.db_increment_clips_used"):
+    with ExitStack() as stack:
+        for target, kwargs in _PATCHES:
+            stack.enter_context(patch(target, **kwargs))
         with TestClient(app) as c:
             yield c
 

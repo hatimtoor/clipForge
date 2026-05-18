@@ -12,8 +12,9 @@ from dotenv import load_dotenv
 try:
     from reframe import _get_yolo, _speaking_person_cx
     _REFRAME_AVAILABLE = True
-except ImportError:
+except Exception as _reframe_err:
     _REFRAME_AVAILABLE = False
+    print(f"[reframe] YOLO unavailable: {_reframe_err}", flush=True)
 from groq_limiter import whisper_limiter, llama_limiter, groq_with_retry
 # Load from clipforge root (local dev) or server path
 _env = Path(__file__).parent.parent.parent / ".env"
@@ -965,8 +966,12 @@ async def create_clips(
         # Speaker-tracking crop: YOLO + dead-zone smooth when reframe=True,
         # static center crop otherwise (fast path, good for already-centered content)
         if reframe:
+            if not _REFRAME_AVAILABLE:
+                update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (YOLO unavailable — using center crop)")
             detections = await asyncio.to_thread(_yolo_sample_positions, video_path, start, end, src_w, src_h)
             log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
+            if reframe and len(detections) == 0 and _REFRAME_AVAILABLE:
+                update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (no person detected — using center crop)")
             trajectory = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
         else:
             trajectory = [(0.0, center_crop_x), (round(dur, 3), center_crop_x)]
@@ -1346,6 +1351,11 @@ async def get_profile(user=Depends(require_auth)):
         "clips_used": profile.get("clips_used", 0),
         "clips_limit": FREE_MONTHLY_CLIP_LIMIT,
     }
+
+
+@app.get("/api/system")
+async def system_status(user=Depends(require_auth)):
+    return {"reframe_available": _REFRAME_AVAILABLE}
 
 
 @app.get("/clips/{job_id}/{filename}")

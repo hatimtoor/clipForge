@@ -113,7 +113,7 @@ export default function HelloPage() {
               {[
                 { id: "bold_bottom", label: "BOLD",    hint: "white + yellow highlight, bottom",  bg: C.amber  },
                 { id: "center_pop",  label: "POP",     hint: "large, centered, thick outline",     bg: C.lavender },
-                { id: "minimal",     label: "MINIMAL", hint: "small, clean, no highlight",         bg: C.cream2 },
+                { id: "minimal",     label: "MINIMAL", hint: "small, clean, no highlight",         bg: C.signal },
               ].map(({ id, label, hint, bg }) => (
                 <button key={id} onClick={() => setCaptionStyle(id)} className="pixel"
                   style={{ textAlign: "left", padding: 14, background: captionStyle === id ? bg : C.paper,

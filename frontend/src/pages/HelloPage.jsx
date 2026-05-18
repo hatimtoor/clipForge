@@ -206,10 +206,11 @@ export default function HelloPage() {
                     />
                   </div>
                   <button onClick={() => setFontSizeOverride(null)} className="pixel"
-                    style={{ padding: "10px 14px", fontSize: 9, cursor: "pointer", flexShrink: 0,
-                      background: fontSizeOverride === null ? C.ink : C.cream2,
-                      color: fontSizeOverride === null ? C.paper : C.dim,
-                      border: BORDER }}>
+                    style={{ flex: 1, padding: "10px 0", fontSize: 9, cursor: "pointer",
+                      background: fontSizeOverride === null ? C.signal : C.cream2,
+                      color: C.ink,
+                      border: BORDER,
+                      boxShadow: fontSizeOverride === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>
                     AUTO
                   </button>
                 </div>

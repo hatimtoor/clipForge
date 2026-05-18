@@ -743,18 +743,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 # ── smart speaker-tracking crop ───────────────────────────────────────────────
 
-def _yolo_sample_positions(
-    video_path: Path,
-    clip_start: float,
-    clip_end: float,
-    src_w: int,
-    src_h: int,
-    sample_interval: float = 1.0,
-) -> list:
+def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -> list:
     """
-    Sample frames with YOLO person detection + head-activity speaker selection.
+    Sample frames SEQUENTIALLY from a pre-extracted clip (no random seeking).
+    Sequential reading is reliable across all codecs; time-based seeking in the
+    source video can silently land on wrong/corrupt frames for yt-dlp merges.
     Returns [(rel_time, crop_x), ...] compatible with smooth_crop_trajectory.
-    Works for far, angled, or small-on-screen speakers that Haar cascades miss.
     """
     if not _REFRAME_AVAILABLE:
         return []
@@ -765,27 +759,31 @@ def _yolo_sample_positions(
 
     crop_w = min(int(src_h * 9 / 16), src_w)
     model  = _get_yolo()
-    cap    = _cv2.VideoCapture(str(video_path))
+    cap    = _cv2.VideoCapture(str(clip_path))
+    fps    = cap.get(_cv2.CAP_PROP_FPS) or 30.0
+    sample_every = max(1, int(fps))  # one sample per second
+
     results: list = []
     prev_frame = None
-    t = clip_start
-
+    frame_idx  = 0
     frames_tried = 0
-    while t < clip_end:
-        cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000)
+
+    while True:
         ret, frame = cap.read()
         if not ret:
             break
-        frames_tried += 1
-        cx = _speaking_person_cx(frame, prev_frame, model)
-        if cx is not None:
-            crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
-            results.append((round(t - clip_start, 3), crop_x))
-        prev_frame = frame
-        t += sample_interval
+        if frame_idx % sample_every == 0:
+            frames_tried += 1
+            cx = _speaking_person_cx(frame, prev_frame, model)
+            if cx is not None:
+                t = frame_idx / fps
+                crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
+                results.append((round(t, 3), crop_x))
+            prev_frame = frame
+        frame_idx += 1
 
     cap.release()
-    print(f"[reframe] {len(results)}/{frames_tried} frames had detections", flush=True)
+    print(f"[reframe] {len(results)}/{frames_tried} frames detected a person", flush=True)
     return results
 
 
@@ -970,10 +968,18 @@ async def create_clips(
         if reframe:
             if not _REFRAME_AVAILABLE:
                 update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (YOLO unavailable — using center crop)")
-            detections = await asyncio.to_thread(_yolo_sample_positions, video_path, start, end, src_w, src_h)
-            log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
-            if reframe and len(detections) == 0 and _REFRAME_AVAILABLE:
-                update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (no person detected — using center crop)")
+                detections = []
+            else:
+                # Extract the clip segment first so YOLO can read frames sequentially
+                # (avoids codec seeking bugs in the full downloaded source video)
+                temp_yolo = job_dir / f"clip_{idx}_yolo.mp4"
+                await run_cmd_async([FFMPEG, "-y", "-ss", str(start), "-i", str(video_path),
+                                     "-t", str(dur), "-c", "copy", str(temp_yolo)])
+                detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, src_w, src_h)
+                temp_yolo.unlink(missing_ok=True)
+                log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
+                if len(detections) == 0:
+                    update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (no person detected — using center crop)")
             trajectory = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
         else:
             trajectory = [(0.0, center_crop_x), (round(dur, 3), center_crop_x)]

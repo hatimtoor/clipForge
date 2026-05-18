@@ -61,7 +61,7 @@ def _speaking_person_cx(frame: np.ndarray, prev_frame: np.ndarray | None,
     This catches mouth and head movement without needing a separate landmark
     model.  Falls back to largest-box selection when prev_frame is unavailable.
     """
-    results = model(frame, classes=[0], verbose=False)
+    results = model(frame, classes=[0], verbose=False, conf=0.15)
     boxes   = results[0].boxes
     if boxes is None or len(boxes) == 0:
         return None

@@ -973,8 +973,11 @@ async def create_clips(
                 # Extract the clip segment first so YOLO can read frames sequentially
                 # (avoids codec seeking bugs in the full downloaded source video)
                 temp_yolo = job_dir / f"clip_{idx}_yolo.mp4"
+                # Transcode to H.264 so OpenCV can decode it — AV1 source videos
+                # fail silently in OpenCV even though ffmpeg handles them fine.
                 await run_cmd_async([FFMPEG, "-y", "-ss", str(start), "-i", str(video_path),
-                                     "-t", str(dur), "-c", "copy", str(temp_yolo)])
+                                     "-t", str(dur), "-c:v", "libx264", "-preset", "ultrafast",
+                                     "-crf", "28", "-an", str(temp_yolo)])
                 detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, src_w, src_h)
                 temp_yolo.unlink(missing_ok=True)
                 log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")

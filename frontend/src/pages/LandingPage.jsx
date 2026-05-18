@@ -107,9 +107,6 @@ function HowItWorksSection({ isMobile }) {
               </div>
               <div className="pixel" style={{ fontSize: 10, color: C.ink, marginBottom: 10 }}>{step.title}</div>
               <p className="vt" style={{ fontSize: 18, color: C.dim2, lineHeight: 1.4, margin: 0 }}>{step.desc}</p>
-              {i < steps.length - 1 && !isMobile && (
-                <div className="pixel" style={{ position: "absolute", right: -18, top: "50%", transform: "translateY(-50%)", zIndex: 10, fontSize: 16, color: C.ink, background: C.amber, border: BORDER, padding: "6px 8px" }}>&gt;</div>
-              )}
             </PixelCard>
           ))}
         </div>
@@ -227,7 +224,7 @@ function PricingSection({ onGetStarted, isMobile }) {
         </div>
 
         <div className="vt" style={{ textAlign: "center", fontSize: 18, color: C.dim2, marginTop: 28 }}>
-          Questions? Email us at <span style={{ color: C.ink }}>hello@clipforge.ai</span>
+          Questions? Email us at <span style={{ color: C.ink }}>hatimtoor2025@gmail.com</span>
         </div>
       </div>
     </section>

@@ -1137,7 +1137,7 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "from": "ClipForge <notifications@clipforge.ai>",
+                    "from": "ClipForge <notifications@updates.automationsociety.dpdns.org>",
                     "to": [email],
                     "subject": subject,
                     "html": body,

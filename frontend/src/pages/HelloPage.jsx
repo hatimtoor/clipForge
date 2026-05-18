@@ -153,7 +153,7 @@ export default function HelloPage() {
           {/* ── Right column ── */}
           <aside style={{ display: "flex", flexDirection: "column", gap: 18 }}>
 
-            <PixelCard color={C.paper} padding={22} style={isMobile ? { boxShadow: "none" } : {}}>
+            <PixelCard color={C.paper} padding={22} style={{ order: isMobile ? 1 : 0, ...(isMobile ? { boxShadow: "none" } : {}) }}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>WHAT WE LOOK FOR</div>
               <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 14 }}>
                 {[
@@ -174,10 +174,10 @@ export default function HelloPage() {
             </PixelCard>
 
             {/* Caption customisation card */}
-            <PixelCard color={C.cream} padding={20} style={isMobile ? { boxShadow: "none" } : {}}>
+            <PixelCard color={C.cream} padding={isMobile ? 16 : 20} style={{ order: isMobile ? 0 : 1, ...(isMobile ? { boxShadow: "none" } : {}) }}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>CAPTION STYLE</div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, minmax(0,1fr))" : "1fr 1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 20 }}>
                 {[
                   { id: "bold_bottom", label: "BOLD",    hint: "white + yellow, bottom", bg: C.amber    },
                   { id: "center_pop",  label: "POP",     hint: "large, centered",         bg: C.lavender },
@@ -234,7 +234,7 @@ export default function HelloPage() {
               </div>
             </PixelCard>
 
-            <PixelCard color={C.lavender} padding={20} style={isMobile ? { boxShadow: "none" } : {}}>
+            <PixelCard color={C.lavender} padding={20} style={{ order: 2, ...(isMobile ? { boxShadow: "none" } : {}) }}>
               <div className="pixel" style={{ fontSize: 10, color: C.ink, marginBottom: 10 }}><span style={{ fontSize: 20 }}>💁‍♂️</span> TIP</div>
               <p className="vt" style={{ fontSize: 18, color: C.ink, lineHeight: 1.35 }}>
                 Long videos can take 5-10 min. Your job keeps running on the server even if you close this tab — find it under <strong>ARCHIVE</strong>.

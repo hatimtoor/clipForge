@@ -771,11 +771,13 @@ def _yolo_sample_positions(
     prev_frame = None
     t = clip_start
 
+    frames_tried = 0
     while t < clip_end:
         cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000)
         ret, frame = cap.read()
         if not ret:
             break
+        frames_tried += 1
         cx = _speaking_person_cx(frame, prev_frame, model)
         if cx is not None:
             crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
@@ -784,6 +786,7 @@ def _yolo_sample_positions(
         t += sample_interval
 
     cap.release()
+    print(f"[reframe] {len(results)}/{frames_tried} frames had detections", flush=True)
     return results
 
 

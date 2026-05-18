@@ -81,6 +81,8 @@ _PATCHES = [
     ("main.db_update_clip_yt_upload",{}),
     ("main.db_check_and_reset_quota",dict(return_value=MOCK_PROFILE)),
     ("main.db_increment_clips_used", {}),
+    ("main.db_get_user_email",       dict(return_value="test@example.com")),
+    ("main.send_job_notification",   dict(new_callable=AsyncMock)),
 ]
 
 

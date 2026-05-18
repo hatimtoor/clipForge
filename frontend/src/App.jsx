@@ -15,6 +15,7 @@ import WatchlistPage from "./pages/WatchlistPage";
 import ArchivePage  from "./pages/ArchivePage";
 import PrivacyPage  from "./pages/PrivacyPage";
 import TermsPage    from "./pages/TermsPage";
+import LandingPage  from "./pages/LandingPage";
 
 function PrivateRoute({ children }) {
   const [authed, setAuthed] = useState(null); // null = checking
@@ -72,6 +73,7 @@ export default function App() {
       <AppContext.Provider value={ctx}>
         <ScrollToTop />
         <Routes>
+          <Route path="/"       element={authed ? <Navigate to="/hello" replace /> : <LandingPage />} />
           <Route path="/login" element={authed ? <Navigate to="/hello" replace /> : <LoginPage />} />
           <Route path="/hello"     element={<PrivateRoute><HelloPage /></PrivateRoute>} />
           <Route path="/work"      element={<PrivateRoute><WorkPage /></PrivateRoute>} />
@@ -79,7 +81,7 @@ export default function App() {
           <Route path="/archive"   element={<PrivateRoute><ArchivePage /></PrivateRoute>} />
           <Route path="/privacy"   element={<PrivacyPage />} />
           <Route path="/terms"     element={<TermsPage />} />
-          <Route path="*"          element={<Navigate to="/hello" replace />} />
+          <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
       </AppContext.Provider>
     </BrowserRouter>

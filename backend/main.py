@@ -15,11 +15,12 @@ try:
 except Exception as _reframe_err:
     _REFRAME_AVAILABLE = False
     print(f"[reframe] YOLO unavailable: {_reframe_err}", flush=True)
-from groq_limiter import whisper_limiter, llama_limiter, groq_with_retry
+from groq_limiter import whisper_limiter, llama_limiter, groq_with_retry, set_groq_keys, get_groq_key
 # Load from clipforge root (local dev) or server path
 _env = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(_env if _env.exists() else "/home/ubuntu/.env")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+set_groq_keys([GROQ_API_KEY or ""] + [os.getenv(f"GROQ_API_KEY_{i}", "") for i in range(2, 6)])
 
 # Google's OAuth server always returns extra scopes (openid, userinfo.*).
 # This tells oauthlib to accept a superset of the requested scopes without raising.
@@ -357,8 +358,6 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
 
     import math
 
-    groq_client = Groq(api_key=GROQ_API_KEY)
-
     # Extract audio as mp3 (much smaller than video)
     audio_path = video_path.parent / "audio.mp3"
     cmd = [FFMPEG, "-y", "-i", str(video_path), "-q:a", "0", "-map", "a",
@@ -385,7 +384,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
         audio_data = audio_path.read_bytes()
         response = await groq_with_retry(
             lambda: asyncio.to_thread(
-                lambda: groq_client.audio.transcriptions.create(
+                lambda: Groq(api_key=get_groq_key()).audio.transcriptions.create(
                     file=("audio.mp3", audio_data),
                     model="whisper-large-v3",
                     response_format="verbose_json",
@@ -457,7 +456,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             chunk_name = f"chunk_{i}.mp3"
             response = await groq_with_retry(
                 lambda data=chunk_data, name=chunk_name: asyncio.to_thread(
-                    lambda: groq_client.audio.transcriptions.create(
+                    lambda: Groq(api_key=get_groq_key()).audio.transcriptions.create(
                         file=(name, data),
                         model="whisper-large-v3",
                         response_format="verbose_json",
@@ -567,7 +566,7 @@ Return valid JSON array only, no markdown, no explanation."""
 
         async def _call_groq(temp=0.3):
             def _sync(t=temp):
-                client = Groq(api_key=GROQ_API_KEY)
+                client = Groq(api_key=get_groq_key())
                 r = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}],

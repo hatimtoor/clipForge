@@ -7,7 +7,8 @@ Groq free-tier limits (conservative baseline):
 
 Each limiter pre-emptively blocks before a request is sent, so we never
 hit a 429 under normal single-job operation. If a 429 arrives anyway
-(e.g. two jobs running in parallel), the retry wrapper backs off and retries.
+(e.g. two jobs running in parallel), the retry wrapper cycles through
+all configured API keys before waiting and retrying.
 """
 import asyncio
 import time
@@ -52,27 +53,68 @@ class _SlidingWindowLimiter:
 whisper_limiter = _SlidingWindowLimiter(rpm=20)   # whisper-large-v3
 llama_limiter   = _SlidingWindowLimiter(rpm=30)   # llama-3.x chat
 
+# ── Multi-key rotation ────────────────────────────────────────────────────────
+_keys: list[str] = []
+_key_idx: int = 0
+
+
+def set_groq_keys(keys: list[str]) -> None:
+    """Call once at startup with all available GROQ_API_KEY* values."""
+    global _keys, _key_idx
+    _keys = [k for k in keys if k]
+    _key_idx = 0
+
+
+def get_groq_key() -> str:
+    """Return the currently active API key."""
+    if not _keys:
+        return ""
+    return _keys[_key_idx % len(_keys)]
+
+
+def _advance_groq_key() -> bool:
+    """Rotate to the next key. Returns True if all keys have been cycled once."""
+    global _key_idx
+    _key_idx += 1
+    return len(_keys) > 0 and (_key_idx % len(_keys)) == 0
+
 
 async def groq_with_retry(coro_fn, limiter: _SlidingWindowLimiter,
                            log_fn=None, max_retries: int = 4):
     """
     Acquire a rate-limit slot, call coro_fn(), and retry on 429.
 
-    coro_fn  — async callable that makes the Groq API call and returns its result
+    On each 429 the active key advances to the next one. Only when all keys
+    have been exhausted does the wrapper wait 60 s before the next round.
+
+    coro_fn  — async callable that makes the Groq API call (calls get_groq_key()
+               internally so it always uses the current active key)
     limiter  — whisper_limiter or llama_limiter
     log_fn   — optional callable(str) for progress messages
     """
-    for attempt in range(max_retries):
+    n = max(1, len(_keys))
+    total = max_retries * n
+
+    for attempt in range(total):
         await limiter.acquire()
         try:
             return await coro_fn()
         except _groq_sdk.RateLimitError:
-            wait = 60 * (attempt + 1)
-            msg  = f"Groq rate limit hit — waiting {wait}s before retry {attempt + 1}/{max_retries}"
-            if log_fn:
-                log_fn(msg)
+            exhausted = _advance_groq_key()
+            if exhausted:
+                wait = 60
+                msg = f"All {n} Groq key(s) rate limited — waiting {wait}s (retry {attempt // n + 1}/{max_retries})"
+                if log_fn:
+                    log_fn(msg)
+                else:
+                    print(msg, flush=True)
+                await asyncio.sleep(wait)
             else:
-                print(msg, flush=True)
-            await asyncio.sleep(wait)
+                active = _key_idx % n
+                msg = f"Groq key {active} rate limited — switching to key {active + 1}/{n}"
+                if log_fn:
+                    log_fn(msg)
+                else:
+                    print(msg, flush=True)
 
-    raise RuntimeError(f"Groq rate limit exceeded after {max_retries} retries")
+    raise RuntimeError(f"Groq rate limit exceeded after {max_retries} rounds across {n} key(s)")

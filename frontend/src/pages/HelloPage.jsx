@@ -194,24 +194,25 @@ export default function HelloPage() {
               </div>
 
               <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginBottom: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div className="pixel" style={{ fontSize: 9, color: C.dim2 }}>
-                    FONT SIZE {fontSizeOverride === null && <span style={{ color: C.dim, fontWeight: 400 }}>(auto)</span>}
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>FONT SIZE</div>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <NumField
+                      label=""
+                      value={effectiveFontSize}
+                      setValue={setFontSizeOverride}
+                      min={40} max={120} step={4}
+                      bg={C.paper}
+                    />
                   </div>
-                  {fontSizeOverride !== null && (
-                    <button onClick={() => setFontSizeOverride(null)} className="pixel"
-                      style={{ fontSize: 8, color: C.dim, background: C.cream2, border: BORDER, padding: "3px 8px", cursor: "pointer" }}>
-                      RESET AUTO
-                    </button>
-                  )}
+                  <button onClick={() => setFontSizeOverride(null)} className="pixel"
+                    style={{ padding: "10px 14px", fontSize: 9, cursor: "pointer", flexShrink: 0,
+                      background: fontSizeOverride === null ? C.ink : C.cream2,
+                      color: fontSizeOverride === null ? C.paper : C.dim,
+                      border: BORDER }}>
+                    AUTO
+                  </button>
                 </div>
-                <NumField
-                  label=""
-                  value={effectiveFontSize}
-                  setValue={setFontSizeOverride}
-                  min={40} max={120} step={4}
-                  bg={C.paper}
-                />
               </div>
 
               <div>

@@ -19,6 +19,25 @@ export default function HelloPage() {
   const [reframe, setReframe] = useState(searchParams.get("reframe") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
   const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
+  const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
+  const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
+
+  const STYLE_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56 };
+  const HIGHLIGHT_SWATCHES = [
+    { color: null,      label: "AUTO",  bg: C.cream2,    fg: C.dim2  },
+    { color: "#FFD400", label: "YLW",   bg: "#FFD400",   fg: "#222"  },
+    { color: "#00FFFF", label: "CYN",   bg: "#00FFFF",   fg: "#222"  },
+    { color: "#FF4500", label: "ORG",   bg: "#FF4500",   fg: "#fff"  },
+    { color: "#FF69B4", label: "PNK",   bg: "#FF69B4",   fg: "#222"  },
+    { color: "#00FF88", label: "GRN",   bg: "#00FF88",   fg: "#222"  },
+    { color: "#FFFFFF", label: "WHT",   bg: "#FFFFFF",   fg: "#555"  },
+  ];
+
+  const handleStyleChange = (id) => {
+    setCaptionStyle(id);
+    if (fontSizeOverride === null) return;
+    setFontSizeOverride(null);
+  };
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -32,7 +51,7 @@ export default function HelloPage() {
       const res = await authFetch("/api/clip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe, style_prompt: stylePrompt.trim() || undefined, caption_style: captionStyle }),
+        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe, style_prompt: stylePrompt.trim() || undefined, caption_style: captionStyle, caption_font_size: fontSizeOverride || undefined, caption_highlight_color: highlightColor || undefined }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -89,7 +108,7 @@ export default function HelloPage() {
 
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "1fr 1fr 1fr", gap: 14, marginBottom: 24 }}>
               <NumField label="MAX CLIPS" value={maxClips} setValue={setMaxClips} min={1} max={10} step={1} bg={C.lavender} />
-              <NumField label="MIN DUR" suffix="s" value={minDur} setValue={setMinDur} min={15} max={60} step={5} bg={C.peach} />
+              <NumField label="MIN DUR" suffix="s" value={minDur} setValue={setMinDur} min={15} max={90} step={5} bg={C.peach} />
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
             </div>
 
@@ -115,7 +134,7 @@ export default function HelloPage() {
                 { id: "center_pop",  label: "POP",     hint: "large, centered, thick outline",     bg: C.lavender },
                 { id: "minimal",     label: "MINIMAL", hint: "small, clean, no highlight",         bg: C.signal },
               ].map(({ id, label, hint, bg }) => (
-                <button key={id} onClick={() => setCaptionStyle(id)} className="pixel"
+                <button key={id} onClick={() => handleStyleChange(id)} className="pixel"
                   style={{ textAlign: "left", padding: 14, background: captionStyle === id ? bg : C.paper,
                     border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
                     boxShadow: captionStyle === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
@@ -123,6 +142,47 @@ export default function HelloPage() {
                   <div className="vt" style={{ fontSize: 13, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
                 </button>
               ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 24 }}>
+              <div>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>
+                  FONT SIZE <span style={{ color: C.dim, fontWeight: 400 }}>(auto = style default)</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <NumField
+                    label=""
+                    value={fontSizeOverride ?? STYLE_FONT_DEFAULTS[captionStyle] ?? 72}
+                    setValue={setFontSizeOverride}
+                    min={40} max={120} step={4}
+                    bg={C.paper}
+                  />
+                  {fontSizeOverride !== null && (
+                    <button onClick={() => setFontSizeOverride(null)} className="pixel"
+                      style={{ fontSize: 9, color: C.dim, background: "transparent", cursor: "pointer", padding: "4px 8px", border: BORDER }}>
+                      AUTO
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>HIGHLIGHT COLOR</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => {
+                    const active = highlightColor === color;
+                    return (
+                      <button key={label} onClick={() => setHighlightColor(color)} className="pixel"
+                        style={{ padding: "6px 10px", fontSize: 8, background: bg, color: fg,
+                          border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}44`,
+                          boxShadow: active ? `2px 2px 0 ${C.ink}` : "none",
+                          cursor: "pointer", transition: "all .1s" }}>
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             {error && (

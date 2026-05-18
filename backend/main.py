@@ -103,7 +103,7 @@ async def require_auth(authorization: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = authorization[7:]
     try:
-        result = _get_sb_auth().auth.get_user(token)
+        result = await asyncio.to_thread(_get_sb_auth().auth.get_user, token)
         if not result or not result.user:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         return result.user

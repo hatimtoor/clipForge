@@ -80,7 +80,7 @@ from db import (
     db_get_active_jobs, db_update_clip_yt_upload,
     db_create_channel, db_get_channel, db_get_user_channels,
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
-    db_get_youtube_token, db_upsert_youtube_token,
+    db_get_youtube_token, db_upsert_youtube_token, db_delete_youtube_token,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used,
     FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
 )
@@ -1439,6 +1439,12 @@ async def youtube_status(user=Depends(require_pro)):
     except Exception:
         pass
     return {"connected": True}
+
+
+@app.delete("/api/youtube/disconnect")
+async def youtube_disconnect(user=Depends(require_pro)):
+    db_delete_youtube_token(user.id)
+    return {"ok": True}
 
 
 @app.get("/api/youtube/auth")

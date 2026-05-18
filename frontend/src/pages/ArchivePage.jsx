@@ -62,24 +62,25 @@ export default function ArchivePage() {
         ) : isMobile ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {filtered.map((j) => {
-              const isDone = j.status === "done";
-              const isErr  = j.status === "error";
-              const isProc = !["done", "error"].includes(j.status);
+              const isDone      = j.status === "done";
+              const isErr       = j.status === "error";
+              const isCancelled = j.status === "cancelled";
+              const isProc      = !["done", "error", "cancelled"].includes(j.status);
               return (
                 <PixelCard key={j.job_id} color={C.cream} padding={16}
                   style={{ cursor: isProc ? "pointer" : "default" }}
                   onClick={() => isProc && navigate(`/work?job=${j.job_id}`)}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-                    <Tag bg={isDone ? C.signal : isErr ? C.hot : C.amber}>* {j.status?.toUpperCase()}</Tag>
+                    <Tag bg={isDone ? C.signal : isErr ? C.hot : isCancelled ? C.cream2 : C.amber}>* {j.status?.toUpperCase()}</Tag>
                     <span className="vt" style={{ fontSize: 15, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
                     {isDone && j.clips?.length > 0 && <span className="pixel" style={{ fontSize: 8, color: C.ink }}>{j.clips.length} CLIPS</span>}
                   </div>
                   <div className="mono" style={{ fontSize: 12, color: C.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: isErr ? 6 : 10 }}>{j.url}</div>
                   {isErr && <div className="vt" style={{ fontSize: 15, color: C.hotDeep, marginBottom: 8 }}>! {j.error?.split("\n").pop()}</div>}
                   <div style={{ display: "flex", gap: 8 }}>
-                    {isDone && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr  && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(`/hello?url=${encodeURIComponent(j.url)}`); }}>RETRY</PixelBtn>}
-                    {isProc && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
+                    {isDone      && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
+                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(`/hello?url=${encodeURIComponent(j.url)}`); }}>RETRY</PixelBtn>}
+                    {isProc      && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
                   </div>
                 </PixelCard>
               );
@@ -91,9 +92,10 @@ export default function ArchivePage() {
               {["SOURCE", "STATUS", "CLIPS", "CREATED", "ACTIONS"].map(h => <span key={h} className="pixel" style={{ fontSize: 8, color: C.dim2 }}>{h}</span>)}
             </div>
             {filtered.map((j, i) => {
-              const isDone = j.status === "done";
-              const isErr  = j.status === "error";
-              const isProc = !["done", "error"].includes(j.status);
+              const isDone      = j.status === "done";
+              const isErr       = j.status === "error";
+              const isCancelled = j.status === "cancelled";
+              const isProc      = !["done", "error", "cancelled"].includes(j.status);
               return (
                 <div key={j.job_id}
                   onClick={() => isProc && navigate(`/work?job=${j.job_id}`)}
@@ -102,15 +104,15 @@ export default function ArchivePage() {
                     <div className="mono" style={{ fontSize: 13, color: C.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.url}</div>
                     {isErr && <div className="vt" style={{ fontSize: 16, color: C.hotDeep, marginTop: 2 }}>! {j.error?.split("\n").pop()}</div>}
                   </div>
-                  <Tag bg={isDone ? C.signal : isErr ? C.hot : C.amber}>* {j.status?.toUpperCase()}</Tag>
+                  <Tag bg={isDone ? C.signal : isErr ? C.hot : isCancelled ? C.cream2 : C.amber}>* {j.status?.toUpperCase()}</Tag>
                   <span className="pixel" style={{ fontSize: 9, color: isDone ? C.ink : C.dim }}>
                     {j.clips?.length > 0 ? `${j.clips.length} CLIPS` : "--"}
                   </span>
                   <span className="vt" style={{ fontSize: 16, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    {isDone && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr  && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(`/hello?url=${encodeURIComponent(j.url)}`); }}>RETRY</PixelBtn>}
-                    {isProc && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
+                    {isDone      && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
+                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(`/hello?url=${encodeURIComponent(j.url)}`); }}>RETRY</PixelBtn>}
+                    {isProc      && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
                   </div>
                 </div>
               );

@@ -143,14 +143,15 @@ export function PhaseSteps({ status }) {
         const isComplete = isDone || i < currentIdx;
         return (
           <div key={step.key} style={{
-            flex: 1, padding: isMobile ? "8px 2px" : "12px 4px", textAlign: "center",
+            flex: 1, minWidth: 0, padding: isMobile ? "8px 2px" : "12px 4px", textAlign: "center",
             background: isComplete || isActive ? step.color : C.cream2,
             border: BORDER,
             boxShadow: isActive ? `4px 4px 0 ${C.ink}` : `2px 2px 0 ${C.ink}`,
             transform: isActive ? "translate(-2px,-2px)" : "none",
             transition: "transform .1s, box-shadow .1s",
+            overflow: "hidden",
           }}>
-            <div className="pixel" style={{ fontSize: isMobile ? 6 : 7, color: C.ink }}>{isMobile ? step.short : step.label}</div>
+            <div className="pixel" style={{ fontSize: isMobile ? 6 : 7, color: C.ink, overflow: "hidden", textOverflow: "clip", whiteSpace: "nowrap" }}>{isMobile ? step.short : step.label}</div>
           </div>
         );
       })}
@@ -174,7 +175,7 @@ export function SegmentedProgressBar({ displayProgress, status }) {
         const isActive   = !isDone && i === currentIdx;
         const isComplete = isDone || i < currentIdx;
         return (
-          <div key={block.key} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div key={block.key} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ height: 22, background: C.paper, border: `2px solid ${C.ink}`, padding: 2, position: "relative", overflow: "hidden" }}>
               <div style={{ height: "100%", width: `${fill}%`, background: block.color, transition: "width .08s linear", position: "relative", overflow: "hidden" }}>
                 {isActive && <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(45deg,rgba(0,0,0,.15) 0 4px,transparent 4px 8px)" }} />}

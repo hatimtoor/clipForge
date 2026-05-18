@@ -18,6 +18,7 @@ export default function HelloPage() {
   const [maxDur, setMaxDur] = useState(Number(searchParams.get("max_dur")) || 90);
   const [reframe, setReframe] = useState(searchParams.get("reframe") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
+  const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -31,7 +32,7 @@ export default function HelloPage() {
       const res = await authFetch("/api/clip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe, style_prompt: stylePrompt.trim() || undefined }),
+        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe, style_prompt: stylePrompt.trim() || undefined, caption_style: captionStyle }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -105,6 +106,23 @@ export default function HelloPage() {
                     <div className="vt" style={{ fontSize: 14, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>upgrade to unlock reframe</div>
                   </button>
               }
+            </div>
+
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>CAPTION STYLE</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
+              {[
+                { id: "bold_bottom", label: "BOLD",    hint: "white + yellow highlight, bottom",  bg: C.amber  },
+                { id: "center_pop",  label: "POP",     hint: "large, centered, thick outline",     bg: C.lavender },
+                { id: "minimal",     label: "MINIMAL", hint: "small, clean, no highlight",         bg: C.cream2 },
+              ].map(({ id, label, hint, bg }) => (
+                <button key={id} onClick={() => setCaptionStyle(id)} className="pixel"
+                  style={{ textAlign: "left", padding: 14, background: captionStyle === id ? bg : C.paper,
+                    border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
+                    boxShadow: captionStyle === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
+                  <div style={{ fontSize: 10, color: C.ink, marginBottom: 4 }}>{label}</div>
+                  <div className="vt" style={{ fontSize: 13, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
+                </button>
+              ))}
             </div>
 
             {error && (

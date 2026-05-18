@@ -1313,6 +1313,7 @@ async def start_clip(req: ClipRequest, user=Depends(require_auth)):
         "max_clips": req.max_clips,
         "min_duration": req.min_duration,
         "max_duration": req.max_duration,
+        "style_prompt": req.style_prompt or "",
     })
     job_id = job["id"]
     task = asyncio.create_task(run_pipeline(job_id, req, user_id=user.id))

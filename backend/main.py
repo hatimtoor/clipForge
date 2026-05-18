@@ -1089,6 +1089,7 @@ async def channel_poller():
                         max_clips=ch.get("max_clips", 3),
                         min_duration=ch.get("min_duration", 30),
                         max_duration=ch.get("max_duration", 90),
+                        reframe=True,
                     )
                     asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False)))
             except Exception as e:

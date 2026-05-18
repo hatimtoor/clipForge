@@ -228,12 +228,15 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
-function Results({ job, ytStatus, isPro, onYTUpload, onNew }) {
+function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadingAll }) {
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
   const previewRef = useRef(null);
   const isMobile = useMobile();
+
+  const ytConnected = isPro && !!ytStatus?.connected;
+  const uploadableCount = clips.filter(c => !c.yt_upload || !["done", "uploading", "queued"].includes(c.yt_upload?.status)).length;
 
   useEffect(() => {
     if (active && previewRef.current) previewRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -249,7 +252,14 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew }) {
               <span style={{ color: C.hotDeep, fontSize: 36 }}>{clips.length}</span> {clips.length === 1 ? "clip" : "clips"} ready to ship!
             </h1>
           </div>
-          <PixelBtn color="hot" size="md" onClick={onNew}>+ NEW CLIP</PixelBtn>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            {ytConnected && uploadableCount > 0 && (
+              <PixelBtn color="yt" size="md" onClick={onUploadAll} disabled={uploadingAll}>
+                {uploadingAll ? `^ UPLOADING...` : `^ UPLOAD ALL TO YT`}
+              </PixelBtn>
+            )}
+            <PixelBtn color="hot" size="md" onClick={onNew}>+ NEW CLIP</PixelBtn>
+          </div>
         </div>
       </PixelCard>
 
@@ -402,7 +412,9 @@ export default function WorkPage() {
   const [ytModal, setYtModal] = useState(null);
   const [loading, setLoading] = useState(!!jobId);
   const [fetchError, setFetchError] = useState(false);
+  const [uploadingAll, setUploadingAll] = useState(false);
   const pollRef = useRef(null);
+  const uploadAllPollRef = useRef(null);
   const isTerminalRef = useRef(false);
 
   const isTerminal = (status) => ["done", "error", "cancelled"].includes(status);
@@ -451,13 +463,45 @@ export default function WorkPage() {
       }
     });
 
-    return () => { clearInterval(pollRef.current); if (isTerminalRef.current) setJobActive(null); };
+    return () => { clearInterval(pollRef.current); clearInterval(uploadAllPollRef.current); if (isTerminalRef.current) setJobActive(null); };
   }, [jobId]);
 
   const refreshJob = async () => {
     if (!jobId) return;
     const d = await fetchJob(jobId);
     if (d) setJob(d);
+  };
+
+  const handleUploadAll = async () => {
+    if (!job?.clips || uploadingAll) return;
+    setUploadingAll(true);
+    clearInterval(uploadAllPollRef.current);
+    const toUpload = job.clips
+      .map((c, i) => ({ clip: c, idx: i }))
+      .filter(({ clip }) => !clip.yt_upload || !["done", "uploading", "queued"].includes(clip.yt_upload?.status));
+    for (const { clip, idx } of toUpload) {
+      const isShort = (clip.duration || 0) <= 60;
+      const title = (clip.title || `Clip ${idx + 1}`) + (isShort ? " #Shorts" : "");
+      const description = [clip.hook, clip.reason, (clip.tags || []).map(t => `#${t}`).join(" "), isShort ? "#Shorts" : ""]
+        .filter(Boolean).join("\n\n");
+      try {
+        await authFetch(`/api/youtube/upload/${jobId}/${idx}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, description, tags: clip.tags || [], privacy_status: "public" }),
+        });
+      } catch {}
+    }
+    uploadAllPollRef.current = setInterval(async () => {
+      const d = await fetchJob(jobId);
+      if (!d) return;
+      setJob(d);
+      const allSettled = (d.clips || []).every(c => !c.yt_upload || ["done", "error"].includes(c.yt_upload?.status));
+      if (allSettled) {
+        clearInterval(uploadAllPollRef.current);
+        setUploadingAll(false);
+      }
+    }, 2000);
   };
 
   const goNew = () => navigate("/hello");
@@ -555,6 +599,8 @@ export default function WorkPage() {
           isPro={isPro}
           onNew={goNew}
           onYTUpload={(clip, clipIndex) => setYtModal({ clip, clipIndex })}
+          onUploadAll={handleUploadAll}
+          uploadingAll={uploadingAll}
         />
         {ytModal && (
           <YouTubeUploadModal

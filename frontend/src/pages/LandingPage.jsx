@@ -77,7 +77,7 @@ function HowItWorksSection({ isMobile }) {
       color: C.amber,
       icon: <span style={{ fontSize: 28 }}>🤖</span>,
       title: "AI FINDS THE GOLD",
-      desc: "Whisper transcribes every word. Llama reads the transcript and scores each segment for virality — tension, hooks, confessions, numbers.",
+      desc: "Every word gets transcribed. Our AI reads the full transcript and scores each segment for virality — tension, hooks, confessions, numbers.",
     },
     {
       num: "03",

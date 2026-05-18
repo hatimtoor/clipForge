@@ -153,6 +153,26 @@ export default function HelloPage() {
           {/* ── Right column ── */}
           <aside style={{ display: "flex", flexDirection: "column", gap: 18 }}>
 
+            <PixelCard color={C.paper} padding={22} style={isMobile ? { boxShadow: "none" } : {}}>
+              <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>WHAT WE LOOK FOR</div>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 14 }}>
+                {[
+                  ["⚡", "Tension shifts", "Moments where energy changes register."],
+                  ["💰", "Numbers & names", "Specific dollar figures, ages, places."],
+                  ["🌶️", "Contrarian frames", "Statements that invite disagreement."],
+                  ["💬", "Confessions", "First-person admissions land everywhere."],
+                ].map(([emoji, h, d]) => (
+                  <li key={h} style={{ display: "grid", gridTemplateColumns: "32px 1fr", gap: 12, alignItems: "start" }}>
+                    <div style={{ fontSize: 20 }}>{emoji}</div>
+                    <div>
+                      <div className="pixel" style={{ fontSize: 10, color: C.ink }}>{h}</div>
+                      <div className="vt" style={{ fontSize: 18, color: C.dim2, lineHeight: 1.3, marginTop: 3 }}>{d}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </PixelCard>
+
             {/* Caption customisation card */}
             <PixelCard color={C.cream} padding={20} style={isMobile ? { boxShadow: "none" } : {}}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>CAPTION STYLE</div>
@@ -175,7 +195,9 @@ export default function HelloPage() {
 
               <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginBottom: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div className="pixel" style={{ fontSize: 9, color: C.dim2 }}>FONT SIZE</div>
+                  <div className="pixel" style={{ fontSize: 9, color: C.dim2 }}>
+                    FONT SIZE {fontSizeOverride === null && <span style={{ color: C.dim, fontWeight: 400 }}>(auto)</span>}
+                  </div>
                   {fontSizeOverride !== null && (
                     <button onClick={() => setFontSizeOverride(null)} className="pixel"
                       style={{ fontSize: 8, color: C.dim, background: C.cream2, border: BORDER, padding: "3px 8px", cursor: "pointer" }}>
@@ -183,18 +205,13 @@ export default function HelloPage() {
                     </button>
                   )}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <NumField
-                    label=""
-                    value={effectiveFontSize}
-                    setValue={setFontSizeOverride}
-                    min={40} max={120} step={4}
-                    bg={C.paper}
-                  />
-                  {fontSizeOverride === null && (
-                    <span className="pixel" style={{ fontSize: 8, color: C.dim, whiteSpace: "nowrap" }}>auto</span>
-                  )}
-                </div>
+                <NumField
+                  label=""
+                  value={effectiveFontSize}
+                  setValue={setFontSizeOverride}
+                  min={40} max={120} step={4}
+                  bg={C.paper}
+                />
               </div>
 
               <div>
@@ -214,26 +231,6 @@ export default function HelloPage() {
                   })}
                 </div>
               </div>
-            </PixelCard>
-
-            <PixelCard color={C.paper} padding={22} style={isMobile ? { boxShadow: "none" } : {}}>
-              <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>WHAT WE LOOK FOR</div>
-              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 14 }}>
-                {[
-                  ["⚡", "Tension shifts", "Moments where energy changes register."],
-                  ["💰", "Numbers & names", "Specific dollar figures, ages, places."],
-                  ["🌶️", "Contrarian frames", "Statements that invite disagreement."],
-                  ["💬", "Confessions", "First-person admissions land everywhere."],
-                ].map(([emoji, h, d]) => (
-                  <li key={h} style={{ display: "grid", gridTemplateColumns: "32px 1fr", gap: 12, alignItems: "start" }}>
-                    <div style={{ fontSize: 20 }}>{emoji}</div>
-                    <div>
-                      <div className="pixel" style={{ fontSize: 10, color: C.ink }}>{h}</div>
-                      <div className="vt" style={{ fontSize: 18, color: C.dim2, lineHeight: 1.3, marginTop: 3 }}>{d}</div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
             </PixelCard>
 
             <PixelCard color={C.lavender} padding={20} style={isMobile ? { boxShadow: "none" } : {}}>

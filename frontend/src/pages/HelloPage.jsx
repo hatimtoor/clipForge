@@ -17,6 +17,7 @@ export default function HelloPage() {
   const [minDur, setMinDur] = useState(30);
   const [maxDur, setMaxDur] = useState(90);
   const [reframe, setReframe] = useState(false);
+  const [stylePrompt, setStylePrompt] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -30,7 +31,7 @@ export default function HelloPage() {
       const res = await authFetch("/api/clip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe }),
+        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe, style_prompt: stylePrompt.trim() || undefined }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -71,6 +72,18 @@ export default function HelloPage() {
                 className="mono" style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 15, fontWeight: 500, minWidth: 0 }} />
               {url && <button onClick={() => setUrl("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
               {valid && <Tag color={C.signalDeep} bg={C.signal}>v OK</Tag>}
+            </div>
+
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>FOCUS <span style={{ color: C.dim, fontWeight: 400 }}>(optional — guide what the AI picks)</span></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.paper, border: BORDER, marginBottom: 24 }}>
+              <input
+                value={stylePrompt}
+                onChange={e => setStylePrompt(e.target.value)}
+                placeholder="e.g. controversial takes, actionable tips, funny moments"
+                className="mono"
+                style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 14, minWidth: 0 }}
+              />
+              {stylePrompt && <button onClick={() => setStylePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "1fr 1fr 1fr", gap: 14, marginBottom: 24 }}>

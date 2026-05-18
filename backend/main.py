@@ -148,6 +148,7 @@ class ClipRequest(BaseModel):
     min_duration: int = 30
     max_duration: int = 90
     reframe: bool = False
+    style_prompt: Optional[str] = None
 
 class JobStatus(BaseModel):
     job_id: str
@@ -507,7 +508,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
 
 
 # ── virality analysis via Ollama ──────────────────────────────────────────────
-async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int) -> list:
+async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int, style_prompt: str = "") -> list:
     log(job_id, f"Analyzing virality: {len(segments)} segments, max_clips={max_clips}, dur={min_dur}-{max_dur}s")
     update_job(job_id, status="analyzing", progress=66, message="AI is identifying viral moments...")
 
@@ -538,6 +539,7 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
         log(job_id, f"Sending chunk {chunk_idx+1}/{len(chunks)} to Groq Llama ({len(transcript_text)} chars)...")
         update_job(job_id, progress=analysis_progress, message=f"AI analyzing part {chunk_idx+1}/{len(chunks)}...")
 
+        focus_line = f"\nFOCUS ON: {style_prompt.strip()}\n" if style_prompt and style_prompt.strip() else ""
         prompt = f"""You are a viral short-form content expert. Analyze this video transcript segment and identify the {clips_per_chunk} most viral-worthy moments.
 
 A viral segment should have ONE OR MORE of:
@@ -547,7 +549,7 @@ A viral segment should have ONE OR MORE of:
 - Highly quotable / shareable moment
 - Practical high-value tip or insight
 - Controversial or bold opinion
-
+{focus_line}
 TRANSCRIPT SEGMENT:
 {transcript_text}
 
@@ -1178,6 +1180,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         clips = await analyze_virality(
             segments, job_id,
             req.max_clips, req.min_duration, req.max_duration,
+            style_prompt=req.style_prompt or "",
         )
         log(job_id, f"Analysis done → {len(clips)} clips selected")
 

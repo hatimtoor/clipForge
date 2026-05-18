@@ -1229,6 +1229,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
 
         # 4. Cut + subtitle
         log(job_id, "--- PHASE 4: CLIP ---")
+        log(job_id, f"  caption_style={req.caption_style!r} reframe={req.reframe}")
         final_clips = await create_clips(video_path, clips, segments, job_dir, job_id, reframe=req.reframe, caption_style=req.caption_style or "bold_bottom")
 
         update_job(

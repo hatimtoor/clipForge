@@ -152,6 +152,8 @@ class ClipRequest(BaseModel):
     reframe: bool = False
     style_prompt: Optional[str] = None
     caption_style: str = "bold_bottom"
+    caption_font_size: Optional[int] = None
+    caption_highlight_color: Optional[str] = None
 
 class JobStatus(BaseModel):
     job_id: str
@@ -554,9 +556,11 @@ A viral segment should have ONE OR MORE of:
 TRANSCRIPT SEGMENT:
 {transcript_text}
 
+DURATION RULE (non-negotiable): Every clip MUST be {min_dur}s–{max_dur}s long (end - start). Target ~{(min_dur + max_dur) // 2}s. If the core moment is short, extend start earlier or end later to include setup/context. Never return a clip shorter than {min_dur}s.
+
 Return ONLY a JSON array. Each item must have:
 - "start": start time in seconds (float)
-- "end": end time in seconds (float) — clip must be {min_dur}s to {max_dur}s long
+- "end": end time in seconds (float) — (end - start) must be between {min_dur} and {max_dur}
 - "title": catchy short title for the clip (max 8 words)
 - "hook": the opening line / hook text for this clip
 - "virality_score": integer 1-10
@@ -624,12 +628,15 @@ Return valid JSON array only, no markdown, no explanation."""
     log(job_id, f"Top {len(clips)} clips selected (scores: {[c.get('virality_score') for c in clips]})")
 
     # Validate & clamp durations
+    # When LLM returns a clip shorter than min_dur, extend to the midpoint of the
+    # allowed range so the output isn't always exactly min_dur long.
+    target_dur = (min_dur + max_dur) // 2
     valid = []
     for c in clips:
         dur = c["end"] - c["start"]
         if dur < min_dur:
-            c["end"] = c["start"] + min_dur
-        if dur > max_dur:
+            c["end"] = c["start"] + target_dur
+        elif dur > max_dur:
             c["end"] = c["start"] + max_dur
         valid.append(c)
 
@@ -692,6 +699,15 @@ _CAPTION_STYLES: dict[str, tuple[str, str]] = {
     ),
 }
 
+def _hex_to_ass(hex_color: str) -> str:
+    """Convert #RRGGBB to ASS &H00BBGGRR format (fully opaque)."""
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"&H00{b:02X}{g:02X}{r:02X}"
+
+
 # ── build ASS subtitle file (word-by-word TikTok style) ───────────────────────
 def build_ass_subtitles(
     segments: list,
@@ -701,9 +717,22 @@ def build_ass_subtitles(
     video_width: int = 1080,
     video_height: int = 1920,
     caption_style: str = "bold_bottom",
+    font_size: Optional[int] = None,
+    highlight_color: Optional[str] = None,
 ):
-    """Build an ASS subtitle file with word-by-word karaoke highlighting."""
     default_line, highlight_line = _CAPTION_STYLES.get(caption_style, _CAPTION_STYLES["bold_bottom"])
+
+    # Apply per-job overrides on top of the chosen style preset
+    if font_size is not None or highlight_color is not None:
+        def _apply(line: str, is_highlight: bool) -> str:
+            parts = line.split(",")
+            if font_size is not None:
+                parts[1] = str(font_size)
+            if highlight_color is not None and is_highlight:
+                parts[2] = _hex_to_ass(highlight_color)
+            return ",".join(parts)
+        default_line = _apply(default_line, is_highlight=False)
+        highlight_line = _apply(highlight_line, is_highlight=True)
 
     ass_header = f"""[Script Info]
 ScriptType: v4.00+
@@ -930,6 +959,8 @@ async def create_clips(
     job_id: str,
     reframe: bool = False,
     caption_style: str = "bold_bottom",
+    font_size: Optional[int] = None,
+    highlight_color: Optional[str] = None,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -980,6 +1011,8 @@ async def create_clips(
             video_width=out_w,
             video_height=out_h,
             caption_style=caption_style,
+            font_size=font_size,
+            highlight_color=highlight_color,
         )
 
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])
@@ -1229,8 +1262,14 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
 
         # 4. Cut + subtitle
         log(job_id, "--- PHASE 4: CLIP ---")
-        log(job_id, f"  caption_style={req.caption_style!r} reframe={req.reframe}")
-        final_clips = await create_clips(video_path, clips, segments, job_dir, job_id, reframe=req.reframe, caption_style=req.caption_style or "bold_bottom")
+        log(job_id, f"  caption_style={req.caption_style!r} font_size={req.caption_font_size} highlight={req.caption_highlight_color} reframe={req.reframe}")
+        final_clips = await create_clips(
+            video_path, clips, segments, job_dir, job_id,
+            reframe=req.reframe,
+            caption_style=req.caption_style or "bold_bottom",
+            font_size=req.caption_font_size,
+            highlight_color=req.caption_highlight_color,
+        )
 
         update_job(
             job_id,
@@ -1343,6 +1382,8 @@ async def start_clip(req: ClipRequest, user=Depends(require_auth)):
         "max_duration": req.max_duration,
         "style_prompt": req.style_prompt or "",
         "caption_style": req.caption_style or "bold_bottom",
+        "caption_font_size": req.caption_font_size,
+        "caption_highlight_color": req.caption_highlight_color,
     })
     job_id = job["id"]
     task = asyncio.create_task(run_pipeline(job_id, req, user_id=user.id))

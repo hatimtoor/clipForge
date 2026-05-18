@@ -19,8 +19,10 @@ export default function ArchivePage() {
     if (j.min_duration) p.set("min_dur",      j.min_duration);
     if (j.max_duration) p.set("max_dur",      j.max_duration);
     if (j.reframe)      p.set("reframe",      "1");
-    if (j.style_prompt)  p.set("style_prompt",  j.style_prompt);
-    if (j.caption_style) p.set("caption_style", j.caption_style);
+    if (j.style_prompt)           p.set("style_prompt",      j.style_prompt);
+    if (j.caption_style)          p.set("caption_style",     j.caption_style);
+    if (j.caption_font_size)      p.set("font_size",         j.caption_font_size);
+    if (j.caption_highlight_color) p.set("highlight_color",  j.caption_highlight_color);
     return `/hello?${p}`;
   };
 

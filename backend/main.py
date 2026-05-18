@@ -1397,13 +1397,13 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
             },
         }
 
-        media = MediaFileUpload(str(clip_file), mimetype="video/mp4", chunksize=256 * 1024, resumable=True)
+        media = MediaFileUpload(str(clip_file), mimetype="video/mp4", chunksize=5 * 1024 * 1024, resumable=True)
         db_update_clip_yt_upload(job_id, clip_index, {"status": "uploading", "progress": 0})
 
         request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
         response = None
         while response is None:
-            status, response = request.next_chunk()
+            status, response = request.next_chunk(num_retries=5)
             if status:
                 total = getattr(status, "total_size", None) or getattr(status, "resumable_total", None)
                 prog = int(status.resumable_progress / total * 100) if total else 0

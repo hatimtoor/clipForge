@@ -21,25 +21,24 @@ export default function HelloPage() {
   const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
   const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const STYLE_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56 };
   const HIGHLIGHT_SWATCHES = [
-    { color: null,      label: "AUTO",  bg: C.cream2,    fg: C.dim2  },
-    { color: "#FFD400", label: "YLW",   bg: "#FFD400",   fg: "#222"  },
-    { color: "#00FFFF", label: "CYN",   bg: "#00FFFF",   fg: "#222"  },
-    { color: "#FF4500", label: "ORG",   bg: "#FF4500",   fg: "#fff"  },
-    { color: "#FF69B4", label: "PNK",   bg: "#FF69B4",   fg: "#222"  },
-    { color: "#00FF88", label: "GRN",   bg: "#00FF88",   fg: "#222"  },
-    { color: "#FFFFFF", label: "WHT",   bg: "#FFFFFF",   fg: "#555"  },
+    { color: null,      label: "AUTO", bg: C.cream2,  fg: C.dim2  },
+    { color: "#FFD400", label: "YLW",  bg: "#FFD400", fg: "#222"  },
+    { color: "#00FFFF", label: "CYN",  bg: "#00FFFF", fg: "#222"  },
+    { color: "#FF4500", label: "ORG",  bg: "#FF4500", fg: "#fff"  },
+    { color: "#FF69B4", label: "PNK",  bg: "#FF69B4", fg: "#222"  },
+    { color: "#00FF88", label: "GRN",  bg: "#00FF88", fg: "#222"  },
+    { color: "#FFFFFF", label: "WHT",  bg: "#FFFFFF", fg: "#555"  },
   ];
 
   const handleStyleChange = (id) => {
     setCaptionStyle(id);
-    if (fontSizeOverride === null) return;
-    setFontSizeOverride(null);
+    if (fontSizeOverride !== null) setFontSizeOverride(null);
   };
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
 
   const valid = /youtu\.?be/.test(url);
   const isMobile = useMobile();
@@ -51,7 +50,13 @@ export default function HelloPage() {
       const res = await authFetch("/api/clip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe, style_prompt: stylePrompt.trim() || undefined, caption_style: captionStyle, caption_font_size: fontSizeOverride || undefined, caption_highlight_color: highlightColor || undefined }),
+        body: JSON.stringify({
+          url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe,
+          style_prompt: stylePrompt.trim() || undefined,
+          caption_style: captionStyle,
+          caption_font_size: fontSizeOverride || undefined,
+          caption_highlight_color: highlightColor || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -67,12 +72,16 @@ export default function HelloPage() {
     }
   };
 
+  const effectiveFontSize = fontSizeOverride ?? STYLE_FONT_DEFAULTS[captionStyle] ?? 72;
+
   return (
     <div style={{ minHeight: "100vh", overflowX: "clip" }}>
       <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 16px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1.55fr) minmax(0,1fr)", gap: isMobile ? 16 : 32, alignItems: "start" }}>
+
+          {/* ── Main card ── */}
           <PixelCard color={C.cream} padding={isMobile ? 18 : 32} style={isMobile ? { boxShadow: "none" } : {}}>
             <div className="pixel" style={{ fontSize: 10, color: C.hotDeep, marginBottom: 16 }}>{`>`} NEW JOB - STANDING BY</div>
             <h1 className="pixel" style={{ fontSize: isMobile ? 20 : 30, lineHeight: 1.3, color: C.ink, marginBottom: 14 }}>
@@ -112,7 +121,7 @@ export default function HelloPage() {
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr) minmax(0,1fr)" : "1fr 1fr 1fr", gap: 10, marginBottom: 28 }}>
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
@@ -125,64 +134,6 @@ export default function HelloPage() {
                     <div className="vt" style={{ fontSize: 14, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>upgrade to unlock reframe</div>
                   </button>
               }
-            </div>
-
-            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>CAPTION STYLE</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 24 }}>
-              {[
-                { id: "bold_bottom", label: "BOLD",    hint: "white + yellow highlight, bottom",  bg: C.amber  },
-                { id: "center_pop",  label: "POP",     hint: "large, centered, thick outline",     bg: C.lavender },
-                { id: "minimal",     label: "MINIMAL", hint: "small, clean, no highlight",         bg: C.signal },
-              ].map(({ id, label, hint, bg }) => (
-                <button key={id} onClick={() => handleStyleChange(id)} className="pixel"
-                  style={{ textAlign: "left", padding: 14, background: captionStyle === id ? bg : C.paper,
-                    border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
-                    boxShadow: captionStyle === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
-                  <div style={{ fontSize: 10, color: C.ink, marginBottom: 4 }}>{label}</div>
-                  <div className="vt" style={{ fontSize: 13, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
-                </button>
-              ))}
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 24 }}>
-              <div>
-                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>
-                  FONT SIZE <span style={{ color: C.dim, fontWeight: 400 }}>(auto = style default)</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <NumField
-                    label=""
-                    value={fontSizeOverride ?? STYLE_FONT_DEFAULTS[captionStyle] ?? 72}
-                    setValue={setFontSizeOverride}
-                    min={40} max={120} step={4}
-                    bg={C.paper}
-                  />
-                  {fontSizeOverride !== null && (
-                    <button onClick={() => setFontSizeOverride(null)} className="pixel"
-                      style={{ fontSize: 9, color: C.dim, background: "transparent", cursor: "pointer", padding: "4px 8px", border: BORDER }}>
-                      AUTO
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>HIGHLIGHT COLOR</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => {
-                    const active = highlightColor === color;
-                    return (
-                      <button key={label} onClick={() => setHighlightColor(color)} className="pixel"
-                        style={{ padding: "6px 10px", fontSize: 8, background: bg, color: fg,
-                          border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}44`,
-                          boxShadow: active ? `2px 2px 0 ${C.ink}` : "none",
-                          cursor: "pointer", transition: "all .1s" }}>
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
 
             {error && (
@@ -199,7 +150,72 @@ export default function HelloPage() {
             </div>
           </PixelCard>
 
+          {/* ── Right column ── */}
           <aside style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+
+            {/* Caption customisation card */}
+            <PixelCard color={C.cream} padding={20} style={isMobile ? { boxShadow: "none" } : {}}>
+              <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>CAPTION STYLE</div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 20 }}>
+                {[
+                  { id: "bold_bottom", label: "BOLD",    hint: "white + yellow, bottom", bg: C.amber    },
+                  { id: "center_pop",  label: "POP",     hint: "large, centered",         bg: C.lavender },
+                  { id: "minimal",     label: "MINIMAL", hint: "small, clean",            bg: C.signal   },
+                ].map(({ id, label, hint, bg }) => (
+                  <button key={id} onClick={() => handleStyleChange(id)} className="pixel"
+                    style={{ textAlign: "left", padding: 12, background: captionStyle === id ? bg : C.paper,
+                      border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
+                      boxShadow: captionStyle === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
+                    <div style={{ fontSize: 10, color: C.ink, marginBottom: 3 }}>{label}</div>
+                    <div className="vt" style={{ fontSize: 12, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div className="pixel" style={{ fontSize: 9, color: C.dim2 }}>FONT SIZE</div>
+                  {fontSizeOverride !== null && (
+                    <button onClick={() => setFontSizeOverride(null)} className="pixel"
+                      style={{ fontSize: 8, color: C.dim, background: C.cream2, border: BORDER, padding: "3px 8px", cursor: "pointer" }}>
+                      RESET AUTO
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <NumField
+                    label=""
+                    value={effectiveFontSize}
+                    setValue={setFontSizeOverride}
+                    min={40} max={120} step={4}
+                    bg={C.paper}
+                  />
+                  {fontSizeOverride === null && (
+                    <span className="pixel" style={{ fontSize: 8, color: C.dim, whiteSpace: "nowrap" }}>auto</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>HIGHLIGHT COLOR</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => {
+                    const active = highlightColor === color;
+                    return (
+                      <button key={label} onClick={() => setHighlightColor(color)} className="pixel"
+                        style={{ padding: "7px 11px", fontSize: 8, background: bg, color: fg,
+                          border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                          boxShadow: active ? `2px 2px 0 ${C.ink}` : "none",
+                          cursor: "pointer", transition: "all .1s" }}>
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </PixelCard>
+
             <PixelCard color={C.paper} padding={22} style={isMobile ? { boxShadow: "none" } : {}}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>WHAT WE LOOK FOR</div>
               <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -227,6 +243,7 @@ export default function HelloPage() {
               </p>
             </PixelCard>
           </aside>
+
         </div>
       </div>
     </div>

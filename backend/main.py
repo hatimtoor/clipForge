@@ -151,6 +151,7 @@ class ClipRequest(BaseModel):
     max_duration: int = 90
     reframe: bool = False
     style_prompt: Optional[str] = None
+    caption_style: str = "bold_bottom"
 
 class JobStatus(BaseModel):
     job_id: str
@@ -669,6 +670,28 @@ def _fill_words(seg: dict) -> list:
     ]
 
 
+# ── caption style presets ─────────────────────────────────────────────────────
+# Each entry: (Default style line, Highlight style line) — ASS V4+ format
+# Fields after Name: Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,
+#   BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,
+#   BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+_CAPTION_STYLES: dict[str, tuple[str, str]] = {
+    "bold_bottom": (
+        "Montserrat,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+        "Montserrat,72,&H0000D4FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+    ),
+    "center_pop": (
+        # Larger font, centered on screen, thick outline, pure-yellow highlight
+        "Montserrat,88,&H00FFFFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
+        "Montserrat,88,&H0000FFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
+    ),
+    "minimal": (
+        # Smaller, not bold, thin outline, no per-word colour change
+        "Montserrat,56,&H00FFFFFF,&H00FFFFFF,&H00000000,&HFF000000,0,0,0,0,100,100,2,0,1,2,0,2,80,80,400,1",
+        "Montserrat,56,&H00FFFFFF,&H00FFFFFF,&H00000000,&HFF000000,0,0,0,0,100,100,2,0,1,2,0,2,80,80,400,1",
+    ),
+}
+
 # ── build ASS subtitle file (word-by-word TikTok style) ───────────────────────
 def build_ass_subtitles(
     segments: list,
@@ -677,8 +700,10 @@ def build_ass_subtitles(
     output_path: Path,
     video_width: int = 1080,
     video_height: int = 1920,
+    caption_style: str = "bold_bottom",
 ):
     """Build an ASS subtitle file with word-by-word karaoke highlighting."""
+    default_line, highlight_line = _CAPTION_STYLES.get(caption_style, _CAPTION_STYLES["bold_bottom"])
 
     ass_header = f"""[Script Info]
 ScriptType: v4.00+
@@ -688,8 +713,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Montserrat,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1
-Style: Highlight,Montserrat,72,&H0000D4FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1
+Style: Default,{default_line}
+Style: Highlight,{highlight_line}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -904,6 +929,7 @@ async def create_clips(
     job_dir: Path,
     job_id: str,
     reframe: bool = False,
+    caption_style: str = "bold_bottom",
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -953,6 +979,7 @@ async def create_clips(
             output_path=ass_path,
             video_width=out_w,
             video_height=out_h,
+            caption_style=caption_style,
         )
 
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])
@@ -1202,7 +1229,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
 
         # 4. Cut + subtitle
         log(job_id, "--- PHASE 4: CLIP ---")
-        final_clips = await create_clips(video_path, clips, segments, job_dir, job_id, reframe=req.reframe)
+        final_clips = await create_clips(video_path, clips, segments, job_dir, job_id, reframe=req.reframe, caption_style=req.caption_style or "bold_bottom")
 
         update_job(
             job_id,
@@ -1314,6 +1341,7 @@ async def start_clip(req: ClipRequest, user=Depends(require_auth)):
         "min_duration": req.min_duration,
         "max_duration": req.max_duration,
         "style_prompt": req.style_prompt or "",
+        "caption_style": req.caption_style or "bold_bottom",
     })
     job_id = job["id"]
     task = asyncio.create_task(run_pipeline(job_id, req, user_id=user.id))

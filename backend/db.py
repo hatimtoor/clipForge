@@ -129,6 +129,10 @@ def db_upsert_youtube_token(user_id: str, access_token: str, refresh_token: Opti
     ).execute()
 
 
+def db_delete_youtube_token(user_id: str) -> None:
+    get_db().table("youtube_tokens").delete().eq("user_id", user_id).execute()
+
+
 # ── Profiles / plan ────────────────────────────────────────────────────────────
 
 FREE_MONTHLY_CLIP_LIMIT   = 10

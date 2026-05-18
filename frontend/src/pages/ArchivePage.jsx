@@ -13,6 +13,16 @@ export default function ArchivePage() {
   const [loading, setLoading] = useState(true);
   const isMobile = useMobile();
 
+  const retryHref = (j) => {
+    const p = new URLSearchParams({ url: j.url });
+    if (j.max_clips)    p.set("max_clips",   j.max_clips);
+    if (j.min_duration) p.set("min_dur",      j.min_duration);
+    if (j.max_duration) p.set("max_dur",      j.max_duration);
+    if (j.reframe)      p.set("reframe",      "1");
+    if (j.style_prompt) p.set("style_prompt", j.style_prompt);
+    return `/hello?${p}`;
+  };
+
   const fetchJobs = async () => {
     try {
       const res = await authFetch("/api/jobs");
@@ -79,7 +89,7 @@ export default function ArchivePage() {
                   {isErr && <div className="vt" style={{ fontSize: 15, color: C.hotDeep, marginBottom: 8 }}>! {j.error?.split("\n").pop()}</div>}
                   <div style={{ display: "flex", gap: 8 }}>
                     {isDone      && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(`/hello?url=${encodeURIComponent(j.url)}`); }}>RETRY</PixelBtn>}
+                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
                     {isProc      && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
                   </div>
                 </PixelCard>
@@ -111,7 +121,7 @@ export default function ArchivePage() {
                   <span className="vt" style={{ fontSize: 16, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                     {isDone      && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(`/hello?url=${encodeURIComponent(j.url)}`); }}>RETRY</PixelBtn>}
+                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
                     {isProc      && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
                   </div>
                 </div>

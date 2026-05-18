@@ -13,11 +13,11 @@ export default function HelloPage() {
   const { isPro, setJobActive } = useApp();
 
   const [url, setUrl] = useState(searchParams.get("url") || "");
-  const [maxClips, setMaxClips] = useState(5);
-  const [minDur, setMinDur] = useState(30);
-  const [maxDur, setMaxDur] = useState(90);
-  const [reframe, setReframe] = useState(false);
-  const [stylePrompt, setStylePrompt] = useState("");
+  const [maxClips, setMaxClips] = useState(Number(searchParams.get("max_clips")) || 5);
+  const [minDur, setMinDur] = useState(Number(searchParams.get("min_dur")) || 30);
+  const [maxDur, setMaxDur] = useState(Number(searchParams.get("max_dur")) || 90);
+  const [reframe, setReframe] = useState(searchParams.get("reframe") === "1");
+  const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 

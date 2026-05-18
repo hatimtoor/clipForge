@@ -157,7 +157,10 @@ def db_check_and_reset_quota(user_id: str) -> dict:
 
     profile = db_get_profile(user_id)
     if not profile:
-        get_db().table("profiles").insert({"id": user_id}).execute()
+        try:
+            get_db().table("profiles").insert({"id": user_id}).execute()
+        except Exception:
+            pass  # concurrent request may have already inserted it
         profile = db_get_profile(user_id) or {"id": user_id, "plan": "free", "clips_used": 0}
 
     reset_at_str = profile.get("clips_reset_at", "")

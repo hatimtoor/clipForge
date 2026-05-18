@@ -82,6 +82,7 @@ from db import (
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
     db_get_youtube_token, db_upsert_youtube_token, db_delete_youtube_token,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used,
+    db_get_user_email,
     FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
 )
 
@@ -1099,6 +1100,55 @@ async def channel_poller():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# EMAIL NOTIFICATIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def send_job_notification(user_id: str, clip_count: int, video_url: str, error: str = "") -> None:
+    """Send a Resend email when a job finishes. No-ops silently if RESEND_API_KEY is unset."""
+    api_key = os.getenv("RESEND_API_KEY", "")
+    if not api_key or not user_id:
+        return
+    try:
+        import httpx
+        email = await asyncio.to_thread(db_get_user_email, user_id)
+        if not email:
+            return
+        app_url = os.getenv("APP_URL", "https://clipforge.ai")
+        if error:
+            subject = "ClipForge — your job hit an error"
+            body = f"""<div style="font-family:monospace;max-width:540px;margin:0 auto;padding:32px 24px;background:#fef7e4;border:3px solid #1a0d2e">
+  <div style="font-size:22px;font-weight:bold;color:#1a0d2e;margin-bottom:8px">⚠️ Job failed</div>
+  <p style="color:#4a3d68;margin:0 0 12px">Your ClipForge job ran into a problem and couldn't finish.</p>
+  <p style="word-break:break-all;color:#1a0d2e;margin:0 0 6px"><strong>Video:</strong> {video_url}</p>
+  <p style="color:#d4669a;margin:0 0 20px"><strong>Error:</strong> {error[:300]}</p>
+  <a href="{app_url}/archive" style="display:inline-block;padding:12px 20px;background:#f5a3c7;color:#1a0d2e;text-decoration:none;font-weight:bold;border:2px solid #1a0d2e">View in Archive →</a>
+</div>"""
+        else:
+            noun = "clip" if clip_count == 1 else "clips"
+            subject = f"ClipForge — {clip_count} {noun} ready to ship!"
+            body = f"""<div style="font-family:monospace;max-width:540px;margin:0 auto;padding:32px 24px;background:#fef7e4;border:3px solid #1a0d2e">
+  <div style="font-size:22px;font-weight:bold;color:#1a0d2e;margin-bottom:8px">✅ Your clips are ready</div>
+  <p style="color:#4a3d68;margin:0 0 12px"><span style="font-size:32px;color:#1a0d2e;font-weight:bold">{clip_count}</span> {noun} forged and waiting for you.</p>
+  <p style="word-break:break-all;color:#1a0d2e;margin:0 0 20px"><strong>Video:</strong> {video_url}</p>
+  <a href="{app_url}/archive" style="display:inline-block;padding:12px 20px;background:#7ddca0;color:#1a0d2e;text-decoration:none;font-weight:bold;border:2px solid #1a0d2e">Open in ClipForge →</a>
+</div>"""
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "from": "ClipForge <notifications@clipforge.ai>",
+                    "to": [email],
+                    "subject": subject,
+                    "html": body,
+                },
+            )
+        print(f"[email] Sent '{subject}' to {email}", flush=True)
+    except Exception as e:
+        print(f"[email] Notification failed (non-fatal): {e}", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1158,6 +1208,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 log(job_id, f"  Auto-uploading clip {i+1}/{len(final_clips)}...")
                 await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data, user_id)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
+        if user_id:
+            asyncio.create_task(send_job_notification(user_id, len(final_clips), req.url))
 
     except asyncio.CancelledError:
         log(job_id, "=== PIPELINE CANCELLED ===")
@@ -1166,6 +1218,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
     except Exception as e:
         log(job_id, f"!!! PIPELINE ERROR: {e}")
         update_job(job_id, status="error", progress=0, message="Pipeline failed", error=str(e))
+        if user_id:
+            asyncio.create_task(send_job_notification(user_id, 0, req.url, error=str(e)))
         raise
     finally:
         _running_tasks.pop(job_id, None)

@@ -133,6 +133,14 @@ def db_delete_youtube_token(user_id: str) -> None:
     get_db().table("youtube_tokens").delete().eq("user_id", user_id).execute()
 
 
+def db_get_user_email(user_id: str) -> Optional[str]:
+    try:
+        response = get_db().auth.admin.get_user_by_id(user_id)
+        return response.user.email if response.user else None
+    except Exception:
+        return None
+
+
 # ── Profiles / plan ────────────────────────────────────────────────────────────
 
 FREE_MONTHLY_CLIP_LIMIT   = 10

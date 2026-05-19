@@ -36,14 +36,13 @@ jobs:
             google-api-python-client \
             "supabase>=2.0.0" \
             "boto3>=1.34.0" \
+            slowapi==0.1.9 \
             pytest httpx
 
       - name: Run tests
         run: pytest tests/ -v --tb=short
         env:
           GROQ_API_KEY: test_key_ci
-          CLIP_USER: testuser
-          CLIP_PASS: testpass
 
   # ── 2. Build frontend in CI (Node 20) ─────────────────────────────────────
   build-frontend:
@@ -59,6 +58,9 @@ jobs:
 
       - name: Install and build
         working-directory: frontend
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           npm ci --silent
           npm run build
@@ -105,7 +107,8 @@ jobs:
             cd /home/ubuntu/clipforge_new
 
             echo ">>> Pulling latest code..."
-            git pull
+            git fetch origin
+            git reset --hard origin/main
 
             echo ">>> Installing CPU-only PyTorch first (prevents CUDA bloat)..."
             pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu -q

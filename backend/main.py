@@ -1350,7 +1350,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         caption_segs = segments
         if req.caption_language and req.caption_language != "source":
             log(job_id, f"--- PHASE 3b: TRANSLATE CAPTIONS → {req.caption_language} ---")
-            update_job(job_id, status="translating", progress=77,
+            update_job(job_id, status="analyzing", progress=77,
                        message=f"Translating captions to {_LANGUAGE_NAMES.get(req.caption_language, req.caption_language)}...")
             caption_segs = await translate_segments(segments, req.caption_language, job_id)
 

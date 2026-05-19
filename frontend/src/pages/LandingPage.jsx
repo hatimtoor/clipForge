@@ -15,7 +15,7 @@ function LandingHeader({ onLogin, onSignup, isMobile }) {
       <div style={{ flex: 1 }} />
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <PixelBtn color="cream" size="sm" onClick={onLogin}>LOG IN</PixelBtn>
-        <PixelBtn color="hot" size="sm" onClick={onSignup}>{isMobile ? "START" : "GET STARTED"}</PixelBtn>
+        {!isMobile && <PixelBtn color="hot" size="sm" onClick={onSignup}>GET STARTED</PixelBtn>}
       </div>
     </header>
   );

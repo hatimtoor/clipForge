@@ -21,6 +21,7 @@ export default function HelloPage() {
   const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
   const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
+  const [captionLanguage, setCaptionLanguage] = useState(searchParams.get("caption_language") || "source");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -33,6 +34,24 @@ export default function HelloPage() {
     { color: "#FF69B4", label: "PNK",  bg: "#FF69B4", fg: "#222"  },
     { color: "#00FF88", label: "GRN",  bg: "#00FF88", fg: "#222"  },
     { color: "#FFFFFF", label: "WHT",  bg: "#FFFFFF", fg: "#555"  },
+  ];
+
+  const CAPTION_LANGUAGES = [
+    { code: "source", label: "Source (no translation)" },
+    { code: "en", label: "English" },
+    { code: "es", label: "Spanish" },
+    { code: "fr", label: "French" },
+    { code: "de", label: "German" },
+    { code: "pt", label: "Portuguese" },
+    { code: "it", label: "Italian" },
+    { code: "hi", label: "Hindi" },
+    { code: "ar", label: "Arabic" },
+    { code: "zh", label: "Chinese" },
+    { code: "ja", label: "Japanese" },
+    { code: "ko", label: "Korean" },
+    { code: "ru", label: "Russian" },
+    { code: "nl", label: "Dutch" },
+    { code: "tr", label: "Turkish" },
   ];
 
   const handleStyleChange = (id) => {
@@ -56,6 +75,7 @@ export default function HelloPage() {
           caption_style: captionStyle,
           caption_font_size: fontSizeOverride || undefined,
           caption_highlight_color: highlightColor || undefined,
+          caption_language: captionLanguage || "source",
         }),
       });
       const data = await res.json();
@@ -191,6 +211,19 @@ export default function HelloPage() {
                     <div className="vt" style={{ fontSize: 12, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
                   </button>
                 ))}
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>CAPTION LANGUAGE</div>
+                <select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)}
+                  className="mono"
+                  style={{ width: "100%", padding: "10px 12px", background: C.paper, color: C.ink,
+                    border: BORDER, fontSize: 13, cursor: "pointer", appearance: "none",
+                    WebkitAppearance: "none", outline: "none" }}>
+                  {CAPTION_LANGUAGES.map(({ code, label }) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+                </select>
               </div>
 
               <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginBottom: 16 }}>

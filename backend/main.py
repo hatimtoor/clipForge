@@ -154,6 +154,7 @@ class ClipRequest(BaseModel):
     caption_style: str = "bold_bottom"
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
+    caption_language: str = "source"
 
 class JobStatus(BaseModel):
     job_id: str
@@ -699,6 +700,83 @@ _CAPTION_STYLES: dict[str, tuple[str, str]] = {
     ),
 }
 
+_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English", "es": "Spanish", "fr": "French", "de": "German",
+    "pt": "Portuguese", "it": "Italian", "hi": "Hindi", "ar": "Arabic",
+    "zh": "Chinese (Simplified)", "ja": "Japanese", "ko": "Korean",
+    "ru": "Russian", "nl": "Dutch", "tr": "Turkish", "pl": "Polish",
+}
+
+
+async def translate_segments(segments: list, target_lang: str, job_id: str) -> list:
+    """Translate transcript segments to target_lang using Llama, redistributing word timing."""
+    lang_name = _LANGUAGE_NAMES.get(target_lang, target_lang)
+    log(job_id, f"[translate] Translating {len(segments)} segments → {lang_name}")
+
+    BATCH = 30
+    translated_texts: list[str] = []
+
+    for batch_start in range(0, len(segments), BATCH):
+        batch = segments[batch_start: batch_start + BATCH]
+        texts = [s["text"].strip() for s in batch]
+        prompt = (
+            f'Translate each string in this JSON array to {lang_name}. '
+            f'Return ONLY a JSON array of translated strings in the same order. '
+            f'No markdown, no explanation.\n\n{json.dumps(texts, ensure_ascii=False)}'
+        )
+
+        def _sync(p=prompt):
+            client = Groq(api_key=get_groq_key())
+            r = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": p}],
+                temperature=0.1,
+                max_tokens=4000,
+            )
+            return r.choices[0].message.content.strip()
+
+        try:
+            raw = await groq_with_retry(
+                lambda: asyncio.to_thread(_sync),
+                limiter=llama_limiter,
+                log_fn=lambda m: log(job_id, m),
+            )
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            result = json.loads(raw)
+            if isinstance(result, list) and len(result) == len(batch):
+                translated_texts.extend(result)
+                continue
+        except Exception as e:
+            log(job_id, f"[translate] batch error: {e}")
+        # fallback: keep originals for this batch
+        translated_texts.extend(texts)
+
+    # Rebuild segments with translated text + proportionally redistributed word timing
+    out = []
+    for seg, trans_text in zip(segments, translated_texts):
+        new_seg = dict(seg)
+        new_seg["text"] = trans_text
+        words = trans_text.split()
+        duration = seg["end"] - seg["start"]
+        if words and duration > 0:
+            total_chars = sum(len(w) for w in words) or 1
+            t = seg["start"]
+            new_words = []
+            for w in words:
+                dur = duration * len(w) / total_chars
+                new_words.append({"word": w, "start": t, "end": t + dur})
+                t += dur
+            new_seg["words"] = new_words
+        out.append(new_seg)
+
+    log(job_id, f"[translate] done")
+    return out
+
+
 def _hex_to_ass(hex_color: str) -> str:
     """Convert #RRGGBB to ASS &H00BBGGRR format (fully opaque)."""
     h = hex_color.lstrip("#")
@@ -961,6 +1039,7 @@ async def create_clips(
     caption_style: str = "bold_bottom",
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
+    caption_segments: Optional[list] = None,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -1004,7 +1083,7 @@ async def create_clips(
         # Build ASS subtitle
         ass_path = job_dir / f"clip_{idx}.ass"
         build_ass_subtitles(
-            segments,
+            caption_segments if caption_segments is not None else segments,
             clip_start=start,
             clip_end=end,
             output_path=ass_path,
@@ -1260,15 +1339,24 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         )
         log(job_id, f"Analysis done → {len(clips)} clips selected")
 
-        # 4. Cut + subtitle
+        # 4. Optionally translate captions (clip selection always uses source language)
+        caption_segs = segments
+        if req.caption_language and req.caption_language != "source":
+            log(job_id, f"--- PHASE 3b: TRANSLATE CAPTIONS → {req.caption_language} ---")
+            update_job(job_id, status="translating", progress=77,
+                       message=f"Translating captions to {_LANGUAGE_NAMES.get(req.caption_language, req.caption_language)}...")
+            caption_segs = await translate_segments(segments, req.caption_language, job_id)
+
+        # 5. Cut + subtitle
         log(job_id, "--- PHASE 4: CLIP ---")
-        log(job_id, f"  caption_style={req.caption_style!r} font_size={req.caption_font_size} highlight={req.caption_highlight_color} reframe={req.reframe}")
+        log(job_id, f"  caption_style={req.caption_style!r} lang={req.caption_language} font_size={req.caption_font_size} highlight={req.caption_highlight_color} reframe={req.reframe}")
         final_clips = await create_clips(
             video_path, clips, segments, job_dir, job_id,
             reframe=req.reframe,
             caption_style=req.caption_style or "bold_bottom",
             font_size=req.caption_font_size,
             highlight_color=req.caption_highlight_color,
+            caption_segments=caption_segs,
         )
 
         update_job(
@@ -1384,6 +1472,7 @@ async def start_clip(req: ClipRequest, user=Depends(require_auth)):
         "caption_style": req.caption_style or "bold_bottom",
         "caption_font_size": req.caption_font_size,
         "caption_highlight_color": req.caption_highlight_color,
+        "caption_language": req.caption_language or "source",
     })
     job_id = job["id"]
     task = asyncio.create_task(run_pipeline(job_id, req, user_id=user.id))

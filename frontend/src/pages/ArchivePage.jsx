@@ -21,8 +21,9 @@ export default function ArchivePage() {
     if (j.reframe)      p.set("reframe",      "1");
     if (j.style_prompt)           p.set("style_prompt",      j.style_prompt);
     if (j.caption_style)          p.set("caption_style",     j.caption_style);
-    if (j.caption_font_size)      p.set("font_size",         j.caption_font_size);
-    if (j.caption_highlight_color) p.set("highlight_color",  j.caption_highlight_color);
+    if (j.caption_font_size)       p.set("font_size",         j.caption_font_size);
+    if (j.caption_highlight_color) p.set("highlight_color",   j.caption_highlight_color);
+    if (j.caption_language)        p.set("caption_language",  j.caption_language);
     return `/hello?${p}`;
   };
 

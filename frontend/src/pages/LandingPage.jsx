@@ -3,8 +3,7 @@ import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES } from "../lib/theme
 import { PixelSprite, ANVIL, ANVIL_PAL, HAMMER, HAMMER_PAL, PixelBtn, PixelCard, Tag } from "../components/ui";
 import { useMobile } from "../hooks/useMobile";
 
-function LandingHeader({ onLogin, onSignup }) {
-  const isMobile = useMobile();
+function LandingHeader({ onLogin, onSignup, isMobile }) {
   return (
     <header style={{ padding: isMobile ? "14px 16px" : "24px 40px", display: "flex", alignItems: "center", gap: 16, maxWidth: 1320, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -16,7 +15,7 @@ function LandingHeader({ onLogin, onSignup }) {
       <div style={{ flex: 1 }} />
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <PixelBtn color="cream" size="sm" onClick={onLogin}>LOG IN</PixelBtn>
-        <PixelBtn color="hot" size="sm" onClick={onSignup}>GET STARTED</PixelBtn>
+        <PixelBtn color="hot" size="sm" onClick={onSignup}>{isMobile ? "START" : "GET STARTED"}</PixelBtn>
       </div>
     </header>
   );
@@ -248,13 +247,13 @@ function PricingSection({ onSignup, isMobile }) {
           </PixelCard>
 
           {/* Pro */}
-          <PixelCard color={C.hotDeep} padding={isMobile ? 24 : 32} style={{ position: "relative" }}>
-            <div style={{ position: "absolute", top: -14, right: 20, background: C.amber, border: BORDER, padding: "6px 12px" }}>
-              <span className="pixel" style={{ fontSize: 8, color: C.ink }}>MOST POPULAR</span>
+          <PixelCard color={C.hotDeep} padding={isMobile ? 24 : 32} style={{ position: "relative", opacity: 0.82 }}>
+            <div style={{ position: "absolute", top: -14, right: 20, background: C.ink, border: BORDER, padding: "6px 12px" }}>
+              <span className="pixel" style={{ fontSize: 8, color: C.amber }}>COMING SOON</span>
             </div>
             <div className="pixel" style={{ fontSize: 9, color: `${C.cream}cc`, marginBottom: 8 }}>PRO</div>
             <div className="pixel" style={{ fontSize: isMobile ? 28 : 36, color: C.cream, marginBottom: 4 }}>$29<span style={{ fontSize: 14 }}>/mo</span></div>
-            <div className="vt" style={{ fontSize: 18, color: `${C.cream}bb`, marginBottom: 24 }}>cancel any time</div>
+            <div className="vt" style={{ fontSize: 18, color: `${C.cream}bb`, marginBottom: 24 }}>launching soon</div>
             <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px", display: "flex", flexDirection: "column", gap: 10 }}>
               {pro.map(f => (
                 <li key={f} className="pixel" style={{ fontSize: 8, color: C.cream, display: "flex", gap: 10, alignItems: "center" }}>
@@ -262,7 +261,7 @@ function PricingSection({ onSignup, isMobile }) {
                 </li>
               ))}
             </ul>
-            <PixelBtn color="signal" full onClick={onSignup}>GET PRO</PixelBtn>
+            <PixelBtn color="cream" full style={{ opacity: 0.5, cursor: "not-allowed", pointerEvents: "none" }}>COMING SOON</PixelBtn>
           </PixelCard>
         </div>
 
@@ -302,7 +301,7 @@ export default function LandingPage() {
   return (
     <div style={{ minHeight: "100vh", overflowX: "clip" }}>
       <style>{KEYFRAMES}</style>
-      <LandingHeader onLogin={onLogin} onSignup={onSignup} />
+      <LandingHeader onLogin={onLogin} onSignup={onSignup} isMobile={isMobile} />
       <HeroSection onSignup={onSignup} isMobile={isMobile} />
       <HowItWorksSection isMobile={isMobile} />
       <FeaturesSection isMobile={isMobile} />

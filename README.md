@@ -1,5 +1,15 @@
 # ✂️ ClipForge
 
+![release](https://img.shields.io/github/v/release/hatimtoor/clipForge?include_prereleases&label=release&color=ff6b35)
+![license](https://img.shields.io/github/license/hatimtoor/clipForge?color=a8e6cf)
+![python](https://img.shields.io/badge/python-3.10%2B-3776ab?logo=python&logoColor=white)
+![react](https://img.shields.io/badge/react-18-61dafb?logo=react&logoColor=white)
+![fastapi](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white)
+![supabase](https://img.shields.io/badge/Supabase-auth%20%2B%20db-3ecf8e?logo=supabase&logoColor=white)
+![groq](https://img.shields.io/badge/Groq-Whisper%20%2B%20Llama-f55036)
+
+![ClipForge Login](screenshot-login.png)
+
 Turn any YouTube video into viral short-form clips — fully automatic.
 
 AI finds the highest-engagement moments, cuts the video, crops to 9:16, and burns word-by-word karaoke captions. Clips are ready to post to YouTube Shorts, TikTok, or Instagram Reels in under 5 minutes.

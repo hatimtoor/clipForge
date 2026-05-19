@@ -66,6 +66,30 @@ def db_update_clip_yt_upload(job_id: str, clip_index: int, yt_upload: dict) -> N
         get_db().table("jobs").update({"clips": clips}).eq("id", job_id).execute()
 
 
+def db_update_clip_analytics(job_id: str, clip_index: int, analytics: dict) -> None:
+    """Store YouTube performance stats on a single clip."""
+    job = db_get_job(job_id)
+    if not job:
+        return
+    clips = job.get("clips", [])
+    if clip_index < len(clips):
+        clips[clip_index]["yt_analytics"] = analytics
+        get_db().table("jobs").update({"clips": clips}).eq("id", job_id).execute()
+
+
+def db_get_done_jobs_with_uploads() -> list:
+    """All done jobs that have at least one YouTube-uploaded clip (for analytics refresh)."""
+    r = (
+        get_db().table("jobs")
+        .select("id,clips,created_at")
+        .eq("status", "done")
+        .execute()
+    )
+    return [j for j in (r.data or []) if any(
+        c.get("yt_upload", {}).get("video_id") for c in (j.get("clips") or [])
+    )]
+
+
 # ── Channels ──────────────────────────────────────────────────────────────────
 
 def db_create_channel(data: dict) -> dict:

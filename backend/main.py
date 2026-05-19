@@ -66,6 +66,7 @@ POTTOKEN_URL = os.getenv("POTTOKEN_URL", "")
 YOUTUBE_CLIENT_ID     = os.getenv("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_REDIRECT_URI  = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000/api/youtube/callback")
+YOUTUBE_API_KEY       = os.getenv("YOUTUBE_API_KEY", "")
 
 from groq import Groq
 from supabase import create_client as _sb_create_client
@@ -79,7 +80,8 @@ from pydantic import BaseModel
 from r2 import upload_clip, presigned_url, stream_clip, download_clip_to_temp, R2_ENABLED
 from db import (
     db_create_job, db_get_job, db_update_job, db_get_user_jobs,
-    db_get_active_jobs, db_update_clip_yt_upload,
+    db_get_active_jobs, db_update_clip_yt_upload, db_update_clip_analytics,
+    db_get_done_jobs_with_uploads,
     db_create_channel, db_get_channel, db_get_user_channels,
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
     db_get_youtube_token, db_upsert_youtube_token, db_delete_youtube_token,
@@ -1445,6 +1447,7 @@ async def watchdog():
 async def startup_event():
     asyncio.create_task(watchdog())
     asyncio.create_task(channel_poller())
+    asyncio.create_task(analytics_refresher())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
@@ -1558,6 +1561,78 @@ async def get_transcript(job_id: str, user=Depends(require_auth)):
     if not transcript_path.exists():
         raise HTTPException(404, "Transcript not found")
     return json.loads(transcript_path.read_text())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# YOUTUBE ANALYTICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+import urllib.request as _urllib_req
+import urllib.parse   as _urllib_parse
+
+def _fetch_yt_stats_sync(video_id: str) -> dict:
+    if not YOUTUBE_API_KEY:
+        return {}
+    url = (
+        "https://www.googleapis.com/youtube/v3/videos"
+        f"?part=statistics&id={_urllib_parse.quote(video_id)}&key={YOUTUBE_API_KEY}"
+    )
+    try:
+        with _urllib_req.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read())
+        items = data.get("items", [])
+        if not items:
+            return {}
+        stats = items[0].get("statistics", {})
+        return {
+            "views":    int(stats.get("viewCount",    0)),
+            "likes":    int(stats.get("likeCount",    0)) if "likeCount"    in stats else None,
+            "comments": int(stats.get("commentCount", 0)) if "commentCount" in stats else None,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        print(f"[analytics] fetch error for {video_id}: {e}", flush=True)
+        return {}
+
+
+async def fetch_youtube_stats(video_id: str) -> dict:
+    return await asyncio.to_thread(_fetch_yt_stats_sync, video_id)
+
+
+async def analytics_refresher():
+    """Background task: refresh YT stats for clips uploaded 7+ days ago."""
+    await asyncio.sleep(120)  # wait for server to settle on startup
+    while True:
+        if YOUTUBE_API_KEY:
+            try:
+                now = datetime.now(timezone.utc)
+                for job in db_get_done_jobs_with_uploads():
+                    created_raw = job.get("created_at", "")
+                    try:
+                        created = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                    except Exception:
+                        continue
+                    if (now - created).days < 7:
+                        continue  # video too new — stats still volatile
+                    for i, clip in enumerate(job.get("clips") or []):
+                        video_id = clip.get("yt_upload", {}).get("video_id")
+                        if not video_id:
+                            continue
+                        existing = clip.get("yt_analytics") or {}
+                        if existing.get("fetched_at"):
+                            try:
+                                last = datetime.fromisoformat(existing["fetched_at"].replace("Z", "+00:00"))
+                                if (now - last).total_seconds() < 86400:
+                                    continue  # refreshed within 24 h
+                            except Exception:
+                                pass
+                        stats = await fetch_youtube_stats(video_id)
+                        if stats:
+                            db_update_clip_analytics(job["id"], i, stats)
+                            print(f"[analytics] refreshed {video_id}: {stats['views']} views", flush=True)
+            except Exception as e:
+                print(f"[analytics] refresher error: {e}", flush=True)
+        await asyncio.sleep(6 * 3600)  # run every 6 hours
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1779,6 +1854,26 @@ async def get_youtube_upload_status(job_id: str, clip_index: int, user=Depends(r
     if clip_index >= len(clips):
         raise HTTPException(404, "Clip not found")
     return clips[clip_index].get("yt_upload", {"status": "none"})
+
+
+@app.post("/api/jobs/{job_id}/clips/{clip_index}/refresh_analytics")
+async def refresh_clip_analytics(job_id: str, clip_index: int, user=Depends(require_auth)):
+    if not YOUTUBE_API_KEY:
+        raise HTTPException(503, "YOUTUBE_API_KEY not configured on server")
+    job = db_get_job(job_id)
+    if not job or job.get("user_id") != user.id:
+        raise HTTPException(404, "Job not found")
+    clips = job.get("clips", [])
+    if clip_index >= len(clips):
+        raise HTTPException(404, "Clip not found")
+    video_id = clips[clip_index].get("yt_upload", {}).get("video_id")
+    if not video_id:
+        raise HTTPException(400, "Clip has no YouTube video ID")
+    stats = await fetch_youtube_stats(video_id)
+    if not stats:
+        raise HTTPException(502, "Failed to fetch stats from YouTube — is the video public?")
+    db_update_clip_analytics(job_id, clip_index, stats)
+    return stats
 
 
 @app.get("/api/channels")

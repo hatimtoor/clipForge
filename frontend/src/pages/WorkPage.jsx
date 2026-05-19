@@ -13,6 +13,14 @@ import { authFetch } from "../lib/supabase";
 
 const STAGE_LABELS = { downloading: "DOWNLOAD", merging: "MERGE", transcribing: "TRANSCRIBE", analyzing: "ANALYZE", clipping: "CLIP", done: "DONE" };
 
+const fmtNum = n => n == null ? "—" : n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(1)}K` : String(n);
+const timeAgoShort = iso => {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 3600)  return `${Math.round(s/60)}m ago`;
+  if (s < 86400) return `${Math.round(s/3600)}h ago`;
+  return `${Math.round(s/86400)}d ago`;
+};
+
 // ── YouTube upload modal ───────────────────────────────────────────────────────
 function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
   const isShort = (clip.duration || 0) <= 60;
@@ -112,10 +120,22 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
 }
 
 // ── ClipCard ───────────────────────────────────────────────────────────────────
-function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected }) {
+function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected, jobId }) {
   const [downloading, setDownloading] = useState(false);
+  const [analytics, setAnalytics] = useState(clip.yt_analytics || null);
+  const [statsLoading, setStatsLoading] = useState(false);
   const isMobile = useMobile();
   const previewRef = useRef(null);
+
+  const hasYtVideo = clip.yt_upload?.status === "done" && clip.yt_upload?.video_id;
+
+  const refreshStats = async () => {
+    setStatsLoading(true);
+    try {
+      const res = await authFetch(`/api/jobs/${jobId}/clips/${idx}/refresh_analytics`, { method: "POST" });
+      if (res.ok) setAnalytics(await res.json());
+    } finally { setStatsLoading(false); }
+  };
 
   useEffect(() => {
     if (isActive && isMobile && previewRef.current) {
@@ -172,7 +192,21 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
                   ? <span className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center" }}>^ {ytUp.progress || 0}%</span>
                   : <PixelBtn color="yt" size="sm" onClick={onYTUpload}>^ YT</PixelBtn>
             )}
+            {hasYtVideo && (
+              <button onClick={refreshStats} disabled={statsLoading} className="pixel"
+                style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer", background: C.lavender, border: BORDER, color: C.ink, opacity: statsLoading ? 0.5 : 1 }}>
+                {statsLoading ? "..." : "↻ STATS"}
+              </button>
+            )}
           </div>
+          {hasYtVideo && analytics && (
+            <div className="pixel" style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 8, color: C.dim2 }}>
+              <span>👁 {fmtNum(analytics.views)}</span>
+              <span>👍 {fmtNum(analytics.likes)}</span>
+              <span>💬 {fmtNum(analytics.comments)}</span>
+              <span style={{ marginLeft: "auto" }}>{timeAgoShort(analytics.fetched_at)}</span>
+            </div>
+          )}
         </div>
         {isActive && (
           <div ref={previewRef} style={{ borderTop: BORDER, background: C.windowBg }}>
@@ -206,8 +240,27 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
           {clip.hook && <p className="vt" style={{ fontSize: 18, color: C.ink, marginBottom: 8, fontStyle: "italic", lineHeight: 1.3 }}>"{clip.hook}"</p>}
           {clip.reason && <p className="vt" style={{ fontSize: 17, color: C.dim2, lineHeight: 1.3, marginBottom: 12 }}>{clip.reason}</p>}
           {clip.tags?.length > 0 && (
-            <div className="vt" style={{ display: "flex", gap: 6, fontSize: 16, color: C.ink, flexWrap: "wrap" }}>
+            <div className="vt" style={{ display: "flex", gap: 6, fontSize: 16, color: C.ink, flexWrap: "wrap", marginBottom: hasYtVideo ? 14 : 0 }}>
               {clip.tags.map(t => <span key={t} style={{ padding: "1px 8px", background: `${C.ink}11`, border: `1px solid ${C.ink}33` }}>#{t}</span>)}
+            </div>
+          )}
+          {hasYtVideo && (
+            <div style={{ display: "flex", alignItems: "center", gap: 14, paddingTop: clip.tags?.length ? 0 : 14, borderTop: `1px dashed ${C.ink}22`, flexWrap: "wrap" }}>
+              {analytics ? (
+                <>
+                  <span className="pixel" style={{ fontSize: 9, color: C.dim2 }}>👁 {fmtNum(analytics.views)}</span>
+                  <span className="pixel" style={{ fontSize: 9, color: C.dim2 }}>👍 {fmtNum(analytics.likes)}</span>
+                  <span className="pixel" style={{ fontSize: 9, color: C.dim2 }}>💬 {fmtNum(analytics.comments)}</span>
+                  <span className="pixel" style={{ fontSize: 8, color: C.dim, marginLeft: "auto" }}>{timeAgoShort(analytics.fetched_at)}</span>
+                </>
+              ) : (
+                <span className="pixel" style={{ fontSize: 9, color: C.dim2 }}>No stats yet</span>
+              )}
+              <button onClick={refreshStats} disabled={statsLoading} className="pixel"
+                style={{ marginLeft: analytics ? 0 : "auto", padding: "4px 10px", fontSize: 8, cursor: "pointer",
+                  background: C.lavender, border: BORDER, color: C.ink, opacity: statsLoading ? 0.5 : 1 }}>
+                {statsLoading ? "..." : "↻ STATS"}
+              </button>
             </div>
           )}
         </div>

@@ -1,10 +1,25 @@
 # ✂️ ClipForge
 
-![ClipForge Login](screenshot-login.png)
+Turn any YouTube video into viral short-form clips — fully automatic.
 
-Turn any YouTube video into viral short-form clips — fully self-hosted.
+AI finds the highest-engagement moments, cuts the video, crops to 9:16, and burns word-by-word karaoke captions. Clips are ready to post to YouTube Shorts, TikTok, or Instagram Reels in under 5 minutes.
 
-AI identifies the highest-engagement moments, cuts the video, crops to 9:16, and burns TikTok-style word-by-word captions automatically.
+---
+
+## Features
+
+- **AI clip extraction** — Groq Llama scores every transcript segment for virality (hooks, tension, confessions, numbers, story arcs) and picks the best moments
+- **Word-by-word karaoke captions** — three styles (Bold Bottom, Center Pop, Minimal), custom font size, custom highlight color
+- **Caption translation** — 15 languages via Groq Llama (Arabic, Chinese, Dutch, French, German, Hindi, Italian, Japanese, Korean, Portuguese, Russian, Spanish, Turkish, Ukrainian)
+- **Smart 9:16 reframe** — YOLO face-tracking pan keeps the subject centred, no manual cropping
+- **YouTube auto-upload** — OAuth-linked, upload clips directly to your channel from the app
+- **Per-clip analytics** — views, likes, and comments pulled from the YouTube Data API, auto-refreshed every 6 hours
+- **Watchlist / channel monitoring** — add any YouTube channel; ClipForge detects new uploads and starts clipping automatically (Pro)
+- **Job archive** — every job stored with full settings; one-click retry carries all original parameters
+- **Email notifications** — Resend email when your clips are ready
+- **Free / Pro tiers** — Free: 10 clips/month, 3 per job. Pro: unlimited (coming soon)
+
+---
 
 ## How It Works
 
@@ -23,32 +38,53 @@ AI identifies the highest-engagement moments, cuts the video, crops to 9:16, and
                    │
           ╔════════▼════════╗
           ║  🎙  TRANSCRIBE ║  Groq Whisper (whisper-large-v3)
-          ║                 ║  word-level timestamps · filters hallucinations
+          ║                 ║  word-level timestamps · hallucination filter
           ║                 ║  auto-chunks files > 20 MB
           ╚════════╤════════╝
                    │
           ╔════════▼════════╗
           ║  🧠  ANALYZE    ║  Groq Llama (llama-3.3-70b-versatile)
-          ║                 ║  scores moments for virality
-          ║                 ║  picks the best clips
+          ║                 ║  multi-signal virality scoring
+          ║                 ║  optional caption translation
           ╚════════╤════════╝
                    │
           ╔════════▼════════╗
-          ║  ✂️   CLIP       ║  FFmpeg — smart 9:16 crop (face-tracking)
-          ║                 ║  cuts clips · burns karaoke captions
+          ║  ✂️   CLIP       ║  FFmpeg — cuts clips
+          ║                 ║  YOLO 9:16 face-tracking crop
+          ║                 ║  burns ASS karaoke captions
           ╚════════╤════════╝
                    │
 ┌──────────────────▼──────────────────┐
-│   🚀  Viral-ready shorts — upload   │
-│       to TikTok · Reels · Shorts    │
+│   ☁️   Stored in Cloudflare R2      │
+│   🚀  Download · YouTube upload     │
 └─────────────────────────────────────┘
 ```
 
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React + Vite, React Router v6 |
+| Backend | FastAPI (Python) |
+| Auth & Database | Supabase (Postgres + Auth) |
+| Clip Storage | Cloudflare R2 (S3-compatible) |
+| Transcription | Groq Whisper (whisper-large-v3) |
+| AI Analysis | Groq Llama (llama-3.3-70b-versatile) |
+| Video processing | FFmpeg, yt-dlp, OpenCV + Ultralytics YOLO |
+| Email | Resend |
+
+---
+
 ## Requirements
 
-- Python 3.10+, Node.js 18+, ffmpeg, yt-dlp
-- A **Groq API key** — free tier at [console.groq.com](https://console.groq.com)
-- Works on Ubuntu/Debian and Windows
+- Python 3.10+, Node.js 18+, `ffmpeg`, `yt-dlp`
+- A [Groq API key](https://console.groq.com) (free tier works)
+- A [Supabase](https://supabase.com) project
+- A [Cloudflare R2](https://developers.cloudflare.com/r2/) bucket
+
+---
 
 ## Setup
 
@@ -59,24 +95,42 @@ bash setup.sh
 
 Create a `.env` file in the project root:
 
-```
+```env
+# Required
 GROQ_API_KEY=gsk_...
-CLIP_USER=admin
-CLIP_PASS=yourpassword
-```
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_KEY=eyJ...
 
-**Optional — use browser cookies instead of cookies.txt (recommended for servers):**
-```
-COOKIES_FROM_BROWSER=chromium
-```
-When set, yt-dlp reads live cookies directly from the browser profile — they never expire. If not set, falls back to a `cookies.txt` file at the repo root.
+# Cloudflare R2 (clip storage)
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET_NAME=clipforge-clips
 
-**Optional — YouTube upload integration:**
-```
+# Optional — additional Groq keys for rate-limit rotation
+GROQ_API_KEY_2=gsk_...
+GROQ_API_KEY_3=gsk_...
+
+# Optional — YouTube OAuth upload
 YOUTUBE_CLIENT_ID=...
 YOUTUBE_CLIENT_SECRET=...
-YOUTUBE_REDIRECT_URI=http://localhost:8000/api/youtube/callback
+YOUTUBE_REDIRECT_URI=https://yourdomain.com/api/youtube/callback
+
+# Optional — YouTube Data API (per-clip analytics)
+YOUTUBE_API_KEY=...
+
+# Optional — email notifications
+RESEND_API_KEY=re_...
+APP_URL=https://yourdomain.com
+
+# Optional — yt-dlp cookie source (recommended on servers)
+COOKIES_FROM_BROWSER=chromium
 ```
+
+> **COOKIES_FROM_BROWSER**: when set, yt-dlp reads live cookies directly from the browser profile — they never expire. If not set, falls back to a `cookies.txt` file at the repo root.
+
+---
 
 ## Running
 
@@ -84,24 +138,21 @@ YOUTUBE_REDIRECT_URI=http://localhost:8000/api/youtube/callback
 bash start.sh
 ```
 
-Open `http://localhost:8000` and sign in with the `CLIP_USER` / `CLIP_PASS` you set.
+Open `http://localhost:8000`, create an account, and start forging clips.
 
-## Output
-
-Clips are saved to `output/<job-id>/` as `.mp4` files:
-- Cropped to **9:16 vertical** format with smart face-tracking pan
-- TikTok-style **word-by-word karaoke captions** burned in
-- H.264 encoded, ready for direct upload
+---
 
 ## Pipeline Stages
 
 | Stage | What happens |
 |---|---|
 | DOWNLOAD | yt-dlp fetches best quality video + audio |
-| MERGE | FFmpeg combines the streams into a single mp4 |
+| MERGE | FFmpeg combines streams into a single mp4 |
 | TRANSCRIBE | Groq Whisper generates word-level timestamps |
-| ANALYZE | Groq Llama scores each moment for virality |
-| CLIP | FFmpeg cuts, crops, and burns captions |
+| ANALYZE | Groq Llama scores moments for virality; optionally translates captions |
+| CLIP | FFmpeg cuts, crops (YOLO 9:16), and burns karaoke captions |
+
+---
 
 ## Troubleshooting
 
@@ -109,6 +160,8 @@ Clips are saved to `output/<job-id>/` as `.mp4` files:
 
 **FFmpeg not found:** `sudo apt install ffmpeg` (Linux) or `winget install Gyan.FFmpeg` (Windows)
 
-**Groq API error:** Check `GROQ_API_KEY` in your `.env`
+**Groq rate limits:** Add `GROQ_API_KEY_2` … `GROQ_API_KEY_5` to spread load across keys automatically
 
-**Login fails:** Make sure `CLIP_USER` and `CLIP_PASS` are set in `.env`
+**Supabase 400 on insert:** Make sure all columns exist in the database — PostgREST silently drops unknown fields
+
+**R2 clips not loading:** Check `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` are all set

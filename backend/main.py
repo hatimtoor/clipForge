@@ -684,14 +684,16 @@ def _fill_words(seg: dict) -> list:
 #   BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,
 #   BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
 _CAPTION_STYLES: dict[str, tuple[str, str]] = {
+    # Format: Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,...
+    # PrimaryColour  = colour of words AFTER being spoken (white)
+    # SecondaryColour = karaoke sweep colour — words show in this colour BEFORE being spoken
     "bold_bottom": (
-        "Montserrat,72,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
-        "Montserrat,72,&H0000D4FF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+        "Montserrat,72,&H00FFFFFF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+        "Montserrat,72,&H0000D4FF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
     ),
     "center_pop": (
-        # Larger font, centered on screen, thick outline, pure-yellow highlight
-        "Montserrat,88,&H00FFFFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
-        "Montserrat,88,&H0000FFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
+        "Montserrat,88,&H00FFFFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
+        "Montserrat,88,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
     ),
     "minimal": (
         # Smaller, not bold, thin outline, no per-word colour change
@@ -802,15 +804,18 @@ def build_ass_subtitles(
 
     # Apply per-job overrides on top of the chosen style preset
     if font_size is not None or highlight_color is not None:
-        def _apply(line: str, is_highlight: bool) -> str:
+        def _apply(line: str, is_default: bool) -> str:
             parts = line.split(",")
             if font_size is not None:
                 parts[1] = str(font_size)
-            if highlight_color is not None and is_highlight:
-                parts[2] = _hex_to_ass(highlight_color)
+            if highlight_color is not None and is_default:
+                # SecondaryColour (parts[3]) = the karaoke sweep colour shown before a
+                # word is "spoken".  All dialogue events use the Default style, so this
+                # is the only field that actually changes what the viewer sees.
+                parts[3] = _hex_to_ass(highlight_color)
             return ",".join(parts)
-        default_line = _apply(default_line, is_highlight=False)
-        highlight_line = _apply(highlight_line, is_highlight=True)
+        default_line = _apply(default_line, is_default=True)
+        highlight_line = _apply(highlight_line, is_default=False)
 
     ass_header = f"""[Script Info]
 ScriptType: v4.00+

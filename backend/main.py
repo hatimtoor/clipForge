@@ -784,7 +784,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         karaoke_text = ""
         for w in group:
             dur_cs = max(1, int((w["end"] - w["start"]) * 100))
-            karaoke_text += f"{{\\k{dur_cs}}}{w['word'].strip()} "
+            karaoke_text += f"{{\\k{dur_cs}}}{w['word'].strip().upper()} "
 
         karaoke_text = karaoke_text.strip()
         events.append(

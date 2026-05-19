@@ -47,13 +47,13 @@ function HeroSection({ onSignup, isMobile }) {
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? 10 : 16, maxWidth: 780, margin: "0 auto" }}>
         {[
-          ["&lt; 5 min", "turnaround"],
+          ["< 5 min", "turnaround"],
           ["10 clips", "per video"],
           ["100%", "auto captions"],
           ["0 editing", "required"],
         ].map(([stat, label]) => (
           <div key={label} style={{ background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: isMobile ? "14px 10px" : "18px 12px", textAlign: "center" }}>
-            <div className="pixel" style={{ fontSize: isMobile ? 12 : 16, color: C.hotDeep, marginBottom: 6 }} dangerouslySetInnerHTML={{ __html: stat }} />
+            <div className="pixel" style={{ fontSize: isMobile ? 12 : 16, color: C.hotDeep, marginBottom: 6 }}>{stat}</div>
             <div className="vt" style={{ fontSize: isMobile ? 16 : 18, color: C.dim2 }}>{label}</div>
           </div>
         ))}

@@ -71,7 +71,7 @@ YOUTUBE_API_KEY       = os.getenv("YOUTUBE_API_KEY", "")
 from groq import Groq
 from supabase import create_client as _sb_create_client
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
@@ -125,7 +125,14 @@ async def require_pro(user=Depends(require_auth)):
         raise HTTPException(status_code=403, detail="This feature requires a Pro plan. Upgrade to unlock.")
     return user
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+_limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="ClipForge API")
+app.state.limiter = _limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _APP_URL = os.getenv("APP_URL", "https://clipforge.ai").rstrip("/")
 _ALLOWED_ORIGINS = [o.strip() for o in os.getenv(
@@ -159,7 +166,25 @@ OUTPUT_DIR = BASE_DIR / "output"
 TEMP_DIR   = BASE_DIR / "temp"
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
-_oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ...}
+_oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ..., "_ts": monotonic()}
+_OAUTH_STATE_TTL = 600   # 10 minutes
+
+from time import monotonic as _monotonic
+
+def _oauth_state_set(state: str, data: dict) -> None:
+    now = _monotonic()
+    expired = [k for k, v in _oauth_states.items() if now - v.get("_ts", 0) > _OAUTH_STATE_TTL]
+    for k in expired:
+        _oauth_states.pop(k, None)
+    data["_ts"] = now
+    _oauth_states[state] = data
+
+def _oauth_state_get(state: str) -> dict | None:
+    entry = _oauth_states.get(state)
+    if entry and (_monotonic() - entry.get("_ts", 0)) <= _OAUTH_STATE_TTL:
+        return entry
+    _oauth_states.pop(state, None)
+    return None
 
 # Running asyncio tasks — keyed by job_id so they can be cancelled
 _running_tasks: dict[str, asyncio.Task] = {}
@@ -1479,19 +1504,21 @@ _YOUTUBE_URL_RE = re.compile(
 )
 
 @app.post("/api/clip")
-async def start_clip(req: ClipRequest, user=Depends(require_auth)):
+@_limiter.limit("10/minute")
+async def start_clip(request: Request, req: ClipRequest, user=Depends(require_auth)):
     if not _YOUTUBE_URL_RE.match(req.url.strip()):
         raise HTTPException(400, "Only YouTube URLs are accepted.")
     req.url = req.url.strip()
     profile = db_check_and_reset_quota(user.id)
     plan = profile.get("plan", "free")
-    clips_used = profile.get("clips_used", 0)
     max_clips_per_job = PRO_MAX_CLIPS_PER_JOB if plan == "pro" else FREE_MAX_CLIPS_PER_JOB
-    if plan != "pro" and clips_used >= FREE_MONTHLY_CLIP_LIMIT:
-        raise HTTPException(403, f"Monthly clip limit reached ({FREE_MONTHLY_CLIP_LIMIT} clips). Upgrade to Pro for unlimited clips.")
     if req.reframe and plan != "pro":
         raise HTTPException(403, "Auto-reframe (9:16) requires a Pro plan. Upgrade to unlock.")
     req.max_clips = min(req.max_clips, max_clips_per_job)
+    if plan != "pro":
+        claimed = db_claim_clips_atomic(user.id, req.max_clips, FREE_MONTHLY_CLIP_LIMIT)
+        if not claimed:
+            raise HTTPException(403, f"Monthly clip limit reached ({FREE_MONTHLY_CLIP_LIMIT} clips). Upgrade to Pro for unlimited clips.")
     job = db_create_job({
         "user_id": user.id,
         "status": "queued",
@@ -1823,7 +1850,7 @@ async def youtube_auth(user=Depends(require_pro)):
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
         auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
-        _oauth_states[state] = {"user_id": user.id, "code_verifier": getattr(flow, "code_verifier", None)}
+        _oauth_state_set(state, {"user_id": user.id, "code_verifier": getattr(flow, "code_verifier", None)})
         return {"auth_url": auth_url}
     except Exception as e:
         raise HTTPException(500, f"OAuth setup failed: {e}")
@@ -1842,13 +1869,13 @@ def _yt_postmsg(msg_type: str, error_text: str = "") -> HTMLResponse:
 async def youtube_callback(code: str = None, state: str = None, error: str = None):
     if error:
         return _yt_postmsg("youtube_auth_error", "OAuth authorization was denied.")
-    if not code or state not in _oauth_states:
+    state_data = _oauth_state_get(state) if state else None
+    if not code or not state_data:
         return _yt_postmsg("youtube_auth_error", "Invalid or expired OAuth state.")
     try:
         from google_auth_oauthlib.flow import Flow
-        state_data = _oauth_states[state]
-        user_id = state_data["user_id"] if isinstance(state_data, dict) else ""
-        code_verifier = state_data.get("code_verifier") if isinstance(state_data, dict) else state_data
+        user_id = state_data.get("user_id", "")
+        code_verifier = state_data.get("code_verifier")
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -1866,7 +1893,7 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
         flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
         db_upsert_youtube_token(user_id, creds.token, creds.refresh_token)
-        _oauth_states.pop(state, None)
+        _oauth_states.pop(state, None)  # clean up used state
         return _yt_postmsg("youtube_auth_success")
     except Exception as e:
         print(f"[youtube_callback] error: {e}", flush=True)

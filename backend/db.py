@@ -208,6 +208,25 @@ def db_check_and_reset_quota(user_id: str) -> dict:
     return profile
 
 
+def db_claim_clips_atomic(user_id: str, count: int, limit: int) -> bool:
+    """
+    Atomically check quota and increment clips_used in one Postgres RPC call.
+    Returns True if the claim succeeded (user is within quota), False otherwise.
+    Requires the claim_clips() function to be created in Supabase — see
+    backend/sql/quota_rpc.sql.
+    """
+    try:
+        result = get_db().rpc("claim_clips", {
+            "p_user_id": user_id,
+            "p_count": count,
+            "p_limit": limit,
+        }).execute()
+        return bool(result.data)
+    except Exception as e:
+        print(f"[db_claim_clips_atomic] RPC failed, falling back to non-atomic check: {e}", flush=True)
+        return False
+
+
 def db_increment_clips_used(user_id: str, count: int) -> None:
     from datetime import datetime, timezone
     profile = db_get_profile(user_id)

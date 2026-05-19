@@ -9,6 +9,8 @@ jobs:
   test:
     name: Backend tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: backend
@@ -48,6 +50,9 @@ jobs:
   build-frontend:
     name: Build frontend
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +82,8 @@ jobs:
     name: Deploy to server
     needs: [test, build-frontend]
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
 
     steps:
       - name: Download frontend dist

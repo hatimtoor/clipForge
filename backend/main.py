@@ -1602,13 +1602,16 @@ async def serve_clip(job_id: str, filename: str):
         raise HTTPException(400, "Invalid job ID")
     if not _SAFE_FILENAME_RE.match(filename) or ".." in filename:
         raise HTTPException(400, "Invalid filename")
-    clip_path = (OUTPUT_DIR / job_id / filename).resolve()
+    # os.path.basename strips any residual path components (CodeQL sanitiser)
+    safe_job_id  = os.path.basename(job_id)
+    safe_filename = os.path.basename(filename)
+    clip_path = (OUTPUT_DIR / safe_job_id / safe_filename).resolve()
     if not clip_path.is_relative_to(OUTPUT_DIR.resolve()):
         raise HTTPException(400, "Invalid path")
     if clip_path.exists():
         return FileResponse(str(clip_path), media_type="video/mp4")
     if R2_ENABLED:
-        url = presigned_url(job_id, filename)
+        url = presigned_url(safe_job_id, safe_filename)
         if url:
             return RedirectResponse(url, status_code=307)
     raise HTTPException(404, "Clip not found")
@@ -1616,12 +1619,17 @@ async def serve_clip(job_id: str, filename: str):
 
 @app.get("/api/transcript/{job_id}")
 async def get_transcript(job_id: str, user=Depends(require_auth)):
+    if not _UUID_RE.match(job_id):
+        raise HTTPException(400, "Invalid job ID")
     job = db_get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
-    transcript_path = OUTPUT_DIR / job_id / "transcript.json"
+    safe_job_id = os.path.basename(job_id)
+    transcript_path = (OUTPUT_DIR / safe_job_id / "transcript.json").resolve()
+    if not transcript_path.is_relative_to(OUTPUT_DIR.resolve()):
+        raise HTTPException(400, "Invalid path")
     if not transcript_path.exists():
         raise HTTPException(404, "Transcript not found")
     return json.loads(transcript_path.read_text())
@@ -2064,7 +2072,9 @@ if FRONTEND_BUILD.exists():
 async def serve_spa(full_path: str):
     """Catch-all that serves index.html so React Router handles all client-side routes."""
     if FRONTEND_BUILD.exists():
-        candidate = (FRONTEND_BUILD / full_path).resolve()
+        # Sanitise with basename on each path segment to prevent traversal
+        safe_parts = [os.path.basename(p) for p in Path(full_path).parts if p not in ("", ".", "..")]
+        candidate = (FRONTEND_BUILD / Path(*safe_parts) if safe_parts else FRONTEND_BUILD).resolve()
         if candidate.is_file() and candidate.is_relative_to(FRONTEND_BUILD.resolve()):
             return FileResponse(str(candidate))
         index = FRONTEND_BUILD / "index.html"

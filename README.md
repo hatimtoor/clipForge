@@ -103,7 +103,15 @@ chmod +x setup.sh start.sh
 bash setup.sh
 ```
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root and a `frontend/.env.local` file for Vite:
+
+**`frontend/.env.local`**
+```env
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+```
+
+**`.env` (project root)**
 
 ```env
 # Required

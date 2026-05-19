@@ -127,12 +127,31 @@ async def require_pro(user=Depends(require_auth)):
 
 app = FastAPI(title="ClipForge API")
 
+_APP_URL = os.getenv("APP_URL", "https://clipforge.ai").rstrip("/")
+_ALLOWED_ORIGINS = [o.strip() for o in os.getenv(
+    "ALLOWED_ORIGINS",
+    f"{_APP_URL},http://localhost:5173,http://localhost:8000"
+).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=True,
 )
+
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 # ── paths ────────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).parent.parent
@@ -1397,10 +1416,12 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         update_job(job_id, status="cancelled", progress=0, message="Job cancelled by user.")
         raise
     except Exception as e:
-        log(job_id, f"!!! PIPELINE ERROR: {e}")
-        update_job(job_id, status="error", progress=0, message="Pipeline failed", error=str(e))
+        import traceback as _tb
+        log(job_id, f"!!! PIPELINE ERROR (full): {_tb.format_exc()}")
+        update_job(job_id, status="error", progress=0, message="Pipeline failed",
+                   error="An error occurred while processing your video. Please try again.")
         if user_id:
-            asyncio.create_task(send_job_notification(user_id, 0, req.url, error=str(e)))
+            asyncio.create_task(send_job_notification(user_id, 0, req.url, error="Pipeline failed"))
         raise
     finally:
         _running_tasks.pop(job_id, None)
@@ -1453,8 +1474,15 @@ async def startup_event():
 # API ROUTES
 # ══════════════════════════════════════════════════════════════════════════════
 
+_YOUTUBE_URL_RE = re.compile(
+    r'^https?://(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)/'
+)
+
 @app.post("/api/clip")
 async def start_clip(req: ClipRequest, user=Depends(require_auth)):
+    if not _YOUTUBE_URL_RE.match(req.url.strip()):
+        raise HTTPException(400, "Only YouTube URLs are accepted.")
+    req.url = req.url.strip()
     profile = db_check_and_reset_quota(user.id)
     plan = profile.get("plan", "free")
     clips_used = profile.get("clips_used", 0)
@@ -1537,10 +1565,19 @@ async def system_status(user=Depends(require_auth)):
     return {"reframe_available": _REFRAME_AVAILABLE}
 
 
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+_SAFE_FILENAME_RE = re.compile(r'^[a-zA-Z0-9_\-\.]+$')
+
 @app.get("/clips/{job_id}/{filename}")
 async def serve_clip(job_id: str, filename: str):
     from fastapi.responses import RedirectResponse
-    clip_path = OUTPUT_DIR / job_id / filename
+    if not _UUID_RE.match(job_id):
+        raise HTTPException(400, "Invalid job ID")
+    if not _SAFE_FILENAME_RE.match(filename) or ".." in filename:
+        raise HTTPException(400, "Invalid filename")
+    clip_path = (OUTPUT_DIR / job_id / filename).resolve()
+    if not clip_path.is_relative_to(OUTPUT_DIR.resolve()):
+        raise HTTPException(400, "Invalid path")
     if clip_path.exists():
         return FileResponse(str(clip_path), media_type="video/mp4")
     if R2_ENABLED:
@@ -1792,12 +1829,21 @@ async def youtube_auth(user=Depends(require_pro)):
         raise HTTPException(500, f"OAuth setup failed: {e}")
 
 
+def _yt_postmsg(msg_type: str, error_text: str = "") -> HTMLResponse:
+    """Return a safe postMessage response using json.dumps to escape all values."""
+    safe_origin = json.dumps(_APP_URL)
+    safe_type   = json.dumps(msg_type)
+    safe_error  = json.dumps(error_text)
+    return HTMLResponse(
+        f"<script>window.opener?.postMessage({{type:{safe_type},error:{safe_error}}},{safe_origin});window.close();</script>"
+    )
+
 @app.get("/api/youtube/callback")
 async def youtube_callback(code: str = None, state: str = None, error: str = None):
     if error:
-        return HTMLResponse(f"<script>window.opener?.postMessage({{type:'youtube_auth_error',error:'{error}'}},'*');window.close();</script>")
+        return _yt_postmsg("youtube_auth_error", "OAuth authorization was denied.")
     if not code or state not in _oauth_states:
-        return HTMLResponse("<script>window.opener?.postMessage({type:'youtube_auth_error',error:'Invalid state'},'*');window.close();</script>")
+        return _yt_postmsg("youtube_auth_error", "Invalid or expired OAuth state.")
     try:
         from google_auth_oauthlib.flow import Flow
         state_data = _oauth_states[state]
@@ -1821,9 +1867,10 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
         creds = flow.credentials
         db_upsert_youtube_token(user_id, creds.token, creds.refresh_token)
         _oauth_states.pop(state, None)
-        return HTMLResponse("<script>window.opener?.postMessage({type:'youtube_auth_success'},'*');window.close();</script>")
+        return _yt_postmsg("youtube_auth_success")
     except Exception as e:
-        return HTMLResponse(f"<script>window.opener?.postMessage({{type:'youtube_auth_error',error:'{str(e)}'}},'*');window.close();</script>")
+        print(f"[youtube_callback] error: {e}", flush=True)
+        return _yt_postmsg("youtube_auth_error", "Failed to complete YouTube authorization.")
 
 
 @app.post("/api/youtube/upload/{job_id}/{clip_index}")
@@ -1990,8 +2037,8 @@ if FRONTEND_BUILD.exists():
 async def serve_spa(full_path: str):
     """Catch-all that serves index.html so React Router handles all client-side routes."""
     if FRONTEND_BUILD.exists():
-        candidate = FRONTEND_BUILD / full_path
-        if candidate.is_file():
+        candidate = (FRONTEND_BUILD / full_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(FRONTEND_BUILD.resolve()):
             return FileResponse(str(candidate))
         index = FRONTEND_BUILD / "index.html"
         if index.exists():

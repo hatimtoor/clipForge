@@ -238,8 +238,8 @@ def log(job_id: str, msg: str):
     print(f"[{job_id[:8]}] {msg}", flush=True)
 
 
-def update_job(job_id: str, **kwargs):
-    db_update_job(job_id, kwargs)
+async def update_job(job_id: str, **kwargs):
+    await asyncio.to_thread(db_update_job, job_id, kwargs)
 
 
 def _j(job: dict) -> dict:
@@ -298,7 +298,7 @@ async def run_cmd_async(cmd: list[str], cwd=None) -> tuple[int, str, str]:
 # ── download ──────────────────────────────────────────────────────────────────
 async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
     log(job_id, f"Downloading: {url}")
-    update_job(job_id, status="downloading", progress=2, message="Downloading video...")
+    await update_job(job_id, status="downloading", progress=2, message="Downloading video...")
     video_path = job_dir / "video.mp4"
     cmd = [
         YTDLP,
@@ -382,7 +382,7 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
                 if item is None:
                     done = True
                     break
-                update_job(job_id, **item)
+                await update_job(job_id, **item)
             except _queue.Empty:
                 break
         # If the future raised an exception the sentinel may never arrive.
@@ -396,7 +396,7 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
     if not video_path.exists():
         log(job_id, "yt-dlp exited 0 but video.mp4 missing — merge likely failed")
         raise RuntimeError(f"yt-dlp exited 0 but output file missing. Last output: {tail[-500:]}")
-    update_job(job_id, progress=40, message="Download complete, preparing transcription...")
+    await update_job(job_id, progress=40, message="Download complete, preparing transcription...")
     return video_path
 
 
@@ -404,7 +404,7 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
 async def transcribe(video_path: Path, job_id: str) -> dict:
     """Transcribe using Groq Whisper API with chunking for large files."""
     log(job_id, "Extracting audio from video...")
-    update_job(job_id, status="transcribing", progress=41, message="Extracting audio...")
+    await update_job(job_id, status="transcribing", progress=41, message="Extracting audio...")
 
     import math
 
@@ -419,7 +419,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
 
     audio_mb = audio_path.stat().st_size / 1_048_576
     log(job_id, f"Audio extracted → audio.mp3 ({audio_mb:.1f} MB)")
-    update_job(job_id, progress=44, message="Audio extracted, sending to Groq Whisper...")
+    await update_job(job_id, progress=44, message="Audio extracted, sending to Groq Whisper...")
 
     # Check file size — chunk if over 20MB
     file_size = audio_path.stat().st_size
@@ -430,7 +430,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
 
     if file_size <= CHUNK_LIMIT:
         log(job_id, f"Audio is {file_size/1_048_576:.1f} MB — sending as single file to Whisper")
-        update_job(job_id, progress=47, message="Transcribing audio via Groq Whisper...")
+        await update_job(job_id, progress=47, message="Transcribing audio via Groq Whisper...")
         audio_data = audio_path.read_bytes()
         response = await groq_with_retry(
             lambda: asyncio.to_thread(
@@ -495,7 +495,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             # chunked: 47-63 spread across chunks
             chunk_prog = 47 + int((i / num_chunks) * 16)
             log(job_id, f"Transcribing chunk {i+1}/{num_chunks} ({chunk_start:.0f}s – {min(chunk_start+chunk_duration, total_duration):.0f}s)...")
-            update_job(job_id, progress=chunk_prog, message=f"Transcribing part {i+1}/{num_chunks} via Groq Whisper...")
+            await update_job(job_id, progress=chunk_prog, message=f"Transcribing part {i+1}/{num_chunks} via Groq Whisper...")
 
             cmd = [FFMPEG, "-y", "-i", str(audio_path),
                    "-ss", str(chunk_start), "-t", str(chunk_duration),
@@ -553,14 +553,14 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
 
     audio_path.unlink(missing_ok=True)
     log(job_id, f"Transcription complete: {len(all_segments)} segments kept, {hallucinations_dropped} hallucinations dropped")
-    update_job(job_id, progress=65, message="Transcription complete, analyzing virality...")
+    await update_job(job_id, progress=65, message="Transcription complete, analyzing virality...")
     return all_segments
 
 
 # ── virality analysis via Ollama ──────────────────────────────────────────────
 async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int, style_prompt: str = "") -> list:
     log(job_id, f"Analyzing virality: {len(segments)} segments, max_clips={max_clips}, dur={min_dur}-{max_dur}s")
-    update_job(job_id, status="analyzing", progress=66, message="AI is identifying viral moments...")
+    await update_job(job_id, status="analyzing", progress=66, message="AI is identifying viral moments...")
 
     # Build transcript lines
     transcript_lines = []
@@ -587,7 +587,7 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
         # analyzing: 66-77 spread across chunks
         analysis_progress = 66 + int((chunk_idx / len(chunks)) * 11)
         log(job_id, f"Sending chunk {chunk_idx+1}/{len(chunks)} to Groq Llama ({len(transcript_text)} chars)...")
-        update_job(job_id, progress=analysis_progress, message=f"AI analyzing part {chunk_idx+1}/{len(chunks)}...")
+        await update_job(job_id, progress=analysis_progress, message=f"AI analyzing part {chunk_idx+1}/{len(chunks)}...")
 
         focus_line = f"\nFOCUS ON: {style_prompt.strip()}\n" if style_prompt and style_prompt.strip() else ""
         prompt = f"""You are a viral short-form content expert. Analyze this video transcript segment and identify the {clips_per_chunk} most viral-worthy moments.
@@ -1093,7 +1093,7 @@ async def create_clips(
     caption_segments: Optional[list] = None,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
-    update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
+    await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
 
     results = []
     for idx, clip in enumerate(clip_defs):
@@ -1104,7 +1104,7 @@ async def create_clips(
         log(job_id, f"Clip {idx+1}/{len(clip_defs)}: '{clip['title']}' [{start:.1f}s – {end:.1f}s] ({dur:.1f}s)")
         # clipping: 78-98 spread across clips
         progress = 78 + int((idx / len(clip_defs)) * 20)
-        update_job(job_id, progress=progress, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']}")
+        await update_job(job_id, progress=progress, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']}")
 
         # Get video dimensions (assume 16:9 source → crop to 9:16 for shorts)
         probe_cmd = [
@@ -1157,7 +1157,7 @@ async def create_clips(
         # static center crop otherwise (fast path, good for already-centered content)
         if reframe:
             if not _REFRAME_AVAILABLE:
-                update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (YOLO unavailable — using center crop)")
+                await update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (YOLO unavailable — using center crop)")
                 detections = []
             else:
                 # Extract the clip segment first so YOLO can read frames sequentially
@@ -1172,7 +1172,7 @@ async def create_clips(
                 temp_yolo.unlink(missing_ok=True)
                 log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
                 if len(detections) == 0:
-                    update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (no person detected — using center crop)")
+                    await update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (no person detected — using center crop)")
             trajectory = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
         else:
             trajectory = [(0.0, center_crop_x), (round(dur, 3), center_crop_x)]
@@ -1216,7 +1216,7 @@ async def create_clips(
         code, _, err = await run_cmd_async(ffmpeg_cmd, str(job_dir))
         if code != 0:
             log(job_id, f"  !!! FFmpeg FAILED for clip {idx+1}: {err[-300:]}")
-            update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
+            await update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
             continue
 
         log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
@@ -1394,7 +1394,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         caption_segs = segments
         if req.caption_language and req.caption_language != "source":
             log(job_id, f"--- PHASE 3b: TRANSLATE CAPTIONS → {req.caption_language} ---")
-            update_job(job_id, status="analyzing", progress=77,
+            await update_job(job_id, status="analyzing", progress=77,
                        message=f"Translating captions to {_LANGUAGE_NAMES.get(req.caption_language, req.caption_language)}...")
             caption_segs = await translate_segments(segments, req.caption_language, job_id)
 
@@ -1410,7 +1410,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             caption_segments=caption_segs,
         )
 
-        update_job(
+        await update_job(
             job_id,
             status="done",
             progress=100,
@@ -1438,12 +1438,12 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
 
     except asyncio.CancelledError:
         log(job_id, "=== PIPELINE CANCELLED ===")
-        update_job(job_id, status="cancelled", progress=0, message="Job cancelled by user.")
+        await update_job(job_id, status="cancelled", progress=0, message="Job cancelled by user.")
         raise
     except Exception as e:
         import traceback as _tb
         log(job_id, f"!!! PIPELINE ERROR (full): {_tb.format_exc()}")
-        update_job(job_id, status="error", progress=0, message="Pipeline failed",
+        await update_job(job_id, status="error", progress=0, message="Pipeline failed",
                    error="An error occurred while processing your video. Please try again.")
         if user_id:
             asyncio.create_task(send_job_notification(user_id, 0, req.url, error="Pipeline failed"))
@@ -1482,7 +1482,7 @@ async def watchdog():
                 # Kill if stuck (no update for 20 min) OR if total age exceeds 90 min
                 if idle_minutes > 20 or age_minutes > 90:
                     reason = "no progress for 20 minutes" if idle_minutes > 20 else "exceeded 90-minute limit"
-                    db_update_job(job_id, {
+                    await asyncio.to_thread(db_update_job, job_id, {
                         "status": "error", "progress": 0,
                         "message": "Pipeline failed", "error": f"Job timed out ({reason})",
                     })
@@ -1553,7 +1553,7 @@ async def cancel_job(job_id: str, user=Depends(require_auth)):
     status = job.get("status", "")
     if status in ("done", "error", "cancelled"):
         return {"ok": False, "reason": f"Job already {status}"}
-    db_update_job(job_id, {"status": "cancelled", "progress": 0, "message": "Job cancelled by user."})
+    await asyncio.to_thread(db_update_job, job_id, {"status": "cancelled", "progress": 0, "message": "Job cancelled by user."})
     task = _running_tasks.get(job_id)
     if task and not task.done():
         task.cancel()
@@ -1574,7 +1574,7 @@ async def get_status(job_id: str, user=Depends(require_auth)):
 
 @app.get("/api/jobs")
 async def list_jobs(user=Depends(require_auth)):
-    return [_j(j) for j in db_get_user_jobs(user.id)]
+    return [_j(j) for j in await asyncio.to_thread(db_get_user_jobs, user.id)]
 
 
 @app.get("/api/profile")
@@ -1741,6 +1741,33 @@ def get_youtube_credentials(user_id: str):
         return None
 
 
+_YT_REASON_MESSAGES = {
+    "uploadLimitExceeded": "YouTube upload limit reached. Possible causes: your channel is newly created and not yet fully activated, your account has a content restriction (check YouTube Studio), or your Google Workspace admin has disabled uploads.",
+    "quotaExceeded": "YouTube API quota exceeded. Try again tomorrow.",
+    "forbidden": "Your YouTube account doesn't have upload permission.",
+    "invalidCredentials": "YouTube authentication expired. Please disconnect and reconnect your YouTube account.",
+    "accountNotEnabled": "This YouTube account isn't enabled for video uploads. You may need to verify your account at youtube.com.",
+    "videoTooLong": "Video exceeds YouTube's maximum length.",
+    "invalidVideoMetadata": "The video title or description contains invalid characters.",
+}
+
+def _yt_upload_error_msg(exc: Exception) -> str:
+    try:
+        from googleapiclient.errors import HttpError as _HttpError
+        if isinstance(exc, _HttpError):
+            import json as _json
+            details = _json.loads(exc.content.decode())
+            errors = details.get("error", {}).get("errors", [])
+            reason = errors[0].get("reason", "") if errors else ""
+            if reason in _YT_REASON_MESSAGES:
+                return _YT_REASON_MESSAGES[reason]
+            msg = details.get("error", {}).get("message", "")
+            return msg or f"YouTube API error {exc.status_code}"
+    except Exception:
+        pass
+    return str(exc)
+
+
 def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str = ""):
     """Upload a clip to YouTube (runs in background thread)."""
     try:
@@ -1773,6 +1800,21 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
                 return
 
         youtube = yt_build("youtube", "v3", credentials=creds)
+
+        # Pre-flight: log which channel we're uploading to and check its status
+        try:
+            ch_resp = youtube.channels().list(part="snippet,status", mine=True).execute()
+            ch_items = ch_resp.get("items", [])
+            if ch_items:
+                ch = ch_items[0]
+                ch_title = ch["snippet"]["title"]
+                ch_id = ch["id"]
+                long_uploads = ch.get("status", {}).get("longUploadsStatus", "unknown")
+                print(f"[yt_upload] channel='{ch_title}' id={ch_id} longUploadsStatus={long_uploads}", flush=True)
+            else:
+                print("[yt_upload] WARNING: no YouTube channel found for this account", flush=True)
+        except Exception as ch_err:
+            print(f"[yt_upload] channel check failed: {ch_err}", flush=True)
 
         tags = req_data.get("tags") or clip.get("tags", [])
         auto_desc = (
@@ -1815,7 +1857,9 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
         })
 
     except Exception as e:
-        db_update_clip_yt_upload(job_id, clip_index, {"status": "error", "error": str(e)})
+        error_msg = _yt_upload_error_msg(e)
+        db_update_clip_yt_upload(job_id, clip_index, {"status": "error", "error": error_msg})
+        print(f"[yt_upload] job={job_id} clip={clip_index} error: {e}", flush=True)
     finally:
         if temp_file and temp_file.exists():
             temp_file.unlink(missing_ok=True)
@@ -1966,7 +2010,7 @@ async def refresh_clip_analytics(job_id: str, clip_index: int, user=Depends(requ
 
 @app.get("/api/channels")
 async def list_channels(user=Depends(require_pro)):
-    return [_c(ch) for ch in db_get_user_channels(user.id)]
+    return [_c(ch) for ch in await asyncio.to_thread(db_get_user_channels, user.id)]
 
 
 @app.post("/api/channels")

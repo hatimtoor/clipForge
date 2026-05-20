@@ -1423,7 +1423,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             log(job_id, f"Auto-uploading {len(final_clips)} clips to YouTube...")
             for i in range(len(final_clips)):
                 clip = final_clips[i]
-                desc = "\n\n".join(filter(None, [clip.get("hook",""), clip.get("reason",""), " ".join(f"#{t}" for t in clip.get("tags",[]))]))
+                source_suffix = f"\n\nWatch the full video: {req.url}" if req.url else ""
+                desc = "\n\n".join(filter(None, [clip.get("hook",""), clip.get("reason",""), " ".join(f"#{t}" for t in clip.get("tags",[]))])) + source_suffix
                 upload_data = {
                     "title": clip.get("title", f"Clip {i+1}"),
                     "description": desc,
@@ -1821,12 +1822,14 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
             print(f"[yt_upload] channel check failed: {ch_err}", flush=True)
 
         tags = req_data.get("tags") or clip.get("tags", [])
+        source_url = job.get("url", "")
+        source_line = f"\n\nWatch the full video: {source_url}" if source_url else ""
         auto_desc = (
             f"{clip.get('hook', '')}\n\n"
             f"{clip.get('reason', '')}\n\n"
             + " ".join(f"#{t}" for t in tags)
-        ).strip()
-        description = req_data.get("description") or auto_desc
+        ).strip() + source_line
+        description = (req_data.get("description") or auto_desc)
 
         body = {
             "snippet": {

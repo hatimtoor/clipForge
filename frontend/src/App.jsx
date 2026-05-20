@@ -1,5 +1,24 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+
+class ErrorBoundary extends Component {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    if (this.state.hasError)
+      return (
+        <div style={{ fontFamily: "monospace", textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 22, fontWeight: "bold", marginBottom: 12 }}>Something went wrong.</div>
+          <div style={{ marginBottom: 24, color: "#4a3d68" }}>Please refresh the page to continue.</div>
+          <button onClick={() => window.location.reload()}
+            style={{ padding: "10px 24px", background: "#f5a3c7", border: "2px solid #1a0d2e", fontFamily: "monospace", cursor: "pointer", fontWeight: "bold" }}>
+            Refresh
+          </button>
+        </div>
+      );
+    return this.props.children;
+  }
+}
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -72,6 +91,7 @@ export default function App() {
     <BrowserRouter>
       <AppContext.Provider value={ctx}>
         <ScrollToTop />
+        <ErrorBoundary>
         <Routes>
           <Route path="/"       element={authed ? <Navigate to="/hello" replace /> : <LandingPage />} />
           <Route path="/login" element={authed ? <Navigate to="/hello" replace /> : <LoginPage />} />
@@ -83,6 +103,7 @@ export default function App() {
           <Route path="/terms"     element={<TermsPage />} />
           <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
+        </ErrorBoundary>
       </AppContext.Provider>
     </BrowserRouter>
   );

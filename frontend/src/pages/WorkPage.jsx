@@ -477,12 +477,12 @@ export default function WorkPage() {
       const res = await authFetch(`/api/status/${id}`);
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        console.error(`[WorkPage] /api/status/${id} → ${res.status}`, body);
+        if (import.meta.env.DEV) console.error(`[WorkPage] /api/status/${id} → ${res.status}`, body);
         return null;
       }
       return await res.json();
     } catch (e) {
-      console.error(`[WorkPage] fetchJob network error:`, e);
+      if (import.meta.env.DEV) console.error(`[WorkPage] fetchJob network error:`, e);
       return null;
     }
   };

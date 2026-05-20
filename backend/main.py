@@ -1844,19 +1844,33 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
             },
         }
 
-        media = MediaFileUpload(str(clip_file), mimetype="video/mp4", chunksize=5 * 1024 * 1024, resumable=True)
         db_update_clip_yt_upload(job_id, clip_index, {"status": "uploading", "progress": 0})
 
-        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-        response = None
-        while response is None:
-            status, response = request.next_chunk(num_retries=5)
-            if status:
-                total = getattr(status, "total_size", None) or getattr(status, "resumable_total", None)
-                prog = int(status.resumable_progress / total * 100) if total else 0
-                db_update_clip_yt_upload(job_id, clip_index, {"status": "uploading", "progress": prog})
+        import time as _time
+        from googleapiclient.errors import HttpError as _HttpError
+        video_id = None
+        for attempt in range(3):
+            try:
+                media = MediaFileUpload(str(clip_file), mimetype="video/mp4", chunksize=20 * 1024 * 1024, resumable=True)
+                request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+                response = None
+                while response is None:
+                    status, response = request.next_chunk(num_retries=3)
+                    if status:
+                        total = getattr(status, "total_size", None) or getattr(status, "resumable_total", None)
+                        prog = int(status.resumable_progress / total * 100) if total else 0
+                        db_update_clip_yt_upload(job_id, clip_index, {"status": "uploading", "progress": prog})
+                video_id = response["id"]
+                break
+            except _HttpError:
+                raise  # never retry API-level rejections (e.g. uploadLimitExceeded)
+            except Exception as conn_err:
+                if attempt == 2:
+                    raise
+                wait = 2 ** attempt
+                print(f"[yt_upload] attempt {attempt+1} failed ({conn_err}), retrying in {wait}s...", flush=True)
+                _time.sleep(wait)
 
-        video_id = response["id"]
         db_update_clip_yt_upload(job_id, clip_index, {
             "status": "done",
             "progress": 100,

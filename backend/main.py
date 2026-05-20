@@ -1743,7 +1743,7 @@ def get_youtube_credentials(user_id: str):
 
 
 _YT_REASON_MESSAGES = {
-    "uploadLimitExceeded": "YouTube upload limit reached. Possible causes: your channel is newly created and not yet fully activated, your account has a content restriction (check YouTube Studio), or your Google Workspace admin has disabled uploads.",
+    "uploadLimitExceeded": "YouTube upload limit reached. Possible causes: Google Cloud project API quota exhausted (check console.cloud.google.com → YouTube Data API v3 → Quotas), channel has a content restriction (check YouTube Studio), or account is newly created.",
     "quotaExceeded": "YouTube API quota exceeded. Try again tomorrow.",
     "forbidden": "Your YouTube account doesn't have upload permission.",
     "invalidCredentials": "YouTube authentication expired. Please disconnect and reconnect your YouTube account.",
@@ -1804,14 +1804,17 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
 
         # Pre-flight: log which channel we're uploading to and check its status
         try:
-            ch_resp = youtube.channels().list(part="snippet,status", mine=True).execute()
+            ch_resp = youtube.channels().list(part="snippet,status,contentDetails", mine=True).execute()
             ch_items = ch_resp.get("items", [])
             if ch_items:
                 ch = ch_items[0]
                 ch_title = ch["snippet"]["title"]
                 ch_id = ch["id"]
-                long_uploads = ch.get("status", {}).get("longUploadsStatus", "unknown")
-                print(f"[yt_upload] channel='{ch_title}' id={ch_id} longUploadsStatus={long_uploads}", flush=True)
+                status = ch.get("status", {})
+                long_uploads = status.get("longUploadsStatus", "unknown")
+                is_linked = status.get("isLinked", "unknown")
+                made_for_kids = status.get("madeForKids", "unknown")
+                print(f"[yt_upload] channel='{ch_title}' id={ch_id} longUploadsStatus={long_uploads} isLinked={is_linked} madeForKids={made_for_kids}", flush=True)
             else:
                 print("[yt_upload] WARNING: no YouTube channel found for this account", flush=True)
         except Exception as ch_err:

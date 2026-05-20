@@ -1731,7 +1731,7 @@ def get_youtube_credentials(user_id: str):
             token_uri="https://oauth2.googleapis.com/token",
             client_id=YOUTUBE_CLIENT_ID,
             client_secret=YOUTUBE_CLIENT_SECRET,
-            scopes=["https://www.googleapis.com/auth/youtube.upload"],
+            scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"],
         )
         if creds.expired and creds.refresh_token:
             creds.refresh(GRequest())
@@ -1905,7 +1905,7 @@ async def youtube_auth(user=Depends(require_pro)):
                     "redirect_uris": [YOUTUBE_REDIRECT_URI],
                 }
             },
-            scopes=["https://www.googleapis.com/auth/youtube.upload"],
+            scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"],
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
         auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
@@ -1945,7 +1945,7 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
                     "redirect_uris": [YOUTUBE_REDIRECT_URI],
                 }
             },
-            scopes=["https://www.googleapis.com/auth/youtube.upload"],
+            scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"],
             state=state,
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI

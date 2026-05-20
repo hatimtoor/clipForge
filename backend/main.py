@@ -1823,13 +1823,14 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
 
         tags = req_data.get("tags") or clip.get("tags", [])
         source_url = job.get("url", "")
-        source_line = f"\n\nWatch the full video: {source_url}" if source_url else ""
         auto_desc = (
             f"{clip.get('hook', '')}\n\n"
             f"{clip.get('reason', '')}\n\n"
             + " ".join(f"#{t}" for t in tags)
-        ).strip() + source_line
-        description = (req_data.get("description") or auto_desc)
+        ).strip()
+        description = req_data.get("description") or auto_desc
+        if source_url and source_url not in description:
+            description = description + f"\n\nWatch the full video: {source_url}"
 
         body = {
             "snippet": {

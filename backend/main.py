@@ -1737,7 +1737,8 @@ def get_youtube_credentials(user_id: str):
             creds.refresh(GRequest())
             db_upsert_youtube_token(user_id, creds.token, creds.refresh_token)
         return creds
-    except Exception:
+    except Exception as e:
+        print(f"[yt_credentials] failed for user={user_id}: {e}", flush=True)
         return None
 
 

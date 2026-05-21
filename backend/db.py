@@ -228,12 +228,11 @@ def db_claim_clips_atomic(user_id: str, count: int, limit: int) -> bool:
 
 
 def db_increment_clips_used(user_id: str, count: int) -> None:
-    from datetime import datetime, timezone
-    profile = db_get_profile(user_id)
-    if not profile:
-        return
-    new_count = (profile.get("clips_used") or 0) + count
-    updates: dict = {"clips_used": new_count}
-    if not profile.get("clips_reset_at"):
-        updates["clips_reset_at"] = datetime.now(timezone.utc).isoformat()
-    get_db().table("profiles").update(updates).eq("id", user_id).execute()
+    """Atomically increment clips_used via Postgres RPC to avoid read-modify-write races."""
+    try:
+        get_db().rpc("increment_clips_used", {
+            "p_user_id": user_id,
+            "p_count": count,
+        }).execute()
+    except Exception as e:
+        print(f"[db_increment_clips_used] RPC failed: {e}", flush=True)

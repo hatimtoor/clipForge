@@ -124,10 +124,21 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
   const [downloading, setDownloading] = useState(false);
   const [analytics, setAnalytics] = useState(clip.yt_analytics || null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [clipToken, setClipToken] = useState(null);
   const isMobile = useMobile();
   const previewRef = useRef(null);
 
   const hasYtVideo = clip.yt_upload?.status === "done" && clip.yt_upload?.video_id;
+
+  useEffect(() => {
+    if (!isActive || clip.presigned_url || !clip.filename) return;
+    authFetch(`/api/clip-token/${jobId}/${clip.filename}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.token) setClipToken(`/clips/${jobId}/${clip.filename}?t=${data.token}`); })
+      .catch(() => {});
+  }, [isActive, clip.presigned_url, clip.filename, jobId]);
+
+  const videoSrc = clip.presigned_url || clipToken;
 
   const refreshStats = async () => {
     setStatsLoading(true);
@@ -210,7 +221,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
         </div>
         {isActive && (
           <div ref={previewRef} style={{ borderTop: BORDER, background: C.windowBg }}>
-            <video src={clip.presigned_url || clip.path} controls autoPlay preload="auto"
+            <video src={videoSrc} controls autoPlay preload="auto"
               style={{ width: "100%", display: "block" }} />
           </div>
         )}
@@ -285,6 +296,7 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
+  const [activeToken, setActiveToken] = useState(null);
   const previewRef = useRef(null);
   const isMobile = useMobile();
 
@@ -294,6 +306,14 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
   useEffect(() => {
     if (active && previewRef.current) previewRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [active]);
+
+  useEffect(() => {
+    if (!active || active.presigned_url || !active.filename) { setActiveToken(null); return; }
+    authFetch(`/api/clip-token/${job.job_id}/${active.filename}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.token) setActiveToken(`/clips/${job.job_id}/${active.filename}?t=${data.token}`); })
+      .catch(() => {});
+  }, [active, job.job_id]);
 
   return (
     <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1380, margin: "0 auto" }}>
@@ -344,7 +364,7 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
             </div>
             <div style={{ background: C.windowBg, border: BORDER, boxShadow: SHADOW, padding: 0, overflow: "hidden" }}>
               <div style={{ aspectRatio: "9/16", background: C.windowBg, position: "relative" }}>
-                <video src={active.presigned_url || active.path} controls autoPlay preload="auto" style={{ width: "100%", height: "100%", display: "block", background: "#000" }} />
+                <video src={active.presigned_url || activeToken} controls autoPlay preload="auto" style={{ width: "100%", height: "100%", display: "block", background: "#000" }} />
               </div>
             </div>
             <div style={{ marginTop: 14 }}>

@@ -156,6 +156,7 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
         return response
 
 app.add_middleware(_SecurityHeadersMiddleware)
@@ -185,6 +186,25 @@ def _oauth_state_get(state: str) -> dict | None:
         return entry
     _oauth_states.pop(state, None)
     return None
+
+_clip_tokens: dict = {}   # token → {"job_id": ..., "filename": ..., "_ts": monotonic()}
+_CLIP_TOKEN_TTL = 3600    # 1 hour
+
+def _clip_token_set(token: str, job_id: str, filename: str) -> None:
+    now = _monotonic()
+    expired = [k for k, v in _clip_tokens.items() if now - v.get("_ts", 0) > _CLIP_TOKEN_TTL]
+    for k in expired:
+        _clip_tokens.pop(k, None)
+    _clip_tokens[token] = {"job_id": job_id, "filename": filename, "_ts": now}
+
+def _clip_token_verify(token: str, job_id: str, filename: str) -> bool:
+    entry = _clip_tokens.get(token)
+    if not entry:
+        return False
+    if (_monotonic() - entry.get("_ts", 0)) > _CLIP_TOKEN_TTL:
+        _clip_tokens.pop(token, None)
+        return False
+    return entry.get("job_id") == job_id and entry.get("filename") == filename
 
 # Running asyncio tasks — keyed by job_id so they can be cancelled
 _running_tasks: dict[str, asyncio.Task] = {}
@@ -222,12 +242,20 @@ class ChannelRequest(BaseModel):
     max_clips: int = 3
     min_duration: int = 30
     max_duration: int = 90
+    caption_style: str = "bold_bottom"
+    caption_font_size: Optional[int] = None
+    caption_highlight_color: Optional[str] = None
+    caption_language: str = "source"
 
 class ChannelPatchRequest(BaseModel):
     auto_upload: Optional[bool] = None
     max_clips: Optional[int] = None
     min_duration: Optional[int] = None
     max_duration: Optional[int] = None
+    caption_style: Optional[str] = None
+    caption_font_size: Optional[int] = None
+    caption_highlight_color: Optional[str] = None
+    caption_language: Optional[str] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1285,6 +1313,10 @@ async def channel_poller():
                     })
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
                     user_id = ch.get("user_id", "")
+                    profile = db_check_and_reset_quota(user_id)
+                    if profile.get("plan") != "pro":
+                        print(f"[watchlist] Skipping channel {channel_id}: user {user_id} is not Pro", flush=True)
+                        continue
                     job = db_create_job({
                         "user_id": user_id,
                         "status": "queued", "progress": 0,
@@ -1299,6 +1331,10 @@ async def channel_poller():
                         min_duration=ch.get("min_duration", 30),
                         max_duration=ch.get("max_duration", 90),
                         reframe=True,
+                        caption_style=ch.get("caption_style", "bold_bottom"),
+                        caption_font_size=ch.get("caption_font_size"),
+                        caption_highlight_color=ch.get("caption_highlight_color"),
+                        caption_language=ch.get("caption_language", "source"),
                     )
                     asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False)))
             except Exception as e:
@@ -1598,11 +1634,29 @@ async def system_status(user=Depends(require_auth)):
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 _SAFE_FILENAME_RE = re.compile(r'^[a-zA-Z0-9_\-\.]+$')
 
+
+@app.get("/api/clip-token/{job_id}/{filename}")
+async def get_clip_token(job_id: str, filename: str, user=Depends(require_auth)):
+    if not _UUID_RE.match(job_id) or not _SAFE_FILENAME_RE.match(filename):
+        raise HTTPException(400, "Invalid request")
+    job = db_get_job(job_id)
+    if not job or job.get("user_id") != user.id:
+        raise HTTPException(404, "Not found")
+    if not any(c.get("filename") == filename for c in (job.get("clips") or [])):
+        raise HTTPException(404, "Not found")
+    import secrets as _secrets
+    token = _secrets.token_urlsafe(32)
+    _clip_token_set(token, job_id, filename)
+    return {"token": token}
+
+
 @app.get("/clips/{job_id}/{filename}")
-async def serve_clip(job_id: str, filename: str):
+async def serve_clip(job_id: str, filename: str, t: Optional[str] = None):
     from fastapi.responses import RedirectResponse
     if not _UUID_RE.match(job_id) or not _SAFE_FILENAME_RE.match(filename) or ".." in filename:
         raise HTTPException(400, "Invalid request")
+    if not t or not _clip_token_verify(t, job_id, filename):
+        raise HTTPException(401, "Unauthorized")
     job = db_get_job(job_id)
     if not job:
         raise HTTPException(404, "Clip not found")
@@ -2081,6 +2135,10 @@ async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
         "min_duration": req.min_duration,
         "max_duration": req.max_duration,
         "status": "watching",
+        "caption_style": req.caption_style,
+        "caption_font_size": req.caption_font_size,
+        "caption_highlight_color": req.caption_highlight_color,
+        "caption_language": req.caption_language,
     })
     return _c(ch_data)
 
@@ -2097,7 +2155,7 @@ async def remove_channel(channel_id: str, user=Depends(require_pro)):
 async def update_channel(channel_id: str, req: ChannelPatchRequest, user=Depends(require_pro)):
     if not db_channel_owned_by(channel_id, user.id):
         raise HTTPException(404, "Channel not found")
-    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    updates = req.model_dump(exclude_unset=True)
     if updates:
         db_update_channel(channel_id, updates)
     return _c(db_get_channel(channel_id))
@@ -2129,7 +2187,17 @@ async def check_channel_now(channel_id: str, user=Depends(require_pro)):
             "source": "watchlist", "channel_id": channel_id,
         })
         job_id = job["id"]
-        clip_req = ClipRequest(url=video_url, max_clips=ch.get("max_clips", 3), min_duration=ch.get("min_duration", 30), max_duration=ch.get("max_duration", 90))
+        clip_req = ClipRequest(
+            url=video_url,
+            max_clips=ch.get("max_clips", 3),
+            min_duration=ch.get("min_duration", 30),
+            max_duration=ch.get("max_duration", 90),
+            reframe=True,
+            caption_style=ch.get("caption_style", "bold_bottom"),
+            caption_font_size=ch.get("caption_font_size"),
+            caption_highlight_color=ch.get("caption_highlight_color"),
+            caption_language=ch.get("caption_language", "source"),
+        )
         asyncio.create_task(run_pipeline(job_id, clip_req, user_id=user.id, auto_upload=ch.get("auto_upload", False)))
         return {"triggered": True, "job_id": job_id, "video_title": video.get("title")}
     return {"triggered": False, "reason": "No new video found"}

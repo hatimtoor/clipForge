@@ -156,7 +156,10 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+        # Only apply strict CSP to API/JSON responses — HTML responses serve the
+        # React app which needs scripts, fonts, and connections to work.
+        if "text/html" not in response.headers.get("content-type", ""):
+            response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
         return response
 
 app.add_middleware(_SecurityHeadersMiddleware)

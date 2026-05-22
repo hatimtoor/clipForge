@@ -12,6 +12,9 @@ export default function Header() {
   const navigate = useNavigate();
   const [ytError, setYtError] = useState("");
   const [ytDropdownOpen, setYtDropdownOpen] = useState(false);
+  const [ytHoverRow, setYtHoverRow] = useState(null);
+  const [ytHoverDisconnect, setYtHoverDisconnect] = useState(null);
+  const [ytHoverConnect, setYtHoverConnect] = useState(false);
   const ytDropdownRef = useRef(null);
   const isMobile = useMobile();
 
@@ -130,16 +133,23 @@ export default function Header() {
                     background: C.cream, border: BORDER, boxShadow: SHADOW_SM,
                     minWidth: 190, zIndex: 200,
                   }}>
-                    {ytChannels.map((ch, i) => (
+                    {ytChannels.map((ch) => (
                       <div key={ch.yt_channel_id} style={{
                         display: "flex", alignItems: "center",
                         borderBottom: `2px solid ${C.ink}`,
+                        background: ytHoverDisconnect === ch.yt_channel_id ? C.hot : ytHoverRow === ch.yt_channel_id ? C.lavender : "transparent",
                       }}>
-                        <span style={{ flex: 1, padding: "9px 10px", fontSize: 9, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }}>
+                        <span
+                          onMouseEnter={() => setYtHoverRow(ch.yt_channel_id)}
+                          onMouseLeave={() => setYtHoverRow(null)}
+                          style={{ flex: 1, padding: "9px 10px", fontSize: 9, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140, cursor: "default" }}
+                        >
                           * {ch.yt_channel_name || "YT"}
                         </span>
                         <button
                           onClick={() => { handleDisconnectYouTube(ch.yt_channel_id); setYtDropdownOpen(false); }}
+                          onMouseEnter={() => setYtHoverDisconnect(ch.yt_channel_id)}
+                          onMouseLeave={() => setYtHoverDisconnect(null)}
                           className="pixel"
                           title="Disconnect"
                           style={{
@@ -152,11 +162,13 @@ export default function Header() {
                     ))}
                     <button
                       onClick={handleConnectYouTube}
+                      onMouseEnter={() => setYtHoverConnect(true)}
+                      onMouseLeave={() => setYtHoverConnect(false)}
                       className="pixel"
                       style={{
                         width: "100%", padding: "9px 10px", fontSize: 9,
-                        background: "transparent", color: C.ink,
-                        textAlign: "left", cursor: "pointer", display: "block",
+                        background: ytHoverConnect ? C.signal : "transparent",
+                        color: C.ink, textAlign: "left", cursor: "pointer", display: "block",
                       }}
                     >+ connect channel</button>
                   </div>

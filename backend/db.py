@@ -167,16 +167,34 @@ def db_upsert_youtube_token(
     yt_channel_id: str = "",
     yt_channel_name: str = "",
 ) -> None:
-    get_db().table("youtube_tokens").upsert(
-        {
-            "user_id": user_id,
+    db = get_db()
+    # Look up by exact (user_id, yt_channel_id) pair so we can update by id
+    # (avoids relying on any specific unique-constraint shape during migration)
+    r = db.table("youtube_tokens").select("id").eq("user_id", user_id).eq("yt_channel_id", yt_channel_id).execute()
+    if r.data:
+        db.table("youtube_tokens").update({
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "yt_channel_id": yt_channel_id,
             "yt_channel_name": yt_channel_name,
-        },
-        on_conflict="user_id,yt_channel_id",
-    ).execute()
+        }).eq("id", r.data[0]["id"]).execute()
+    else:
+        try:
+            db.table("youtube_tokens").insert({
+                "user_id": user_id,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "yt_channel_id": yt_channel_id,
+                "yt_channel_name": yt_channel_name,
+            }).execute()
+        except Exception:
+            # Fallback: schema still has single-user-id constraint (SQL migration pending)
+            # Update the first row for this user so auth at least works
+            db.table("youtube_tokens").update({
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "yt_channel_id": yt_channel_id,
+                "yt_channel_name": yt_channel_name,
+            }).eq("user_id", user_id).execute()
 
 
 def db_delete_youtube_token(user_id: str, yt_channel_id: Optional[str] = None) -> None:

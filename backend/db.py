@@ -168,15 +168,14 @@ def db_upsert_youtube_token(
     yt_channel_name: str = "",
 ) -> None:
     db = get_db()
-    # Look up by exact (user_id, yt_channel_id) pair so we can update by id
-    # (avoids relying on any specific unique-constraint shape during migration)
-    r = db.table("youtube_tokens").select("id").eq("user_id", user_id).eq("yt_channel_id", yt_channel_id).execute()
+    # Look up by exact (user_id, yt_channel_id) pair — table has no surrogate id column
+    r = db.table("youtube_tokens").select("user_id").eq("user_id", user_id).eq("yt_channel_id", yt_channel_id).execute()
     if r.data:
         db.table("youtube_tokens").update({
             "access_token": access_token,
             "refresh_token": refresh_token,
             "yt_channel_name": yt_channel_name,
-        }).eq("id", r.data[0]["id"]).execute()
+        }).eq("user_id", user_id).eq("yt_channel_id", yt_channel_id).execute()
     else:
         try:
             db.table("youtube_tokens").insert({

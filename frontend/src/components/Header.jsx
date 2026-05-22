@@ -135,13 +135,13 @@ export default function Header() {
                   }}>
                     {ytChannels.map((ch) => (
                       <div key={ch.yt_channel_id} style={{
-                        display: "flex", alignItems: "center",
+                        display: "flex", alignItems: "stretch",
                         borderBottom: `2px solid ${C.ink}`,
                       }}>
                         <span
                           onMouseEnter={() => setYtHoverRow(ch.yt_channel_id)}
                           onMouseLeave={() => setYtHoverRow(null)}
-                          style={{ flex: 1, padding: "9px 10px", fontSize: 9, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140, cursor: "default", background: ytHoverRow === ch.yt_channel_id ? C.lavender : "transparent" }}
+                          style={{ flex: 1, padding: "9px 10px", fontSize: 9, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140, cursor: "default", background: ytHoverRow === ch.yt_channel_id ? C.lavender : "transparent", display: "flex", alignItems: "center" }}
                         >
                           * {ch.yt_channel_name || "YT"}
                         </span>
@@ -152,9 +152,9 @@ export default function Header() {
                           className="pixel"
                           title="Disconnect"
                           style={{
-                            padding: "9px 10px", borderLeft: `2px solid ${C.ink}`, color: C.ink,
+                            padding: "0 10px", borderLeft: `2px solid ${C.ink}`, color: C.ink,
                             fontSize: 9, cursor: "pointer", flexShrink: 0,
-                            background: ytHoverDisconnect === ch.yt_channel_id ? C.hotDeep : "transparent",
+                            background: ytHoverDisconnect === ch.yt_channel_id ? C.ytDeep : "transparent",
                           }}
                         >×</button>
                       </div>

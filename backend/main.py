@@ -1988,7 +1988,7 @@ async def youtube_auth(user=Depends(require_pro)):
             scopes=["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"],
         )
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
-        auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
+        auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="select_account consent")
         _oauth_state_set(state, {"user_id": user.id, "code_verifier": getattr(flow, "code_verifier", None)})
         return {"auth_url": auth_url}
     except Exception as e:

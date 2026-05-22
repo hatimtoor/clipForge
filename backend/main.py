@@ -84,7 +84,7 @@ from db import (
     db_get_done_jobs_with_uploads,
     db_create_channel, db_get_channel, db_get_user_channels,
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
-    db_get_youtube_token, db_upsert_youtube_token, db_delete_youtube_token,
+    db_get_youtube_token, db_get_user_youtube_tokens, db_upsert_youtube_token, db_delete_youtube_token,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used,
     db_get_user_email,
     FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
@@ -238,6 +238,7 @@ class YouTubeUploadRequest(BaseModel):
     description: str
     tags: list = []
     privacy_status: str = "public"
+    yt_channel_id: Optional[str] = None  # which connected channel to upload to
 
 class ChannelRequest(BaseModel):
     url: str
@@ -1777,9 +1778,10 @@ async def analytics_refresher():
 # YOUTUBE INTEGRATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_youtube_credentials(user_id: str):
-    """Load stored YouTube OAuth credentials for a user and refresh if expired."""
-    token_data = db_get_youtube_token(user_id)
+def get_youtube_credentials(user_id: str, yt_channel_id: str = None):
+    """Load stored YouTube OAuth credentials for a user and refresh if expired.
+    If yt_channel_id is given, use that specific channel; otherwise use the first available."""
+    token_data = db_get_youtube_token(user_id, yt_channel_id)
     if not token_data:
         return None
     try:
@@ -1795,7 +1797,9 @@ def get_youtube_credentials(user_id: str):
         )
         if creds.expired and creds.refresh_token:
             creds.refresh(GRequest())
-            db_upsert_youtube_token(user_id, creds.token, creds.refresh_token)
+            db_upsert_youtube_token(user_id, creds.token, creds.refresh_token,
+                                    token_data.get("yt_channel_id", ""),
+                                    token_data.get("yt_channel_name", ""))
         return creds
     except Exception as e:
         print(f"[yt_credentials] failed for user={user_id}: {e}", flush=True)
@@ -1835,7 +1839,8 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
         from googleapiclient.discovery import build as yt_build
         from googleapiclient.http import MediaFileUpload
 
-        creds = get_youtube_credentials(user_id)
+        yt_channel_id = req_data.get("yt_channel_id") or None
+        creds = get_youtube_credentials(user_id, yt_channel_id)
         if not creds:
             db_update_clip_yt_upload(job_id, clip_index, {"status": "error", "error": "Not authenticated with YouTube"})
             return
@@ -1948,24 +1953,19 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
 
 @app.get("/api/youtube/status")
 async def youtube_status(user=Depends(require_pro)):
-    creds = get_youtube_credentials(user.id)
-    if not creds:
-        return {"connected": False}
-    try:
-        from googleapiclient.discovery import build as yt_build
-        youtube = yt_build("youtube", "v3", credentials=creds)
-        ch = youtube.channels().list(part="snippet", mine=True).execute()
-        items = ch.get("items", [])
-        if items:
-            return {"connected": True, "channel_name": items[0]["snippet"]["title"]}
-    except Exception:
-        pass
-    return {"connected": True}
+    tokens = db_get_user_youtube_tokens(user.id)
+    if not tokens:
+        return {"connected": False, "channels": []}
+    channels = [
+        {"yt_channel_id": t.get("yt_channel_id", ""), "yt_channel_name": t.get("yt_channel_name") or "YouTube"}
+        for t in tokens
+    ]
+    return {"connected": True, "channels": channels}
 
 
 @app.delete("/api/youtube/disconnect")
-async def youtube_disconnect(user=Depends(require_pro)):
-    db_delete_youtube_token(user.id)
+async def youtube_disconnect(yt_channel_id: Optional[str] = None, user=Depends(require_pro)):
+    db_delete_youtube_token(user.id, yt_channel_id or None)
     return {"ok": True}
 
 
@@ -2032,7 +2032,20 @@ async def youtube_callback(code: str = None, state: str = None, error: str = Non
         flow.redirect_uri = YOUTUBE_REDIRECT_URI
         flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
-        db_upsert_youtube_token(user_id, creds.token, creds.refresh_token)
+        # Identify which YouTube channel was just authorized
+        yt_channel_id = ""
+        yt_channel_name = ""
+        try:
+            from googleapiclient.discovery import build as yt_build
+            youtube = yt_build("youtube", "v3", credentials=creds)
+            ch_resp = youtube.channels().list(part="snippet", mine=True).execute()
+            items = ch_resp.get("items", [])
+            if items:
+                yt_channel_id = items[0]["id"]
+                yt_channel_name = items[0]["snippet"]["title"]
+        except Exception as ch_err:
+            print(f"[youtube_callback] channel lookup failed: {ch_err}", flush=True)
+        db_upsert_youtube_token(user_id, creds.token, creds.refresh_token, yt_channel_id, yt_channel_name)
         _oauth_states.pop(state, None)  # clean up used state
         return _yt_postmsg("youtube_auth_success")
     except Exception as e:

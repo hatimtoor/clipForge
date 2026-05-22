@@ -135,7 +135,12 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
 
           <div style={{ marginTop: 14 }}>
             <button onClick={() => setCaptionOpen(o => !o)} className="pixel"
-              style={{ fontSize: 8, color: C.dim2, background: "transparent", cursor: "pointer", padding: 0, border: "none", display: "flex", alignItems: "center", gap: 5 }}>
+              style={{ fontSize: 8, color: C.ink, background: captionOpen ? C.lavender : C.cream2,
+                cursor: "pointer", padding: "8px 12px", border: BORDER,
+                boxShadow: captionOpen ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                transform: captionOpen ? "translate(2px,2px)" : "none",
+                display: "flex", alignItems: "center", gap: 6, transition: "all .1s" }}>
+              <span style={{ fontSize: 10 }}>Aa</span>
               CAPTION SETTINGS {captionOpen ? "▲" : "▼"}
             </button>
           </div>

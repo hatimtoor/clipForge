@@ -16,10 +16,14 @@ export default function Header() {
   const path = location.pathname.replace("/", "") || "hello";
   const ytConnected = ytStatus?.connected;
 
-  const handleDisconnectYouTube = async () => {
-    if (!window.confirm("Disconnect your YouTube channel?")) return;
+  const handleDisconnectYouTube = async (yt_channel_id) => {
+    const label = yt_channel_id ? "this YouTube channel" : "your YouTube channel";
+    if (!window.confirm(`Disconnect ${label}?`)) return;
     try {
-      await authFetch("/api/youtube/disconnect", { method: "DELETE" });
+      const url = yt_channel_id
+        ? `/api/youtube/disconnect?yt_channel_id=${encodeURIComponent(yt_channel_id)}`
+        : "/api/youtube/disconnect";
+      await authFetch(url, { method: "DELETE" });
       refreshYtStatus();
     } catch { setYtError("Could not disconnect. Try again."); }
   };
@@ -88,12 +92,18 @@ export default function Header() {
               );
             })}
 
-            {isPro && !isMobile && (ytConnected
-              ? <span className="pixel" style={{ display: "inline-flex", alignItems: "center", gap: 0, background: C.yt, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, fontSize: 9 }}>
-                  <span style={{ padding: "10px 10px" }}>* {ytStatus.channel_name || "YT"}</span>
-                  <button onClick={handleDisconnectYouTube} className="pixel" title="Disconnect YouTube" style={{ padding: "10px 10px", background: "transparent", borderLeft: `2px solid ${C.ink}`, color: C.ink, fontSize: 9, cursor: "pointer" }}>×</button>
-                </span>
-              : <button onClick={handleConnectYouTube} className="pixel" style={{ padding: "10px 14px", fontSize: 9, background: C.cream, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer", textTransform: "uppercase" }}>+ YT</button>
+            {isPro && !isMobile && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                {(ytStatus?.channels || []).map(ch => (
+                  <span key={ch.yt_channel_id} className="pixel" style={{ display: "inline-flex", alignItems: "center", background: C.yt, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, fontSize: 9 }}>
+                    <span style={{ padding: "10px 10px" }}>* {ch.yt_channel_name || "YT"}</span>
+                    <button onClick={() => handleDisconnectYouTube(ch.yt_channel_id)} className="pixel" title="Disconnect" style={{ padding: "10px 10px", background: "transparent", borderLeft: `2px solid ${C.ink}`, color: C.ink, fontSize: 9, cursor: "pointer" }}>×</button>
+                  </span>
+                ))}
+                <button onClick={handleConnectYouTube} className="pixel" style={{ padding: "10px 14px", fontSize: 9, background: C.cream, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer", textTransform: "uppercase" }}>
+                  {ytConnected ? "+ YT" : "+ YT"}
+                </button>
+              </div>
             )}
 
             {!isPro && (

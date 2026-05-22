@@ -138,23 +138,52 @@ def db_channel_owned_by(channel_id: str, user_id: str) -> bool:
 
 # ── YouTube tokens ─────────────────────────────────────────────────────────────
 
-def db_get_youtube_token(user_id: str) -> Optional[dict]:
+def db_get_youtube_token(user_id: str, yt_channel_id: Optional[str] = None) -> Optional[dict]:
+    """Return one token row — the specific channel if given, otherwise the first available."""
     try:
-        r = get_db().table("youtube_tokens").select("*").eq("user_id", user_id).single().execute()
-        return r.data
-    except Exception:
+        q = get_db().table("youtube_tokens").select("*").eq("user_id", user_id)
+        if yt_channel_id:
+            q = q.eq("yt_channel_id", yt_channel_id)
+        r = q.limit(1).execute()
+        return r.data[0] if r.data else None
+    except Exception as e:
+        print(f"[db_get_youtube_token] error for {user_id}: {e}", flush=True)
         return None
 
 
-def db_upsert_youtube_token(user_id: str, access_token: str, refresh_token: Optional[str]) -> None:
+def db_get_user_youtube_tokens(user_id: str) -> list:
+    """Return all connected YouTube channel tokens for a user."""
+    try:
+        r = get_db().table("youtube_tokens").select("*").eq("user_id", user_id).execute()
+        return r.data or []
+    except Exception:
+        return []
+
+
+def db_upsert_youtube_token(
+    user_id: str,
+    access_token: str,
+    refresh_token: Optional[str],
+    yt_channel_id: str = "",
+    yt_channel_name: str = "",
+) -> None:
     get_db().table("youtube_tokens").upsert(
-        {"user_id": user_id, "access_token": access_token, "refresh_token": refresh_token},
-        on_conflict="user_id",
+        {
+            "user_id": user_id,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "yt_channel_id": yt_channel_id,
+            "yt_channel_name": yt_channel_name,
+        },
+        on_conflict="user_id,yt_channel_id",
     ).execute()
 
 
-def db_delete_youtube_token(user_id: str) -> None:
-    get_db().table("youtube_tokens").delete().eq("user_id", user_id).execute()
+def db_delete_youtube_token(user_id: str, yt_channel_id: Optional[str] = None) -> None:
+    q = get_db().table("youtube_tokens").delete().eq("user_id", user_id)
+    if yt_channel_id:
+        q = q.eq("yt_channel_id", yt_channel_id)
+    q.execute()
 
 
 def db_get_user_email(user_id: str) -> Optional[str]:

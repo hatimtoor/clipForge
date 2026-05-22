@@ -22,7 +22,7 @@ const timeAgoShort = iso => {
 };
 
 // ── YouTube upload modal ───────────────────────────────────────────────────────
-function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
+function YouTubeUploadModal({ clip, clipIndex, jobId, ytChannels, onClose, onUploaded }) {
   const isShort = (clip.duration || 0) <= 60;
   const [title, setTitle] = useState((clip.title || "") + (isShort ? " #Shorts" : ""));
   const [description, setDescription] = useState(
@@ -31,6 +31,7 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
   );
   const [tags, setTags] = useState((clip.tags || []).join(", "));
   const [privacy, setPrivacy] = useState("public");
+  const [selectedChannel, setSelectedChannel] = useState(ytChannels?.[0]?.yt_channel_id || "");
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(null);
@@ -48,6 +49,7 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
           title, description,
           tags: tags.split(",").map(t => t.trim()).filter(Boolean),
           privacy_status: privacy,
+          yt_channel_id: selectedChannel || undefined,
         }),
       });
       if (!res.ok) { setErr("Failed to start upload."); setUploading(false); return; }
@@ -89,6 +91,23 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, onClose, onUploaded }) {
             </div>
           ) : (
             <>
+              {ytChannels && ytChannels.length > 1 && (
+                <Field label="UPLOAD TO">
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                    {ytChannels.map(ch => {
+                      const sel = selectedChannel === ch.yt_channel_id;
+                      return (
+                        <button key={ch.yt_channel_id} onClick={() => setSelectedChannel(ch.yt_channel_id)} className="pixel"
+                          style={{ padding: "8px 14px", fontSize: 9, background: sel ? C.yt : C.paper, color: C.ink,
+                            border: BORDER, boxShadow: sel ? `0 0 0 ${C.ink}` : SHADOW_SM,
+                            transform: sel ? "translate(3px,3px)" : "none", cursor: "pointer", transition: "all .1s" }}>
+                          {ch.yt_channel_name || "YouTube"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
               <Field label="TITLE">
                 <input value={title} onChange={e => setTitle(e.target.value)} className="mono"
                   style={{ width: "100%", padding: "10px 12px", background: C.paper, border: BORDER, color: C.ink, fontSize: 13, marginBottom: 14, boxShadow: SHADOW_SM }} />
@@ -561,7 +580,10 @@ export default function WorkPage() {
         await authFetch(`/api/youtube/upload/${jobId}/${idx}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, description, tags: clip.tags || [], privacy_status: "public" }),
+          body: JSON.stringify({
+            title, description, tags: clip.tags || [], privacy_status: "public",
+            yt_channel_id: ytStatus?.channels?.[0]?.yt_channel_id || undefined,
+          }),
         });
       } catch {}
     }
@@ -680,6 +702,7 @@ export default function WorkPage() {
             clip={ytModal.clip}
             clipIndex={ytModal.clipIndex}
             jobId={jobId}
+            ytChannels={ytStatus?.channels || []}
             onClose={() => setYtModal(null)}
             onUploaded={refreshJob}
           />

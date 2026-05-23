@@ -152,6 +152,7 @@ export default function Header() {
                           className="pixel"
                           title="Disconnect"
                           style={{
+                            display: "flex", alignItems: "center", alignSelf: "stretch",
                             padding: "0 10px", borderLeft: `2px solid ${C.ink}`, color: C.ink,
                             fontSize: 9, cursor: "pointer", flexShrink: 0,
                             background: ytHoverDisconnect === ch.yt_channel_id ? C.ytDeep : "transparent",

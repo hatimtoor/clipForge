@@ -318,9 +318,25 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
   const [activeToken, setActiveToken] = useState(null);
   const previewRef = useRef(null);
   const isMobile = useMobile();
+  const ytChannels = ytStatus?.channels || [];
+  const [uploadAllPickerOpen, setUploadAllPickerOpen] = useState(false);
+  const [uploadAllChannel, setUploadAllChannel] = useState(ytChannels[0]?.yt_channel_id || "");
 
   const ytConnected = isPro && !!ytStatus?.connected;
   const uploadableCount = clips.filter(c => !c.yt_upload || !["done", "uploading", "queued"].includes(c.yt_upload?.status)).length;
+
+  const handleUploadAllClick = () => {
+    if (ytChannels.length > 1) {
+      setUploadAllPickerOpen(true);
+    } else {
+      onUploadAll(ytChannels[0]?.yt_channel_id || "");
+    }
+  };
+
+  const handleUploadAllConfirm = () => {
+    setUploadAllPickerOpen(false);
+    onUploadAll(uploadAllChannel);
+  };
 
   useEffect(() => {
     if (active && previewRef.current) previewRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -346,9 +362,32 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             {ytConnected && uploadableCount > 0 && (
-              <PixelBtn color="yt" size="md" onClick={onUploadAll} disabled={uploadingAll}>
-                {uploadingAll ? `^ UPLOADING...` : `^ UPLOAD ALL TO YT`}
-              </PixelBtn>
+              <div style={{ position: "relative" }}>
+                <PixelBtn color="yt" size="md" onClick={handleUploadAllClick} disabled={uploadingAll}>
+                  {uploadingAll ? `^ UPLOADING...` : `^ UPLOAD ALL TO YT`}
+                </PixelBtn>
+                {uploadAllPickerOpen && (
+                  <div className="pixel" style={{
+                    position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 200,
+                    background: C.cream, border: BORDER, boxShadow: SHADOW_SM, minWidth: 210, padding: 12,
+                  }}>
+                    <div style={{ fontSize: 8, color: C.dim2, marginBottom: 10 }}>SELECT CHANNEL</div>
+                    {ytChannels.map(ch => (
+                      <button key={ch.yt_channel_id} onClick={() => setUploadAllChannel(ch.yt_channel_id)} className="pixel" style={{
+                        display: "block", width: "100%", textAlign: "left", padding: "8px 10px", marginBottom: 6, fontSize: 9,
+                        background: uploadAllChannel === ch.yt_channel_id ? C.yt : C.cream2,
+                        color: C.ink, border: BORDER, cursor: "pointer",
+                      }}>
+                        {uploadAllChannel === ch.yt_channel_id ? "* " : "  "}{ch.yt_channel_name || ch.yt_channel_id}
+                      </button>
+                    ))}
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <PixelBtn color="yt" size="sm" onClick={handleUploadAllConfirm} disabled={!uploadAllChannel}>UPLOAD ALL</PixelBtn>
+                      <PixelBtn color="cream" size="sm" onClick={() => setUploadAllPickerOpen(false)}>CANCEL</PixelBtn>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
             <PixelBtn color="hot" size="md" onClick={onNew}>+ NEW CLIP</PixelBtn>
           </div>
@@ -564,7 +603,7 @@ export default function WorkPage() {
     if (d) setJob(d);
   };
 
-  const handleUploadAll = async () => {
+  const handleUploadAll = async (channelId) => {
     if (!job?.clips || uploadingAll) return;
     setUploadingAll(true);
     clearInterval(uploadAllPollRef.current);
@@ -582,7 +621,7 @@ export default function WorkPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             title, description, tags: clip.tags || [], privacy_status: "public",
-            yt_channel_id: ytStatus?.channels?.[0]?.yt_channel_id || undefined,
+            yt_channel_id: channelId || undefined,
           }),
         });
       } catch {}

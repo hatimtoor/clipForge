@@ -56,7 +56,7 @@ function UpgradeGate() {
   );
 }
 
-function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking }) {
+function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, onSetUploadChannel }) {
   const [maxClips, setMaxClips] = useState(ch.max_clips ?? 3);
   const [minDur,   setMinDur]   = useState(ch.min_duration ?? 30);
   const [maxDur,   setMaxDur]   = useState(ch.max_duration ?? 90);
@@ -65,6 +65,8 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
   const [fontSize,       setFontSize]       = useState(ch.caption_font_size ?? null);
   const [highlightColor, setHighlightColor] = useState(ch.caption_highlight_color ?? null);
   const [captionLang,    setCaptionLang]    = useState(ch.caption_language ?? "source");
+  const { ytStatus } = useApp();
+  const [selectedYtChannel, setSelectedYtChannel] = useState(ch.yt_channel_id ?? "");
   const isMobile = useMobile();
 
   const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
@@ -220,6 +222,19 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking })
             <span style={{ fontSize: 14, fontFamily: "sans-serif" }}>🎉</span>
             {ch.auto_upload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
           </button>
+          {ch.auto_upload && ytStatus && ytStatus.connected && ytStatus.channels && ytStatus.channels.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 6 }}>UPLOAD TO</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <select value={selectedYtChannel} onChange={e => setSelectedYtChannel(e.target.value)} className="mono" style={{ flex: 1, padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER }}>
+                  {ytStatus.channels.map(c => (
+                    <option key={c.yt_channel_id} value={c.yt_channel_id}>{c.yt_channel_name || c.yt_channel_id}</option>
+                  ))}
+                </select>
+                <PixelBtn color="hot" size="sm" onClick={() => onSetUploadChannel(ch, selectedYtChannel)}>SAVE</PixelBtn>
+              </div>
+            </div>
+          )}
           <PixelBtn color="amber" size="sm" onClick={() => onCheckNow(ch.channel_id)} disabled={checking}>
             {checking ? "CHECKING..." : "CHECK NOW"}
           </PixelBtn>
@@ -238,6 +253,7 @@ function WatchlistContent() {
   const [addError, setAddError] = useState("");
   const [checkingId, setCheckingId] = useState(null);
   const isMobile = useMobile();
+  const { ytStatus } = useApp();
 
   const fetchChannels = async () => {
     try {
@@ -281,10 +297,26 @@ function WatchlistContent() {
   };
 
   const handleToggleAutoUpload = async (ch) => {
+    const turningOn = !ch.auto_upload;
+    const ytChannels = ytStatus?.channels || [];
+    const patch = { auto_upload: turningOn };
+    // Auto-select the only connected channel so user doesn't need a separate save step
+    if (turningOn && ytChannels.length === 1) {
+      patch.yt_channel_id = ytChannels[0].yt_channel_id;
+    }
     await authFetch(`/api/channels/${ch.channel_id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ auto_upload: !ch.auto_upload }),
+      body: JSON.stringify(patch),
+    });
+    fetchChannels();
+  };
+
+  const handleSetUploadChannel = async (ch, yt_channel_id) => {
+    await authFetch(`/api/channels/${ch.channel_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yt_channel_id }),
     });
     fetchChannels();
   };
@@ -343,6 +375,7 @@ function WatchlistContent() {
               onToggleAutoUpload={handleToggleAutoUpload}
               onCheckNow={handleCheckNow}
               checking={checkingId === ch.channel_id}
+              onSetUploadChannel={handleSetUploadChannel}
             />
           ))}
         </div>

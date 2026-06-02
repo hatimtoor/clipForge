@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import threading
 import subprocess
 import re
 import shutil
@@ -250,6 +251,7 @@ class ChannelRequest(BaseModel):
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
     caption_language: str = "source"
+    yt_channel_id: Optional[str] = None
 
 class ChannelPatchRequest(BaseModel):
     auto_upload: Optional[bool] = None
@@ -260,6 +262,7 @@ class ChannelPatchRequest(BaseModel):
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
     caption_language: Optional[str] = None
+    yt_channel_id: Optional[str] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1340,7 +1343,7 @@ async def channel_poller():
                         caption_highlight_color=ch.get("caption_highlight_color"),
                         caption_language=ch.get("caption_language", "source"),
                     )
-                    asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False)))
+                    asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id")))
             except Exception as e:
                 print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
                 db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
@@ -1402,7 +1405,7 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False):
+async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
@@ -1473,6 +1476,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                     "tags": clip.get("tags", []),
                     "privacy_status": "public",
                 }
+                if auto_upload_yt_channel:
+                    upload_data["yt_channel_id"] = auto_upload_yt_channel
                 log(job_id, f"  Auto-uploading clip {i+1}/{len(final_clips)}...")
                 await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data, user_id)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
@@ -1833,8 +1838,17 @@ def _yt_upload_error_msg(exc: Exception) -> str:
     return str(exc)
 
 
+# Serializes concurrent YouTube uploads so they don't choke each other
+_yt_upload_sem = threading.Semaphore(1)
+
+
 def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str = ""):
-    """Upload a clip to YouTube (runs in background thread)."""
+    """Upload a clip to YouTube (runs in background thread, serialized via semaphore)."""
+    with _yt_upload_sem:
+        _do_youtube_upload(job_id, clip_index, req_data, user_id)
+
+
+def _do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str = ""):
     try:
         from googleapiclient.discovery import build as yt_build
         from googleapiclient.http import MediaFileUpload

@@ -586,6 +586,7 @@ export default function WorkPage() {
           }),
         });
       } catch {}
+      await new Promise(r => setTimeout(r, 1500));
     }
     uploadAllPollRef.current = setInterval(async () => {
       const d = await fetchJob(jobId);

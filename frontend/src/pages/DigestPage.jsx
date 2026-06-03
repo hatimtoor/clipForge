@@ -208,8 +208,8 @@ export default function DigestPage() {
             {/* Days back */}
             <div>
               <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>LOOK BACK</div>
-              <select value={daysBack} onChange={e => setDaysBack(Number(e.target.value))} className="mono"
-                style={{ padding: "9px 12px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12 }}>
+              <select value={daysBack} onChange={e => setDaysBack(Number(e.target.value))} className="pixel"
+                style={{ padding: "9px 12px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
                 {DAY_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
@@ -242,8 +242,8 @@ export default function DigestPage() {
                     * {ytChannels[0].yt_channel_name || "YouTube"}
                   </div>
                 ) : (
-                  <select value={ytChannelId} onChange={e => setYtChannelId(e.target.value)} className="mono"
-                    style={{ padding: "9px 12px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12 }}>
+                  <select value={ytChannelId} onChange={e => setYtChannelId(e.target.value)} className="pixel"
+                    style={{ padding: "9px 12px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
                     {ytChannels.map(c => (
                       <option key={c.yt_channel_id} value={c.yt_channel_id}>{c.yt_channel_name || c.yt_channel_id}</option>
                     ))}

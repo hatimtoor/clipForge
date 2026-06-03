@@ -285,6 +285,7 @@ class BackfillPatchRequest(BaseModel):
     days_back: Optional[int] = None
     videos_per_day: Optional[int] = None
     yt_upload_channel_id: Optional[str] = None
+    auto_upload: Optional[bool] = None
     max_clips: Optional[int] = None
     min_duration: Optional[int] = None
     max_duration: Optional[int] = None
@@ -1617,6 +1618,7 @@ async def _process_backfill(bf: dict) -> None:
     days_back = bf.get("days_back", 30)
     vpd = bf.get("videos_per_day", 2)
     yt_ch_id = bf.get("yt_upload_channel_id") or None
+    auto_upload = bf.get("auto_upload", False)
     processed = set(bf.get("processed_video_ids") or [])
 
     profile = await asyncio.to_thread(db_check_and_reset_quota, user_id)
@@ -1664,8 +1666,8 @@ async def _process_backfill(bf: dict) -> None:
             asyncio.create_task(run_pipeline(
                 job["id"], req,
                 user_id=user_id,
-                auto_upload=bool(yt_ch_id),
-                auto_upload_yt_channel=yt_ch_id,
+                auto_upload=auto_upload and bool(yt_ch_id),
+                auto_upload_yt_channel=yt_ch_id if auto_upload else None,
             ))
             new_processed.append(video["id"])
             print(f"[backfill] queued {video['url']}", flush=True)

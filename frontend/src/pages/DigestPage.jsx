@@ -79,6 +79,7 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
   const [daysBack,       setDaysBack]       = useState(bf.days_back ?? 30);
   const [videosPerDay,   setVideosPerDay]   = useState(bf.videos_per_day ?? 2);
   const [ytChannelId,    setYtChannelId]    = useState(bf.yt_upload_channel_id ?? "");
+  const [autoUpload,     setAutoUpload]     = useState(bf.auto_upload ?? false);
   const [maxClips,       setMaxClips]       = useState(bf.max_clips ?? 3);
   const [minDur,         setMinDur]         = useState(bf.min_duration ?? 30);
   const [maxDur,         setMaxDur]         = useState(bf.max_duration ?? 90);
@@ -200,6 +201,20 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
 
         {/* Right: pace/channel/actions */}
         <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", minWidth: isMobile ? "auto" : 180 }}>
+
+          {/* Auto upload toggle */}
+          <button onClick={() => { setAutoUpload(v => { const next = !v; patch({ auto_upload: next }); return next; }); }}
+            className="pixel" style={{
+              padding: "10px 12px", fontSize: 8, textAlign: "center", width: "100%",
+              background: autoUpload ? C.signal : C.cream2, color: C.ink, border: BORDER,
+              boxShadow: autoUpload ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+              transform: autoUpload ? "translate(2px,2px)" : "none",
+              cursor: "pointer", transition: "all .1s",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}>
+            <span style={{ fontSize: 14, fontFamily: "sans-serif" }}>🎉</span>
+            {autoUpload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
+          </button>
 
           {/* Look back */}
           <div>

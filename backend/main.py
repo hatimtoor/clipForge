@@ -1621,8 +1621,8 @@ async def get_status(job_id: str, user=Depends(require_auth)):
 
 
 @app.get("/api/jobs")
-async def list_jobs(user=Depends(require_auth)):
-    return [_j(j) for j in await asyncio.to_thread(db_get_user_jobs, user.id)]
+async def list_jobs(user=Depends(require_auth), limit: int = 20, offset: int = 0):
+    return [_j(j) for j in await asyncio.to_thread(db_get_user_jobs, user.id, limit=limit, offset=offset)]
 
 
 @app.get("/api/profile")

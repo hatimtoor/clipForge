@@ -6,11 +6,16 @@ import Header from "../components/Header";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
 
+const PAGE_SIZE = 20;
+
 export default function ArchivePage() {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [offset, setOffset] = useState(0);
   const isMobile = useMobile();
 
   const retryHref = (j) => {
@@ -27,21 +32,34 @@ export default function ArchivePage() {
     return `/hello?${p}`;
   };
 
-  const fetchJobs = async () => {
+  const fetchInitial = async () => {
+    setLoading(true);
     try {
-      const res = await authFetch("/api/jobs");
+      const res = await authFetch(`/api/jobs?limit=${PAGE_SIZE}&offset=0`);
       const data = await res.json();
-      setJobs(data.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+      setJobs(data);
+      setOffset(PAGE_SIZE);
+      setHasMore(data.length === PAGE_SIZE);
     } catch {} finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchJobs();
-    const i = setInterval(fetchJobs, 10000);
-    return () => clearInterval(i);
-  }, []);
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await authFetch(`/api/jobs?limit=${PAGE_SIZE}&offset=${offset}`);
+      const data = await res.json();
+      setJobs(prev => [...prev, ...data]);
+      setOffset(prev => prev + PAGE_SIZE);
+      setHasMore(data.length === PAGE_SIZE);
+    } catch {} finally {
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => { fetchInitial(); }, []);
 
   const filtered = jobs.filter(j => filter === "all" || j.status === filter);
 
@@ -52,7 +70,9 @@ export default function ArchivePage() {
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 20, gap: 18, flexWrap: "wrap" }}>
           <div>
-            <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>ARCHIVE - {jobs.length} JOBS</div>
+            <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>
+              ARCHIVE — {jobs.length} JOBS LOADED
+            </div>
             <h1 className="pixel" style={{ fontSize: 26, color: C.ink }}>The vault.</h1>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -61,7 +81,7 @@ export default function ArchivePage() {
               const col = k === "done" ? "signal" : k === "error" ? "hot" : "cream";
               return <PixelBtn key={k} color={a ? col : "cream"} onClick={() => setFilter(k)} size="md" style={a ? { transform: "translate(3px,3px)", boxShadow: `0 0 0 ${C.ink}` } : {}}>{l}</PixelBtn>;
             })}
-            <PixelBtn color="lavender" size="md" onClick={fetchJobs}>Refresh</PixelBtn>
+            <PixelBtn color="lavender" size="md" onClick={fetchInitial}>Refresh</PixelBtn>
           </div>
         </div>
 
@@ -92,9 +112,9 @@ export default function ArchivePage() {
                   <div className="mono" style={{ fontSize: 12, color: C.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: isErr ? 6 : 10 }}>{j.url}</div>
                   {isErr && <div className="vt" style={{ fontSize: 15, color: C.hotDeep, marginBottom: 8 }}>! {j.error?.split("\n").pop()}</div>}
                   <div style={{ display: "flex", gap: 8 }}>
-                    {isDone      && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
-                    {isProc      && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
+                    {isDone  && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
+                    {isErr   && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
+                    {isProc  && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
                   </div>
                 </PixelCard>
               );
@@ -124,14 +144,22 @@ export default function ArchivePage() {
                   </span>
                   <span className="vt" style={{ fontSize: 16, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    {isDone      && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr       && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
-                    {isProc      && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
+                    {isDone  && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
+                    {isErr   && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
+                    {isProc  && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
                   </div>
                 </div>
               );
             })}
           </PixelCard>
+        )}
+
+        {!loading && hasMore && (
+          <div style={{ textAlign: "center", marginTop: 24 }}>
+            <PixelBtn color="lavender" size="md" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? "LOADING..." : "LOAD MORE"}
+            </PixelBtn>
+          </div>
         )}
       </div>
     </div>

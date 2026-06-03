@@ -39,8 +39,15 @@ def db_update_job(job_id: str, updates: dict) -> None:
     get_db().table("jobs").update(updates).eq("id", job_id).execute()
 
 
-def db_get_user_jobs(user_id: str) -> list:
-    r = get_db().table("jobs").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+def db_get_user_jobs(user_id: str, limit: int = 20, offset: int = 0) -> list:
+    r = (
+        get_db().table("jobs")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
     return r.data or []
 
 

@@ -14,7 +14,12 @@ const DAY_OPTIONS = [
   { value: 365, label: "1 year back" },
 ];
 
-const VPD_OPTIONS = [1, 2, 3, 5];
+const VPD_OPTIONS = [
+  { value: 1, color: C.signal },
+  { value: 2, color: C.amber },
+  { value: 3, color: C.peach },
+  { value: 5, color: C.hot },
+];
 
 function ProgressBar({ value, max }) {
   const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
@@ -215,15 +220,15 @@ export default function DigestPage() {
             <div>
               <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>VIDEOS / DAY</div>
               <div style={{ display: "flex", gap: 6 }}>
-                {VPD_OPTIONS.map(n => (
-                  <button key={n} onClick={() => setVideosPerDay(n)} className="pixel" style={{
+                {VPD_OPTIONS.map(opt => (
+                  <button key={opt.value} onClick={() => setVideosPerDay(opt.value)} className="pixel" style={{
                     padding: "8px 12px", fontSize: 8,
-                    background: videosPerDay === n ? C.lavender : C.cream2,
+                    background: videosPerDay === opt.value ? opt.color : C.cream2,
                     color: C.ink, border: BORDER,
-                    boxShadow: videosPerDay === n ? "2px 2px 0 " + C.ink : SHADOW_SM,
-                    transform: videosPerDay === n ? "translate(2px,2px)" : "none",
+                    boxShadow: videosPerDay === opt.value ? "2px 2px 0 " + C.ink : SHADOW_SM,
+                    transform: videosPerDay === opt.value ? "translate(2px,2px)" : "none",
                     cursor: "pointer",
-                  }}>{n}</button>
+                  }}>{opt.value}</button>
                 ))}
               </div>
             </div>

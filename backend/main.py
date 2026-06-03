@@ -272,6 +272,21 @@ class BackfillRequest(BaseModel):
     days_back: int = 30
     videos_per_day: int = 2
     yt_upload_channel_id: str = ""
+    max_clips: int = 3
+    min_duration: int = 30
+    max_duration: int = 90
+    caption_style: str = "bold_bottom"
+    caption_font_size: Optional[int] = None
+    caption_highlight_color: Optional[str] = None
+    caption_language: str = "source"
+
+
+class BackfillPatchRequest(BaseModel):
+    max_clips: Optional[int] = None
+    caption_style: Optional[str] = None
+    caption_font_size: Optional[int] = None
+    caption_highlight_color: Optional[str] = None
+    caption_language: Optional[str] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1621,7 +1636,17 @@ async def _process_backfill(bf: dict) -> None:
 
     for video in to_process:
         try:
-            req = ClipRequest(url=video["url"], max_clips=3, min_duration=30, max_duration=90)
+            req = ClipRequest(
+                url=video["url"],
+                max_clips=bf.get("max_clips", 3),
+                min_duration=bf.get("min_duration", 30),
+                max_duration=bf.get("max_duration", 90),
+                reframe=True,
+                caption_style=bf.get("caption_style", "bold_bottom"),
+                caption_font_size=bf.get("caption_font_size"),
+                caption_highlight_color=bf.get("caption_highlight_color"),
+                caption_language=bf.get("caption_language", "source"),
+            )
             job_data = {
                 "user_id": user_id,
                 "url": video["url"],
@@ -2138,11 +2163,29 @@ async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
         "days_back": req.days_back,
         "videos_per_day": req.videos_per_day,
         "yt_upload_channel_id": req.yt_upload_channel_id,
+        "max_clips": req.max_clips,
+        "min_duration": req.min_duration,
+        "max_duration": req.max_duration,
+        "caption_style": req.caption_style,
+        "caption_font_size": req.caption_font_size,
+        "caption_highlight_color": req.caption_highlight_color,
+        "caption_language": req.caption_language,
         "processed_video_ids": [],
         "total_videos": 0,
         "status": "active",
     })
     return bf
+
+
+@app.patch("/api/backfill/{backfill_id}")
+async def patch_backfill(backfill_id: str, req: BackfillPatchRequest, user=Depends(require_pro)):
+    bf = await asyncio.to_thread(db_get_backfill, backfill_id)
+    if not bf or bf.get("user_id") != user.id:
+        raise HTTPException(404, "Not found")
+    updates = req.model_dump(exclude_unset=True)
+    if updates:
+        await asyncio.to_thread(db_update_backfill, backfill_id, updates)
+    return await asyncio.to_thread(db_get_backfill, backfill_id)
 
 
 @app.post("/api/backfill/{backfill_id}/run")

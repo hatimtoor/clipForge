@@ -1144,6 +1144,68 @@ def write_sendcmd_file(trajectory: list, output_path: Path, fps: float = 30.0) -
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+# ── hardcoded caption bar detection ──────────────────────────────────────────
+async def _detect_caption_bar(video_path: Path, duration: float, src_h: int, src_w: int) -> int:
+    """
+    Sample 5 frames and measure row-by-row variance in the bottom 18% of the frame.
+    Returns the number of pixels to crop from the bottom if a consistent subtitle bar
+    is detected, otherwise 0. Caps at 12% of frame height to avoid over-cropping.
+    """
+    strip_h = min(int(src_h * 0.18), 220)
+    timestamps = [duration * f for f in [0.15, 0.30, 0.50, 0.70, 0.85]]
+    row_hit = [0] * strip_h
+    frames_ok = 0
+
+    for ts in timestamps:
+        cmd = [
+            FFMPEG, "-ss", f"{ts:.2f}", "-i", str(video_path),
+            "-vframes", "1", "-f", "rawvideo", "-pix_fmt", "gray",
+            "-vf", f"crop={src_w}:{strip_h}:0:{src_h - strip_h}",
+            "-an", "pipe:1",
+        ]
+        try:
+            r = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=15)
+            data = r.stdout
+            if len(data) != src_w * strip_h:
+                continue
+            frames_ok += 1
+            for row in range(strip_h):
+                row_bytes = data[row * src_w:(row + 1) * src_w]
+                mean = sum(row_bytes) / src_w
+                variance = sum((b - mean) ** 2 for b in row_bytes) / src_w
+                bright = sum(1 for b in row_bytes if b > 190)
+                # Text row: high variance AND enough bright pixels (white/yellow text)
+                if variance > 700 and bright > src_w * 0.01:
+                    row_hit[row] += 1
+        except Exception:
+            continue
+
+    if frames_ok < 3:
+        return 0
+
+    min_agree = max(2, int(frames_ok * 0.6))
+    subtitle_top = None
+    gap = 0
+
+    # Scan bottom-to-top to find the topmost row of the subtitle band
+    for row in range(strip_h - 1, -1, -1):
+        if row_hit[row] >= min_agree:
+            subtitle_top = row
+            gap = 0
+        else:
+            gap += 1
+            if gap >= 10 and subtitle_top is not None:
+                break  # Left the subtitle band
+
+    if subtitle_top is None:
+        return 0
+
+    crop_px = strip_h - subtitle_top
+    if crop_px < 20:  # Too thin to be a real subtitle bar
+        return 0
+    return min(crop_px, int(src_h * 0.12))
+
+
 # ── cut clips + burn subtitles ────────────────────────────────────────────────
 async def create_clips(
     video_path: Path,
@@ -1159,6 +1221,22 @@ async def create_clips(
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
+
+    # Probe once to detect hardcoded subtitle bar before the clip loop
+    caption_crop_px = 0
+    try:
+        _pre_probe_cmd = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
+        _, _pre_out, _ = await asyncio.to_thread(run_cmd, _pre_probe_cmd)
+        _pre = json.loads(_pre_out)
+        _pvs = next((s for s in _pre["streams"] if s["codec_type"] == "video"), None)
+        if _pvs:
+            _ph, _pw = int(_pvs["height"]), int(_pvs["width"])
+            _dur = float(_pvs.get("duration") or 60)
+            caption_crop_px = await _detect_caption_bar(video_path, _dur, _ph, _pw)
+            if caption_crop_px > 0:
+                log(job_id, f"  Caption bar detected: cropping {caption_crop_px}px from bottom")
+    except Exception as _ce:
+        log(job_id, f"  Caption detection skipped: {_ce}")
 
     results = []
     for idx, clip in enumerate(clip_defs):
@@ -1188,8 +1266,10 @@ async def create_clips(
             clip_fps = 30.0
 
         # Crop to 9:16 then scale to 1080x1920
-        crop_h = src_h
-        crop_w = min(int(src_h * 9 / 16), src_w)
+        # Subtract any detected hardcoded caption bar from the bottom
+        effective_h = src_h - caption_crop_px
+        crop_h = effective_h
+        crop_w = min(int(effective_h * 9 / 16), src_w)
         center_crop_x = max(0, (src_w - crop_w) // 2)
 
         # Final output resolution

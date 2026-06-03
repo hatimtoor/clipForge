@@ -1435,7 +1435,7 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None):
+async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
@@ -1511,6 +1511,12 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 log(job_id, f"  Auto-uploading clip {i+1}/{len(final_clips)}...")
                 await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data, user_id)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
+        if backfill_id and backfill_video_id:
+            bf = await asyncio.to_thread(db_get_backfill, backfill_id)
+            if bf:
+                current = set(bf.get("processed_video_ids") or [])
+                current.add(backfill_video_id)
+                await asyncio.to_thread(db_update_backfill, backfill_id, {"processed_video_ids": list(current)})
         if user_id:
             asyncio.create_task(send_job_notification(user_id, len(final_clips), req.url))
 
@@ -1639,7 +1645,6 @@ async def _process_backfill(bf: dict) -> None:
         return
 
     to_process = unprocessed[:vpd]
-    new_processed = list(processed)
 
     for video in to_process:
         try:
@@ -1668,14 +1673,16 @@ async def _process_backfill(bf: dict) -> None:
                 user_id=user_id,
                 auto_upload=auto_upload and bool(yt_ch_id),
                 auto_upload_yt_channel=yt_ch_id if auto_upload else None,
+                backfill_id=bf_id,
+                backfill_video_id=video["id"],
             ))
-            new_processed.append(video["id"])
             print(f"[backfill] queued {video['url']}", flush=True)
         except Exception as ve:
             print(f"[backfill] error queuing {video['url']}: {ve}", flush=True)
 
+    # Only update total_videos and last_run_at — processed_video_ids is updated
+    # by run_pipeline on success so failed videos are retried next run.
     await asyncio.to_thread(db_update_backfill, bf_id, {
-        "processed_video_ids": new_processed,
         "total_videos": total,
         "last_run_at": datetime.now(timezone.utc).isoformat(),
     })

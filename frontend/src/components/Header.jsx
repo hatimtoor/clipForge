@@ -71,6 +71,7 @@ export default function Header() {
     ["hello",     "HELLO"],
     ["work",      jobActive ? "LIVE" : "WORK"],
     ["watchlist", "WATCHLIST"],
+    ["digest",    "DIGEST"],
     ["archive",   "ARCHIVE"],
   ];
 
@@ -105,7 +106,7 @@ export default function Header() {
                 }}>
                   {l}
                   {k === "work" && jobActive && <span style={{ display: "inline-block", width: 8, height: 8, background: C.ink, marginLeft: 6, animation: "blink 1s steps(1) infinite" }} />}
-                  {k === "watchlist" && !isPro && <span style={{ display: "inline-block", marginLeft: 5, fontSize: 7, color: C.dim }}>PRO</span>}
+                  {(k === "watchlist" || k === "digest") && !isPro && <span style={{ display: "inline-block", marginLeft: 5, fontSize: 7, color: C.dim }}>PRO</span>}
                 </button>
               );
             })}

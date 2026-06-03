@@ -89,6 +89,8 @@ from db import (
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used,
     db_get_user_email,
     FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
+    db_create_backfill, db_get_user_backfills, db_get_active_backfills,
+    db_get_backfill, db_update_backfill, db_delete_backfill,
 )
 
 SUPABASE_URL     = os.getenv("SUPABASE_URL", "")
@@ -263,6 +265,13 @@ class ChannelPatchRequest(BaseModel):
     caption_highlight_color: Optional[str] = None
     caption_language: Optional[str] = None
     yt_channel_id: Optional[str] = None
+
+
+class BackfillRequest(BaseModel):
+    channel_url: str
+    days_back: int = 30
+    videos_per_day: int = 2
+    yt_upload_channel_id: str = ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1537,11 +1546,133 @@ async def watchdog():
             except Exception:
                 pass
 
+async def _get_videos_since(channel_url: str, days_back: int) -> list:
+    """Return list of {id, title, url} for videos published in the last days_back days."""
+    from datetime import datetime, timezone, timedelta
+    date_str = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y%m%d")
+    cmd = [YTDLP, "--flat-playlist", "--dateafter", date_str,
+           "--playlist-end", "200", "-j", "--no-warnings"]
+    if COOKIES_FROM_BROWSER:
+        cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
+    elif COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(channel_url.rstrip("/") + "/videos")
+
+    def _run():
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            return r.stdout.strip()
+        except Exception:
+            return ""
+
+    out = await asyncio.to_thread(_run)
+    videos = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            d = json.loads(line)
+            vid_id = d.get("id")
+            if not vid_id:
+                continue
+            upload_date = d.get("upload_date", "")
+            if upload_date and upload_date < date_str:
+                continue  # client-side guard for entries yt-dlp may not have filtered
+            videos.append({
+                "id": vid_id,
+                "title": d.get("title", vid_id),
+                "url": f"https://www.youtube.com/watch?v={vid_id}",
+            })
+        except Exception:
+            pass
+    return videos
+
+
+async def _process_backfill(bf: dict) -> None:
+    from datetime import datetime, timezone
+    bf_id = bf["id"]
+    user_id = bf["user_id"]
+    channel_url = bf.get("channel_url", "")
+    days_back = bf.get("days_back", 30)
+    vpd = bf.get("videos_per_day", 2)
+    yt_ch_id = bf.get("yt_upload_channel_id") or None
+    processed = set(bf.get("processed_video_ids") or [])
+
+    profile = await asyncio.to_thread(db_check_and_reset_quota, user_id)
+    if profile.get("plan") != "pro":
+        return
+
+    videos = await _get_videos_since(channel_url, days_back)
+    total = len(videos)
+    unprocessed = [v for v in videos if v["id"] not in processed]
+
+    if not unprocessed:
+        await asyncio.to_thread(db_update_backfill, bf_id, {
+            "status": "completed",
+            "total_videos": total,
+            "last_run_at": datetime.now(timezone.utc).isoformat(),
+        })
+        print(f"[backfill] {channel_url} completed — all {total} videos processed", flush=True)
+        return
+
+    to_process = unprocessed[:vpd]
+    new_processed = list(processed)
+
+    for video in to_process:
+        try:
+            req = ClipRequest(url=video["url"], max_clips=3, min_duration=30, max_duration=90)
+            job_data = {
+                "user_id": user_id,
+                "url": video["url"],
+                "status": "queued",
+                "max_clips": req.max_clips,
+                "min_duration": req.min_duration,
+                "max_duration": req.max_duration,
+            }
+            job = await asyncio.to_thread(db_create_job, job_data)
+            asyncio.create_task(run_pipeline(
+                job["id"], req,
+                user_id=user_id,
+                auto_upload=bool(yt_ch_id),
+                auto_upload_yt_channel=yt_ch_id,
+            ))
+            new_processed.append(video["id"])
+            print(f"[backfill] queued {video['url']}", flush=True)
+        except Exception as ve:
+            print(f"[backfill] error queuing {video['url']}: {ve}", flush=True)
+
+    await asyncio.to_thread(db_update_backfill, bf_id, {
+        "processed_video_ids": new_processed,
+        "total_videos": total,
+        "last_run_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def backfill_scheduler():
+    from datetime import datetime, timezone
+    await asyncio.sleep(30)
+    while True:
+        try:
+            backfills = await asyncio.to_thread(db_get_active_backfills)
+            for bf in backfills:
+                last_run = bf.get("last_run_at")
+                if last_run:
+                    last_run_dt = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
+                    if (datetime.now(timezone.utc) - last_run_dt).total_seconds() < 82800:
+                        continue  # ran within the last 23h
+                asyncio.create_task(_process_backfill(bf))
+        except Exception as e:
+            print(f"[backfill_scheduler] error: {e}", flush=True)
+        await asyncio.sleep(3600)  # check every hour
+
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(watchdog())
     asyncio.create_task(channel_poller())
     asyncio.create_task(analytics_refresher())
+    asyncio.create_task(backfill_scheduler())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
@@ -1963,6 +2094,76 @@ def _do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: st
     finally:
         if temp_file and temp_file.exists():
             temp_file.unlink(missing_ok=True)
+
+
+# ── Backfill endpoints ─────────────────────────────────────────────────────────
+
+@app.get("/api/backfill")
+async def list_backfills(user=Depends(require_pro)):
+    return await asyncio.to_thread(db_get_user_backfills, user.id)
+
+
+@app.post("/api/backfill")
+async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
+    if req.days_back not in [30, 60, 90]:
+        raise HTTPException(400, "days_back must be 30, 60, or 90")
+    # Resolve channel name using the same approach as add_channel
+    cmd = [YTDLP, "--flat-playlist", "--playlist-end", "1", "-j", "--no-warnings"]
+    if COOKIES_FROM_BROWSER:
+        cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
+    elif COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(req.channel_url)
+    def _resolve():
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            return r.stdout.strip()
+        except Exception:
+            return ""
+    out = await asyncio.to_thread(_resolve)
+    channel_name = req.channel_url
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                d = json.loads(line)
+                channel_name = d.get("channel") or d.get("uploader") or req.channel_url
+                break
+            except Exception:
+                pass
+    bf = await asyncio.to_thread(db_create_backfill, {
+        "user_id": user.id,
+        "channel_url": req.channel_url,
+        "channel_name": channel_name,
+        "days_back": req.days_back,
+        "videos_per_day": req.videos_per_day,
+        "yt_upload_channel_id": req.yt_upload_channel_id,
+        "processed_video_ids": [],
+        "total_videos": 0,
+        "status": "active",
+    })
+    return bf
+
+
+@app.post("/api/backfill/{backfill_id}/run")
+async def run_backfill_now(backfill_id: str, user=Depends(require_pro)):
+    """Manually trigger processing for a backfill channel."""
+    bf = await asyncio.to_thread(db_get_backfill, backfill_id)
+    if not bf or bf.get("user_id") != user.id:
+        raise HTTPException(404, "Not found")
+    if bf.get("status") != "active":
+        raise HTTPException(400, "Backfill is not active")
+    asyncio.create_task(_process_backfill(bf))
+    return {"ok": True}
+
+
+@app.delete("/api/backfill/{backfill_id}")
+async def delete_backfill(backfill_id: str, user=Depends(require_pro)):
+    bf = await asyncio.to_thread(db_get_backfill, backfill_id)
+    if not bf or bf.get("user_id") != user.id:
+        raise HTTPException(404, "Not found")
+    await asyncio.to_thread(db_delete_backfill, backfill_id)
+    return {"ok": True}
 
 
 @app.get("/api/youtube/status")

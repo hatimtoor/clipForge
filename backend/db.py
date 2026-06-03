@@ -289,3 +289,42 @@ def db_increment_clips_used(user_id: str, count: int) -> None:
         }).execute()
     except Exception as e:
         print(f"[db_increment_clips_used] RPC failed: {e}", flush=True)
+
+
+# ── Backfill channels ──────────────────────────────────────────────────────────
+
+def db_create_backfill(data: dict) -> dict:
+    r = get_db().table("backfill_channels").insert(data).execute()
+    return r.data[0]
+
+
+def db_get_user_backfills(user_id: str) -> list:
+    r = (
+        get_db().table("backfill_channels")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return r.data or []
+
+
+def db_get_active_backfills() -> list:
+    r = get_db().table("backfill_channels").select("*").eq("status", "active").execute()
+    return r.data or []
+
+
+def db_get_backfill(backfill_id: str) -> Optional[dict]:
+    try:
+        r = get_db().table("backfill_channels").select("*").eq("id", backfill_id).single().execute()
+        return r.data
+    except Exception:
+        return None
+
+
+def db_update_backfill(backfill_id: str, updates: dict) -> None:
+    get_db().table("backfill_channels").update(updates).eq("id", backfill_id).execute()
+
+
+def db_delete_backfill(backfill_id: str) -> None:
+    get_db().table("backfill_channels").delete().eq("id", backfill_id).execute()

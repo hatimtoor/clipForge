@@ -282,7 +282,12 @@ class BackfillRequest(BaseModel):
 
 
 class BackfillPatchRequest(BaseModel):
+    days_back: Optional[int] = None
+    videos_per_day: Optional[int] = None
+    yt_upload_channel_id: Optional[str] = None
     max_clips: Optional[int] = None
+    min_duration: Optional[int] = None
+    max_duration: Optional[int] = None
     caption_style: Optional[str] = None
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
@@ -2183,6 +2188,8 @@ async def patch_backfill(backfill_id: str, req: BackfillPatchRequest, user=Depen
     if not bf or bf.get("user_id") != user.id:
         raise HTTPException(404, "Not found")
     updates = req.model_dump(exclude_unset=True)
+    if "days_back" in updates and (updates["days_back"] < 1 or updates["days_back"] > 365):
+        raise HTTPException(400, "days_back must be between 1 and 365")
     if updates:
         await asyncio.to_thread(db_update_backfill, backfill_id, updates)
     return await asyncio.to_thread(db_get_backfill, backfill_id)

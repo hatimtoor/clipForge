@@ -56,7 +56,6 @@ function ProgressBar({ value, max }) {
   );
 }
 
-// Matches WatchlistPage Stepper exactly
 function Stepper({ label, val, onAdj, min, max, step, suffix = "" }) {
   return (
     <div>
@@ -72,70 +71,14 @@ function Stepper({ label, val, onAdj, min, max, step, suffix = "" }) {
   );
 }
 
-// Caption panel — identical structure to WatchlistPage
-function CaptionPanel({ captionStyle, setCaptionStyle, fontSize, setFontSize, highlightColor, setHighlightColor, captionLang, setCaptionLang, onPatch, isMobile }) {
-  const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
-  return (
-    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 14 }}>
-        {CAPTION_STYLES.map(({ id, label, hint, bg }) => (
-          <button key={id} onClick={() => { setCaptionStyle(id); onPatch?.({ caption_style: id }); }} className="pixel"
-            style={{ textAlign: "left", padding: "10px 8px",
-              background: captionStyle === id ? bg : C.paper,
-              border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
-              boxShadow: captionStyle === id ? SHADOW : SHADOW_SM,
-              cursor: "pointer", transition: "all .12s" }}>
-            <div style={{ fontSize: 9, color: C.ink, marginBottom: 2 }}>{label}</div>
-            <div className="vt" style={{ fontSize: 11, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
-          </button>
-        ))}
-      </div>
-
-      <div style={{ marginBottom: 14 }}>
-        <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>LANGUAGE</div>
-        <select value={captionLang} onChange={e => { setCaptionLang(e.target.value); onPatch?.({ caption_language: e.target.value }); }}
-          className="mono" style={{ width: "100%", padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12, cursor: "pointer" }}>
-          {CAPTION_LANGUAGES.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
-        </select>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FONT SIZE</div>
-          <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
-            <div style={{ flex: 1 }}>
-              <Stepper label="" val={effectiveFontSize} min={40} max={120} step={4} suffix="px"
-                onAdj={d => { const v = Math.min(120, Math.max(40, effectiveFontSize + d)); setFontSize(v); onPatch?.({ caption_font_size: v }); }} />
-            </div>
-            <button onClick={() => { setFontSize(null); onPatch?.({ caption_font_size: null }); }} className="pixel"
-              style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer",
-                background: fontSize === null ? C.signal : C.cream2, color: C.ink, border: BORDER,
-                boxShadow: fontSize === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>AUTO</button>
-          </div>
-        </div>
-        <div>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>HIGHLIGHT</div>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => (
-              <button key={label} onClick={() => { setHighlightColor(color); onPatch?.({ caption_highlight_color: color }); }} className="pixel"
-                style={{ padding: "5px 8px", fontSize: 7, background: bg, color: fg,
-                  border: highlightColor === color ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                  boxShadow: highlightColor === color ? `2px 2px 0 ${C.ink}` : "none",
-                  cursor: "pointer", transition: "all .1s" }}>{label}</button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
   const isCompleted = bf.status === "completed";
   const processed   = (bf.processed_video_ids || []).length;
   const total       = bf.total_videos || 0;
-  const ytChannel   = (ytStatus?.channels || []).find(c => c.yt_channel_id === bf.yt_upload_channel_id);
 
+  const [daysBack,       setDaysBack]       = useState(bf.days_back ?? 30);
+  const [videosPerDay,   setVideosPerDay]   = useState(bf.videos_per_day ?? 2);
+  const [ytChannelId,    setYtChannelId]    = useState(bf.yt_upload_channel_id ?? "");
   const [maxClips,       setMaxClips]       = useState(bf.max_clips ?? 3);
   const [minDur,         setMinDur]         = useState(bf.min_duration ?? 30);
   const [maxDur,         setMaxDur]         = useState(bf.max_duration ?? 90);
@@ -145,8 +88,10 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
   const [highlightColor, setHighlightColor] = useState(bf.caption_highlight_color ?? null);
   const [captionLang,    setCaptionLang]    = useState(bf.caption_language ?? "source");
 
-  const patch = (fields) => onPatch(bf.id, fields);
+  const ytChannels = ytStatus?.channels || [];
+  const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
 
+  const patch = (fields) => onPatch(bf.id, fields);
   const adj = (val, setVal, min, max, delta, field) => {
     const next = Math.min(max, Math.max(min, val + delta));
     setVal(next);
@@ -167,43 +112,16 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
               <span className="pixel" style={{ fontSize: 7, background: C.signalDeep, color: C.cream, padding: "3px 7px", border: BORDER }}>DONE</span>
             )}
           </div>
-
-          <div className="mono" style={{ fontSize: 11, color: C.dim2, marginBottom: 10, wordBreak: "break-all" }}>{bf.channel_url}</div>
-
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
-            <div>
-              <span className="pixel" style={{ fontSize: 7, color: C.dim2 }}>LOOK BACK </span>
-              <span className="vt" style={{ fontSize: 16, color: C.ink }}>{DAY_OPTIONS.find(d => d.value === bf.days_back)?.label || `${bf.days_back}d`}</span>
-            </div>
-            <div>
-              <span className="pixel" style={{ fontSize: 7, color: C.dim2 }}>PACE </span>
-              <span className="vt" style={{ fontSize: 16, color: C.ink }}>{bf.videos_per_day}/day</span>
-            </div>
-            {ytChannel && (
-              <div>
-                <span className="pixel" style={{ fontSize: 7, color: C.dim2 }}>TO </span>
-                <span className="vt" style={{ fontSize: 16, color: C.ink }}>{ytChannel.yt_channel_name}</span>
-              </div>
-            )}
-            {bf.last_run_at && (
-              <div>
-                <span className="pixel" style={{ fontSize: 7, color: C.dim2 }}>RAN </span>
-                <span className="vt" style={{ fontSize: 16, color: C.ink }}>{timeAgo(bf.last_run_at)}</span>
-              </div>
-            )}
-          </div>
+          <div className="mono" style={{ fontSize: 11, color: C.dim2, marginBottom: 12, wordBreak: "break-all" }}>{bf.channel_url}</div>
 
           {isCompleted ? (
-            <div className="vt" style={{ fontSize: isMobile ? 14 : 16, color: C.signalDeep, marginBottom: 8 }}>
-              All {total} videos clipped and posted!
+            <div className="vt" style={{ fontSize: isMobile ? 14 : 16, color: C.signalDeep }}>
+              All {total} videos from the {bf.days_back}-day window have been clipped and posted!
             </div>
           ) : (
             <>
-              <div style={{ marginBottom: 14 }}>
-                <ProgressBar value={processed} max={total || processed + 1} />
-              </div>
+              <div style={{ marginBottom: 14 }}><ProgressBar value={processed} max={total || processed + 1} /></div>
 
-              {/* Stepper grid — same as WatchlistPage */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: isMobile ? 8 : 10 }}>
                 <Stepper label="MAX CLIPS" val={maxClips} min={1} max={10} step={1}
                   onAdj={d => adj(maxClips, setMaxClips, 1, 10, d, "max_clips")} />
@@ -213,7 +131,6 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
                   onAdj={d => adj(maxDur, setMaxDur, 30, 180, d, "max_duration")} />
               </div>
 
-              {/* Caption settings button */}
               <div style={{ marginTop: 14 }}>
                 <button onClick={() => setCaptionOpen(o => !o)} className="pixel"
                   style={{ fontSize: 8, color: C.ink, background: captionOpen ? C.lavender : C.cream2,
@@ -227,20 +144,107 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
               </div>
 
               {captionOpen && (
-                <CaptionPanel
-                  captionStyle={captionStyle} setCaptionStyle={setCaptionStyle}
-                  fontSize={fontSize} setFontSize={setFontSize}
-                  highlightColor={highlightColor} setHighlightColor={setHighlightColor}
-                  captionLang={captionLang} setCaptionLang={setCaptionLang}
-                  onPatch={patch} isMobile={isMobile}
-                />
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 14 }}>
+                    {CAPTION_STYLES.map(({ id, label, hint, bg }) => (
+                      <button key={id} onClick={() => { setCaptionStyle(id); patch({ caption_style: id }); }} className="pixel"
+                        style={{ textAlign: "left", padding: "10px 8px",
+                          background: captionStyle === id ? bg : C.paper,
+                          border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
+                          boxShadow: captionStyle === id ? SHADOW : SHADOW_SM,
+                          cursor: "pointer", transition: "all .12s" }}>
+                        <div style={{ fontSize: 9, color: C.ink, marginBottom: 2 }}>{label}</div>
+                        <div className="vt" style={{ fontSize: 11, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>LANGUAGE</div>
+                    <select value={captionLang} onChange={e => { setCaptionLang(e.target.value); patch({ caption_language: e.target.value }); }}
+                      className="mono" style={{ width: "100%", padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12, cursor: "pointer" }}>
+                      {CAPTION_LANGUAGES.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FONT SIZE</div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+                        <div style={{ flex: 1 }}>
+                          <Stepper label="" val={effectiveFontSize} min={40} max={120} step={4} suffix="px"
+                            onAdj={d => { const v = Math.min(120, Math.max(40, effectiveFontSize + d)); setFontSize(v); patch({ caption_font_size: v }); }} />
+                        </div>
+                        <button onClick={() => { setFontSize(null); patch({ caption_font_size: null }); }} className="pixel"
+                          style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer",
+                            background: fontSize === null ? C.signal : C.cream2, color: C.ink, border: BORDER,
+                            boxShadow: fontSize === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>AUTO</button>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>HIGHLIGHT</div>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => (
+                          <button key={label} onClick={() => { setHighlightColor(color); patch({ caption_highlight_color: color }); }} className="pixel"
+                            style={{ padding: "5px 8px", fontSize: 7, background: bg, color: fg,
+                              border: highlightColor === color ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                              boxShadow: highlightColor === color ? `2px 2px 0 ${C.ink}` : "none",
+                              cursor: "pointer", transition: "all .1s" }}>{label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
             </>
           )}
         </div>
 
-        {/* Right: actions */}
-        <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", minWidth: isMobile ? "auto" : 140 }}>
+        {/* Right: pace/channel/actions */}
+        <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", minWidth: isMobile ? "auto" : 180 }}>
+
+          {/* Look back */}
+          <div>
+            <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 5 }}>LOOK BACK</div>
+            <select value={daysBack} onChange={e => { setDaysBack(Number(e.target.value)); patch({ days_back: Number(e.target.value) }); }}
+              className="pixel" style={{ width: "100%", padding: "7px 8px", background: C.paper, color: C.ink, border: BORDER, fontSize: 7 }}>
+              {DAY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+          </div>
+
+          {/* Videos per day */}
+          <div>
+            <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 5 }}>VIDEOS / DAY</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {VPD_OPTIONS.map(opt => (
+                <button key={opt.value} onClick={() => { setVideosPerDay(opt.value); patch({ videos_per_day: opt.value }); }} className="pixel" style={{
+                  flex: 1, padding: "6px 0", fontSize: 8,
+                  background: videosPerDay === opt.value ? opt.color : C.cream2,
+                  color: C.ink, border: BORDER,
+                  boxShadow: videosPerDay === opt.value ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                  transform: videosPerDay === opt.value ? "translate(2px,2px)" : "none",
+                  cursor: "pointer",
+                }}>{opt.value}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* YT channel */}
+          {ytChannels.length > 0 && (
+            <div>
+              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 5 }}>UPLOAD TO</div>
+              {ytChannels.length === 1 ? (
+                <div className="pixel" style={{ fontSize: 7, padding: "7px 8px", background: C.yt, border: BORDER, color: C.ink }}>
+                  * {ytChannels[0].yt_channel_name || "YouTube"}
+                </div>
+              ) : (
+                <select value={ytChannelId}
+                  onChange={e => { setYtChannelId(e.target.value); patch({ yt_upload_channel_id: e.target.value }); }}
+                  className="pixel" style={{ width: "100%", padding: "7px 8px", background: C.paper, color: C.ink, border: BORDER, fontSize: 7 }}>
+                  {ytChannels.map(c => <option key={c.yt_channel_id} value={c.yt_channel_id}>{c.yt_channel_name || c.yt_channel_id}</option>)}
+                </select>
+              )}
+            </div>
+          )}
+
           {!isCompleted && (
             <PixelBtn color="amber" size="sm" onClick={() => onRunNow(bf.id)}>RUN NOW</PixelBtn>
           )}
@@ -258,26 +262,7 @@ export default function DigestPage() {
   const [loading, setLoading]   = useState(true);
   const [adding, setAdding]     = useState(false);
   const [addError, setAddError] = useState("");
-
-  // Add form state
-  const [urlInput,     setUrlInput]     = useState("");
-  const [daysBack,     setDaysBack]     = useState(30);
-  const [videosPerDay, setVideosPerDay] = useState(2);
-  const [ytChannelId,  setYtChannelId]  = useState("");
-  const [maxClips,     setMaxClips]     = useState(3);
-  const [minDur,       setMinDur]       = useState(30);
-  const [maxDur,       setMaxDur]       = useState(90);
-  const [captionOpen,    setCaptionOpen]    = useState(false);
-  const [captionStyle,   setCaptionStyle]   = useState("bold_bottom");
-  const [fontSize,       setFontSize]       = useState(null);
-  const [highlightColor, setHighlightColor] = useState(null);
-  const [captionLang,    setCaptionLang]    = useState("source");
-
-  const ytChannels = ytStatus?.channels || [];
-
-  useEffect(() => {
-    if (ytChannels.length > 0 && !ytChannelId) setYtChannelId(ytChannels[0].yt_channel_id);
-  }, [ytStatus]);
+  const [urlInput, setUrlInput] = useState("");
 
   const fetchBackfills = async () => {
     try {
@@ -293,11 +278,6 @@ export default function DigestPage() {
     return () => clearInterval(i);
   }, []);
 
-  const adjForm = (val, setVal, min, max, delta) => {
-    const next = Math.min(max, Math.max(min, val + delta));
-    setVal(next);
-  };
-
   const handleAdd = async () => {
     if (!urlInput.trim()) return;
     setAdding(true); setAddError("");
@@ -305,19 +285,7 @@ export default function DigestPage() {
       const res = await authFetch("/api/backfill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channel_url: urlInput.trim(),
-          days_back: daysBack,
-          videos_per_day: videosPerDay,
-          yt_upload_channel_id: ytChannelId,
-          max_clips: maxClips,
-          min_duration: minDur,
-          max_duration: maxDur,
-          caption_style: captionStyle,
-          caption_font_size: fontSize,
-          caption_highlight_color: highlightColor,
-          caption_language: captionLang,
-        }),
+        body: JSON.stringify({ channel_url: urlInput.trim() }),
       });
       if (!res.ok) { const d = await res.json(); setAddError(d.detail || "Failed to add channel"); }
       else { setUrlInput(""); fetchBackfills(); }
@@ -363,106 +331,28 @@ export default function DigestPage() {
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
 
-        <div style={{ marginBottom: 20 }}>
-          <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 8 }}>DIGEST</div>
-          <h1 className="pixel" style={{ fontSize: isMobile ? 20 : 26, color: C.ink }}>Channel digest.</h1>
-          {!isMobile && (
-            <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
-              Pick a channel and a time window — ClipForge clips and posts a few videos per day until the backlog is done.
-            </p>
-          )}
+        <div style={{ marginBottom: 24 }}>
+          <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>DIGEST</div>
+          <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink }}>Channel digest.</h1>
+          <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
+            Add a channel — ClipForge works through its backlog a few videos per day.
+          </p>
         </div>
 
-        {/* Add form */}
-        <PixelCard color={C.cream} padding={isMobile ? 14 : 22} style={{ marginBottom: 20 }}>
-          <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD DIGEST CHANNEL</div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: isMobile ? "10px 12px" : "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM, marginBottom: 14 }}>
-            <span className="pixel" style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>{`>`}</span>
-            <input value={urlInput} onChange={e => setUrlInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdd()}
-              placeholder={isMobile ? "youtube.com/@channel" : "https://youtube.com/@channel or /channel/UCxxx"}
-              className="mono"
-              style={{ flex: 1, background: "transparent", color: C.ink, fontSize: isMobile ? 12 : 13, fontWeight: 500, minWidth: 0, width: "100%" }} />
-          </div>
-
-          {/* Row 1: look back + videos/day */}
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
-            <div style={{ flex: isMobile ? "1 1 130px" : "0 0 auto" }}>
-              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>LOOK BACK</div>
-              <select value={daysBack} onChange={e => setDaysBack(Number(e.target.value))} className="pixel"
-                style={{ width: "100%", padding: "9px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
-                {DAY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </select>
+        {/* Add form — URL + button only, just like watchlist */}
+        <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24, boxShadow: isMobile ? "none" : undefined }}>
+          <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD CHANNEL</div>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: isMobile ? 0 : 260, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM }}>
+              <span className="pixel" style={{ fontSize: 12, color: C.dim }}>{`>`}</span>
+              <input value={urlInput} onChange={e => setUrlInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdd()}
+                placeholder="https://youtube.com/@channel or /channel/UCxxx"
+                className="mono" style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 13, fontWeight: 500, minWidth: 0 }} />
             </div>
-            <div style={{ flex: isMobile ? "1 1 130px" : "0 0 auto" }}>
-              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>VIDEOS / DAY</div>
-              <div style={{ display: "flex", gap: 5 }}>
-                {VPD_OPTIONS.map(opt => (
-                  <button key={opt.value} onClick={() => setVideosPerDay(opt.value)} className="pixel" style={{
-                    flex: isMobile ? 1 : "0 0 auto", padding: "8px 10px", fontSize: 8,
-                    background: videosPerDay === opt.value ? opt.color : C.cream2, color: C.ink, border: BORDER,
-                    boxShadow: videosPerDay === opt.value ? "2px 2px 0 " + C.ink : SHADOW_SM,
-                    transform: videosPerDay === opt.value ? "translate(2px,2px)" : "none", cursor: "pointer",
-                  }}>{opt.value}</button>
-                ))}
-              </div>
-            </div>
+            <PixelBtn color="hot" onClick={handleAdd} disabled={adding || !urlInput.trim()}>
+              {adding ? "RESOLVING..." : "+ ADD"}
+            </PixelBtn>
           </div>
-
-          {/* YT channel */}
-          {ytChannels.length > 0 && (
-            <div style={{ marginBottom: 14 }}>
-              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>UPLOAD TO</div>
-              {ytChannels.length === 1 ? (
-                <div className="pixel" style={{ fontSize: 9, padding: "9px 12px", background: C.yt, border: BORDER, color: C.ink, display: "inline-block" }}>
-                  * {ytChannels[0].yt_channel_name || "YouTube"}
-                </div>
-              ) : (
-                <select value={ytChannelId} onChange={e => setYtChannelId(e.target.value)} className="pixel"
-                  style={{ width: isMobile ? "100%" : "auto", padding: "9px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
-                  {ytChannels.map(c => <option key={c.yt_channel_id} value={c.yt_channel_id}>{c.yt_channel_name || c.yt_channel_id}</option>)}
-                </select>
-              )}
-            </div>
-          )}
-
-          {/* Clip steppers */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: isMobile ? 8 : 10, marginBottom: 14 }}>
-            <Stepper label="MAX CLIPS" val={maxClips} min={1} max={10} step={1}
-              onAdj={d => adjForm(maxClips, setMaxClips, 1, 10, d)} />
-            <Stepper label="MIN DUR" val={minDur} min={15} max={120} step={5} suffix="s"
-              onAdj={d => adjForm(minDur, setMinDur, 15, 120, d)} />
-            <Stepper label="MAX DUR" val={maxDur} min={30} max={180} step={10} suffix="s"
-              onAdj={d => adjForm(maxDur, setMaxDur, 30, 180, d)} />
-          </div>
-
-          {/* Caption settings toggle */}
-          <div style={{ marginBottom: 14 }}>
-            <button onClick={() => setCaptionOpen(o => !o)} className="pixel"
-              style={{ fontSize: 8, color: C.ink, background: captionOpen ? C.lavender : C.cream2,
-                cursor: "pointer", padding: "8px 12px", border: BORDER,
-                boxShadow: captionOpen ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                transform: captionOpen ? "translate(2px,2px)" : "none",
-                display: "flex", alignItems: "center", gap: 6, transition: "all .1s" }}>
-              <span style={{ fontSize: 10 }}>Aa</span>
-              CAPTION SETTINGS {captionOpen ? "▲" : "▼"}
-            </button>
-            {captionOpen && (
-              <CaptionPanel
-                captionStyle={captionStyle} setCaptionStyle={setCaptionStyle}
-                fontSize={fontSize} setFontSize={setFontSize}
-                highlightColor={highlightColor} setHighlightColor={setHighlightColor}
-                captionLang={captionLang} setCaptionLang={setCaptionLang}
-                onPatch={null} isMobile={isMobile}
-              />
-            )}
-          </div>
-
-          <PixelBtn color="hot" onClick={handleAdd} disabled={adding || !urlInput.trim()}
-            style={isMobile ? { width: "100%", textAlign: "center", justifyContent: "center" } : {}}>
-            {adding ? "RESOLVING..." : "+ ADD CHANNEL"}
-          </PixelBtn>
-
           {addError && (
             <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginTop: 10, padding: "8px 10px", background: `${C.hot}44`, border: `2px solid ${C.hotDeep}` }}>
               ! {addError}
@@ -472,13 +362,13 @@ export default function DigestPage() {
 
         {/* Channel list */}
         {loading ? (
-          <PixelCard color={C.cream} padding={48} style={{ textAlign: "center" }}>
+          <PixelCard color={C.paper} padding={48} style={{ textAlign: "center", boxShadow: isMobile ? "none" : undefined }}>
             <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Loading...</p>
           </PixelCard>
         ) : backfills.length === 0 ? (
-          <PixelCard color={C.paper} padding={isMobile ? 24 : 48} style={{ textAlign: "center" }}>
-            <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 8 }}>NO DIGEST CHANNELS</div>
-            <p className="vt" style={{ fontSize: 16, color: C.dim2 }}>Add a channel above to start digesting its backlog.</p>
+          <PixelCard color={C.paper} padding={48} style={{ textAlign: "center", boxShadow: isMobile ? "none" : undefined }}>
+            <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 10 }}>NO CHANNELS</div>
+            <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Add a YouTube channel URL above to start digesting its backlog.</p>
           </PixelCard>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -488,6 +378,16 @@ export default function DigestPage() {
             ))}
           </div>
         )}
+
+        {/* Tips — same style as watchlist */}
+        <PixelCard color={C.lavender} padding={18} style={{ marginTop: 24, boxShadow: isMobile ? "none" : undefined }}>
+          <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 8 }}>HOW IT WORKS</div>
+          <div className="vt" style={{ fontSize: 17, color: C.ink, lineHeight: 1.5 }}>
+            ClipForge processes a few videos per day from a channel's backlog until all are done.<br />
+            Set <strong>LOOK BACK</strong> to control how far back in the channel's history to go.<br />
+            <strong>VIDEOS / DAY</strong> controls the daily pace. Clips are auto-uploaded if a YouTube channel is selected.
+          </div>
+        </PixelCard>
       </div>
     </div>
   );

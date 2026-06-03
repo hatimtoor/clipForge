@@ -33,7 +33,7 @@ function ProgressBar({ value, max }) {
   );
 }
 
-function DigestCard({ bf, ytStatus, onRemove, onRunNow }) {
+function DigestCard({ bf, ytStatus, onRemove, onRunNow, isMobile }) {
   const isCompleted = bf.status === "completed";
   const processed = (bf.processed_video_ids || []).length;
   const total = bf.total_videos || 0;
@@ -41,47 +41,48 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow }) {
 
   return (
     <PixelCard color={isCompleted ? C.signal : C.cream} padding={0} style={{ overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "stretch", flexWrap: "wrap" }}>
-        {/* Main info */}
-        <div style={{ flex: 1, padding: "18px 20px", minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-            <span className="pixel" style={{ fontSize: 11, color: C.ink }}>
-              * {bf.channel_name || bf.channel_url}
+      {/* Main info */}
+      <div style={{ padding: isMobile ? "14px 14px 10px" : "18px 20px 14px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+          <span className="pixel" style={{ fontSize: isMobile ? 9 : 11, color: C.ink, wordBreak: "break-word", flex: 1 }}>
+            * {bf.channel_name || bf.channel_url}
+          </span>
+          {isCompleted && (
+            <span className="pixel" style={{ fontSize: 7, background: C.signalDeep, color: C.cream, padding: "3px 7px", border: BORDER, flexShrink: 0 }}>
+              DONE
             </span>
-            {isCompleted && (
-              <span className="pixel" style={{ fontSize: 7, background: C.signalDeep, color: C.cream, padding: "3px 7px", border: BORDER }}>
-                COMPLETED
-              </span>
-            )}
-          </div>
-
-          <div className="mono" style={{ fontSize: 11, color: C.dim2, marginBottom: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {bf.channel_url}
-          </div>
-
-          <div className="pixel" style={{ fontSize: 8, color: C.dim, marginBottom: 10, display: "flex", gap: 14, flexWrap: "wrap" }}>
-            <span>⏱ {DAY_OPTIONS.find(d => d.value === bf.days_back)?.label || `${bf.days_back} days back`}</span>
-            <span>• {bf.videos_per_day}/day</span>
-            {ytChannel && <span>→ {ytChannel.yt_channel_name}</span>}
-            {bf.last_run_at && <span>• ran {timeAgo(bf.last_run_at)}</span>}
-          </div>
-
-          {isCompleted ? (
-            <div className="vt" style={{ fontSize: 16, color: C.signalDeep }}>
-              All {total} videos from the {bf.days_back}-day window have been clipped and posted!
-            </div>
-          ) : (
-            <ProgressBar value={processed} max={total || processed + 1} />
           )}
         </div>
 
-        {/* Actions */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "18px 16px", justifyContent: "center", borderLeft: `2px solid ${C.ink}22` }}>
-          {!isCompleted && (
-            <PixelBtn color="amber" size="sm" onClick={() => onRunNow(bf.id)}>RUN NOW</PixelBtn>
-          )}
-          <PixelBtn color="hot" size="sm" onClick={() => onRemove(bf.id)}>REMOVE</PixelBtn>
+        <div className="mono" style={{ fontSize: 10, color: C.dim2, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {bf.channel_url}
         </div>
+
+        <div className="pixel" style={{ fontSize: 7, color: C.dim, marginBottom: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <span>{DAY_OPTIONS.find(d => d.value === bf.days_back)?.label || `${bf.days_back}d back`}</span>
+          <span>• {bf.videos_per_day}/day</span>
+          {ytChannel && <span>→ {ytChannel.yt_channel_name}</span>}
+          {bf.last_run_at && <span>• ran {timeAgo(bf.last_run_at)}</span>}
+        </div>
+
+        {isCompleted ? (
+          <div className="vt" style={{ fontSize: isMobile ? 14 : 16, color: C.signalDeep }}>
+            All {total} videos clipped and posted!
+          </div>
+        ) : (
+          <ProgressBar value={processed} max={total || processed + 1} />
+        )}
+      </div>
+
+      {/* Actions — always a bottom row on mobile, right column on desktop */}
+      <div style={{
+        display: "flex", gap: 8, padding: isMobile ? "10px 14px" : "10px 16px",
+        borderTop: `2px solid ${C.ink}22`, justifyContent: "flex-end",
+      }}>
+        {!isCompleted && (
+          <PixelBtn color="amber" size="sm" onClick={() => onRunNow(bf.id)}>RUN NOW</PixelBtn>
+        )}
+        <PixelBtn color="hot" size="sm" onClick={() => onRemove(bf.id)}>REMOVE</PixelBtn>
       </div>
     </PixelCard>
   );
@@ -179,71 +180,78 @@ export default function DigestPage() {
       <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
-        <div style={{ marginBottom: 24 }}>
-          <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>DIGEST</div>
-          <h1 className="pixel" style={{ fontSize: 26, color: C.ink }}>Channel digest.</h1>
-          <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
-            Pick a channel and a time window — ClipForge clips and posts a few videos per day until the backlog is done.
-          </p>
+
+        <div style={{ marginBottom: 20 }}>
+          <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 8 }}>DIGEST</div>
+          <h1 className="pixel" style={{ fontSize: isMobile ? 20 : 26, color: C.ink }}>Channel digest.</h1>
+          {!isMobile && (
+            <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
+              Pick a channel and a time window — ClipForge clips and posts a few videos per day until the backlog is done.
+            </p>
+          )}
         </div>
 
         {/* Add form */}
-        <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24 }}>
-          <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 14 }}>ADD DIGEST CHANNEL</div>
+        <PixelCard color={C.cream} padding={isMobile ? 14 : 22} style={{ marginBottom: 20 }}>
+          <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD DIGEST CHANNEL</div>
 
-          {/* URL */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM, marginBottom: 14 }}>
-            <span className="pixel" style={{ fontSize: 12, color: C.dim }}>{`>`}</span>
+          {/* URL input */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: isMobile ? "10px 12px" : "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM, marginBottom: 14 }}>
+            <span className="pixel" style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>{`>`}</span>
             <input
               value={urlInput}
               onChange={e => setUrlInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleAdd()}
-              placeholder="https://youtube.com/@channel or /channel/UCxxx"
+              placeholder={isMobile ? "youtube.com/@channel" : "https://youtube.com/@channel or /channel/UCxxx"}
               className="mono"
-              style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 13, fontWeight: 500, minWidth: 0 }}
+              style={{ flex: 1, background: "transparent", color: C.ink, fontSize: isMobile ? 12 : 13, fontWeight: 500, minWidth: 0, width: "100%" }}
             />
           </div>
 
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
-            {/* Days back */}
-            <div>
-              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>LOOK BACK</div>
-              <select value={daysBack} onChange={e => setDaysBack(Number(e.target.value))} className="pixel"
-                style={{ padding: "9px 12px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
-                {DAY_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
+          {/* Controls — stack vertically on mobile */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 14 }}>
 
-            {/* Videos per day */}
-            <div>
-              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>VIDEOS / DAY</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {VPD_OPTIONS.map(opt => (
-                  <button key={opt.value} onClick={() => setVideosPerDay(opt.value)} className="pixel" style={{
-                    padding: "8px 12px", fontSize: 8,
-                    background: videosPerDay === opt.value ? opt.color : C.cream2,
-                    color: C.ink, border: BORDER,
-                    boxShadow: videosPerDay === opt.value ? "2px 2px 0 " + C.ink : SHADOW_SM,
-                    transform: videosPerDay === opt.value ? "translate(2px,2px)" : "none",
-                    cursor: "pointer",
-                  }}>{opt.value}</button>
-                ))}
+            {/* Look back + Videos per day — side by side even on mobile */}
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              <div style={{ flex: isMobile ? "1 1 140px" : "0 0 auto" }}>
+                <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>LOOK BACK</div>
+                <select value={daysBack} onChange={e => setDaysBack(Number(e.target.value))} className="pixel"
+                  style={{ width: "100%", padding: "9px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
+                  {DAY_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ flex: isMobile ? "1 1 140px" : "0 0 auto" }}>
+                <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>VIDEOS / DAY</div>
+                <div style={{ display: "flex", gap: 5 }}>
+                  {VPD_OPTIONS.map(opt => (
+                    <button key={opt.value} onClick={() => setVideosPerDay(opt.value)} className="pixel" style={{
+                      flex: isMobile ? 1 : "0 0 auto",
+                      padding: "8px 10px", fontSize: 8,
+                      background: videosPerDay === opt.value ? opt.color : C.cream2,
+                      color: C.ink, border: BORDER,
+                      boxShadow: videosPerDay === opt.value ? "2px 2px 0 " + C.ink : SHADOW_SM,
+                      transform: videosPerDay === opt.value ? "translate(2px,2px)" : "none",
+                      cursor: "pointer",
+                    }}>{opt.value}</button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* YT channel */}
+            {/* YT channel selector */}
             {ytChannels.length > 0 && (
               <div>
                 <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>UPLOAD TO</div>
                 {ytChannels.length === 1 ? (
-                  <div className="pixel" style={{ fontSize: 9, padding: "9px 12px", background: C.yt, border: BORDER, color: C.ink }}>
+                  <div className="pixel" style={{ fontSize: 9, padding: "9px 12px", background: C.yt, border: BORDER, color: C.ink, display: "inline-block" }}>
                     * {ytChannels[0].yt_channel_name || "YouTube"}
                   </div>
                 ) : (
                   <select value={ytChannelId} onChange={e => setYtChannelId(e.target.value)} className="pixel"
-                    style={{ padding: "9px 12px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
+                    style={{ width: isMobile ? "100%" : "auto", padding: "9px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 8 }}>
                     {ytChannels.map(c => (
                       <option key={c.yt_channel_id} value={c.yt_channel_id}>{c.yt_channel_name || c.yt_channel_id}</option>
                     ))}
@@ -253,7 +261,8 @@ export default function DigestPage() {
             )}
           </div>
 
-          <PixelBtn color="hot" onClick={handleAdd} disabled={adding || !urlInput.trim()}>
+          <PixelBtn color="hot" onClick={handleAdd} disabled={adding || !urlInput.trim()}
+            style={isMobile ? { width: "100%", textAlign: "center", justifyContent: "center" } : {}}>
             {adding ? "RESOLVING..." : "+ ADD CHANNEL"}
           </PixelBtn>
 
@@ -270,12 +279,12 @@ export default function DigestPage() {
             <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Loading...</p>
           </PixelCard>
         ) : backfills.length === 0 ? (
-          <PixelCard color={C.paper} padding={48} style={{ textAlign: "center" }}>
-            <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 10 }}>NO DIGEST CHANNELS</div>
-            <p className="vt" style={{ fontSize: 18, color: C.dim2 }}>Add a channel above to start digesting its backlog.</p>
+          <PixelCard color={C.paper} padding={isMobile ? 24 : 48} style={{ textAlign: "center" }}>
+            <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 8 }}>NO DIGEST CHANNELS</div>
+            <p className="vt" style={{ fontSize: 16, color: C.dim2 }}>Add a channel above to start digesting its backlog.</p>
           </PixelCard>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {backfills.map(bf => (
               <DigestCard
                 key={bf.id}
@@ -283,6 +292,7 @@ export default function DigestPage() {
                 ytStatus={ytStatus}
                 onRemove={handleRemove}
                 onRunNow={handleRunNow}
+                isMobile={isMobile}
               />
             ))}
           </div>

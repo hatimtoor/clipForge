@@ -40,12 +40,13 @@ const CAPTION_LANGUAGES = [
 ];
 
 function UpgradeGate() {
+  const isMobile = useMobile();
   return (
-    <div className="fade" style={{ padding: "64px 32px", maxWidth: 760, margin: "0 auto" }}>
-      <PixelCard color={C.amber} padding={40} style={{ textAlign: "center" }}>
+    <div className="fade" style={{ padding: isMobile ? "24px 16px 48px" : "64px 32px", maxWidth: 760, margin: "0 auto" }}>
+      <PixelCard color={C.amber} padding={isMobile ? 24 : 40} style={{ textAlign: "center" }}>
         <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 12 }}>PRO FEATURE</div>
-        <h2 className="pixel" style={{ fontSize: 22, color: C.ink, lineHeight: 1.4, marginBottom: 14 }}>Channel Watchlist</h2>
-        <p className="vt" style={{ fontSize: 20, color: C.ink, lineHeight: 1.5, marginBottom: 24, maxWidth: 520, margin: "0 auto 24px" }}>
+        <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 22, color: C.ink, lineHeight: 1.4, marginBottom: 14 }}>Channel Watchlist</h2>
+        <p className="vt" style={{ fontSize: isMobile ? 18 : 20, color: C.ink, lineHeight: 1.5, marginBottom: 24, maxWidth: 520, margin: "0 auto 24px" }}>
           Monitor YouTube channels and auto-clip new videos the moment they drop.
         </p>
         <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginTop: 8 }}>
@@ -129,7 +130,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
               </div>
             )}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: isMobile ? 8 : 10 }}>
             <Stepper label="MAX CLIPS" val={maxClips} setVal={setMaxClips} min={1} max={10} step={1} field="max_clips" />
             <Stepper label="MIN DUR"   val={minDur}   setVal={setMinDur}   min={15} max={120} step={5}  field="min_duration" suffix="s" />
             <Stepper label="MAX DUR"   val={maxDur}   setVal={setMaxDur}   min={30} max={180} step={10} field="max_duration" suffix="s" />
@@ -149,7 +150,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
 
           {captionOpen && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 14 }}>
                 {CAPTION_STYLES.map(({ id, label, hint, bg }) => (
                   <button key={id} onClick={() => { setCaptionStyle(id); patch({ caption_style: id }); }} className="pixel"
                     style={{ textAlign: "left", padding: "10px 8px",
@@ -332,7 +333,7 @@ function WatchlistContent() {
     <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
       <div style={{ marginBottom: 24 }}>
         <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>WATCHLIST</div>
-        <h1 className="pixel" style={{ fontSize: 26, color: C.ink }}>Channel monitor.</h1>
+        <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink }}>Channel monitor.</h1>
         <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
           Add channels — ClipForge checks every 30 min and clips new videos automatically.
         </p>

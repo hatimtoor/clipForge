@@ -352,19 +352,19 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
 
   return (
     <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1380, margin: "0 auto" }}>
-      <PixelCard color={C.signal} padding={26} style={{ marginBottom: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18, flexWrap: "wrap" }}>
+      <PixelCard color={C.signal} padding={isMobile ? 18 : 26} style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
           <div>
             <div className="pixel" style={{ fontSize: 10, color: C.ink, marginBottom: 8 }}>v DELIVERED</div>
-            <h1 className="pixel" style={{ fontSize: 26, color: C.ink, lineHeight: 1.2 }}>
-              <span style={{ color: C.hotDeep, fontSize: 36 }}>{clips.length}</span> {clips.length === 1 ? "clip" : "clips"} ready to ship!
+            <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink, lineHeight: 1.2 }}>
+              <span style={{ color: C.hotDeep, fontSize: isMobile ? 26 : 36 }}>{clips.length}</span> {clips.length === 1 ? "clip" : "clips"} ready to ship!
             </h1>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             {ytConnected && uploadableCount > 0 && (
               <div style={{ position: "relative" }}>
-                <PixelBtn color="yt" size="md" onClick={handleUploadAllClick} disabled={uploadingAll}>
-                  {uploadingAll ? `^ UPLOADING...` : `^ UPLOAD ALL TO YT`}
+                <PixelBtn color="yt" size={isMobile ? "sm" : "md"} onClick={handleUploadAllClick} disabled={uploadingAll}>
+                  {uploadingAll ? `^ UPLOADING...` : isMobile ? `^ ALL TO YT` : `^ UPLOAD ALL TO YT`}
                 </PixelBtn>
                 {uploadAllPickerOpen && (
                   <div className="pixel" style={{
@@ -538,6 +538,7 @@ export default function WorkPage() {
   const [searchParams] = useSearchParams();
   const jobId = searchParams.get("job");
   const { isPro, ytStatus, setJobActive } = useApp();
+  const isMobileWP = useMobile();
 
   const [job, setJob] = useState(null);
   const [ytModal, setYtModal] = useState(null);
@@ -646,8 +647,8 @@ export default function WorkPage() {
       <div style={{ minHeight: "100vh" }}>
         <style>{KEYFRAMES}</style>
         <Header />
-        <div style={{ padding: "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
-          <PixelCard color={C.cream} padding={48} style={{ textAlign: "center" }}>
+        <div style={{ padding: isMobileWP ? "24px 16px" : "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
+          <PixelCard color={C.cream} padding={isMobileWP ? 28 : 48} style={{ textAlign: "center" }}>
             <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Loading...</p>
           </PixelCard>
         </div>
@@ -660,11 +661,11 @@ export default function WorkPage() {
       <div style={{ minHeight: "100vh" }}>
         <style>{KEYFRAMES}</style>
         <Header />
-        <div className="fade" style={{ padding: "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
-          <PixelCard color={C.hot} padding={48} style={{ textAlign: "center" }}>
+        <div className="fade" style={{ padding: isMobileWP ? "24px 16px" : "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
+          <PixelCard color={C.hot} padding={isMobileWP ? 24 : 48} style={{ textAlign: "center" }}>
             <div className="pixel" style={{ fontSize: 11, color: C.ink, marginBottom: 14 }}>! JOB NOT FOUND</div>
-            <h2 className="pixel" style={{ fontSize: 22, color: C.ink, marginBottom: 18 }}>Could not load this job.</h2>
-            <p className="vt" style={{ fontSize: 20, color: C.ink, marginBottom: 24 }}>It may have expired or the server is unreachable.</p>
+            <h2 className="pixel" style={{ fontSize: isMobileWP ? 18 : 22, color: C.ink, marginBottom: 18 }}>Could not load this job.</h2>
+            <p className="vt" style={{ fontSize: 18, color: C.ink, marginBottom: 24 }}>It may have expired or the server is unreachable.</p>
             <PixelBtn color="cream" onClick={goNew}>{`>`} NEW CLIP</PixelBtn>
           </PixelCard>
         </div>
@@ -677,11 +678,11 @@ export default function WorkPage() {
       <div style={{ minHeight: "100vh" }}>
         <style>{KEYFRAMES}</style>
         <Header />
-        <div className="fade" style={{ padding: "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
-          <PixelCard color={C.cream} padding={48} style={{ textAlign: "center" }}>
+        <div className="fade" style={{ padding: isMobileWP ? "24px 16px" : "64px 32px", maxWidth: 1320, margin: "0 auto" }}>
+          <PixelCard color={C.cream} padding={isMobileWP ? 24 : 48} style={{ textAlign: "center" }}>
             <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 14 }}>NO ACTIVE JOB</div>
-            <h2 className="pixel" style={{ fontSize: 22, color: C.ink, marginBottom: 18 }}>The forge is cold.</h2>
-            <p className="vt" style={{ fontSize: 20, color: C.dim2, marginBottom: 24 }}>Start a new clip to fire it up.</p>
+            <h2 className="pixel" style={{ fontSize: isMobileWP ? 18 : 22, color: C.ink, marginBottom: 18 }}>The forge is cold.</h2>
+            <p className="vt" style={{ fontSize: 18, color: C.dim2, marginBottom: 24 }}>Start a new clip to fire it up.</p>
             <PixelBtn color="signal" onClick={goNew}>{`>`} NEW CLIP</PixelBtn>
           </PixelCard>
         </div>
@@ -694,10 +695,10 @@ export default function WorkPage() {
       <div style={{ minHeight: "100vh" }}>
         <style>{KEYFRAMES}</style>
         <Header />
-        <div className="fade" style={{ padding: "32px 32px 64px", maxWidth: 920, margin: "0 auto" }}>
-          <PixelCard color={C.amber} padding={32} style={{ textAlign: "center" }}>
+        <div className="fade" style={{ padding: isMobileWP ? "16px 16px 48px" : "32px 32px 64px", maxWidth: 920, margin: "0 auto" }}>
+          <PixelCard color={C.amber} padding={isMobileWP ? 20 : 32} style={{ textAlign: "center" }}>
             <div className="pixel" style={{ fontSize: 11, color: C.ink, marginBottom: 12 }}>JOB CANCELLED</div>
-            <p className="pixel" style={{ fontSize: 14, color: C.ink, lineHeight: 1.5, marginBottom: 24 }}>The job was stopped. Any temp files have been cleaned up.</p>
+            <p className="pixel" style={{ fontSize: isMobileWP ? 11 : 14, color: C.ink, lineHeight: 1.5, marginBottom: 24 }}>The job was stopped. Any temp files have been cleaned up.</p>
             <PixelBtn color="cream" onClick={goNew} size="lg">{`>`} NEW JOB</PixelBtn>
           </PixelCard>
         </div>
@@ -710,10 +711,10 @@ export default function WorkPage() {
       <div style={{ minHeight: "100vh" }}>
         <style>{KEYFRAMES}</style>
         <Header />
-        <div className="fade" style={{ padding: "32px 32px 64px", maxWidth: 920, margin: "0 auto" }}>
-          <PixelCard color={C.hot} padding={32} style={{ textAlign: "center" }}>
+        <div className="fade" style={{ padding: isMobileWP ? "16px 16px 48px" : "32px 32px 64px", maxWidth: 920, margin: "0 auto" }}>
+          <PixelCard color={C.hot} padding={isMobileWP ? 20 : 32} style={{ textAlign: "center" }}>
             <div className="pixel" style={{ fontSize: 11, color: C.ink, marginBottom: 12 }}>! JOB FAILED</div>
-            <p className="pixel" style={{ fontSize: 14, color: C.ink, lineHeight: 1.5, marginBottom: 24 }}>
+            <p className="pixel" style={{ fontSize: isMobileWP ? 11 : 14, color: C.ink, lineHeight: 1.5, marginBottom: 24 }}>
               {(job.error || "Something went wrong.").split("\n").pop()}
             </p>
             <PixelBtn color="cream" onClick={goNew} size="lg">{`>`} TRY AGAIN</PixelBtn>

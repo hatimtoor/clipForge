@@ -144,9 +144,9 @@ function FeaturesSection({ isMobile }) {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 10 : 12 }}>
             {signals.map((s) => (
-              <div key={s.title} style={{ background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: 16 }}>
+              <div key={s.title} style={{ background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: isMobile ? 14 : 16 }}>
                 <div style={{ fontSize: 22, marginBottom: 8 }}>{s.emoji}</div>
                 <div className="pixel" style={{ fontSize: 8, color: C.ink, marginBottom: 6 }}>{s.title}</div>
                 <div className="vt" style={{ fontSize: 15, color: C.dim2, lineHeight: 1.3 }}>{s.desc}</div>
@@ -176,7 +176,7 @@ function WatchlistSection({ onSignup, isMobile }) {
               <p className="vt" style={{ fontSize: isMobile ? 18 : 22, color: C.dim2, lineHeight: 1.5, marginBottom: 24 }}>
                 Add any YouTube channel to your watchlist. ClipForge monitors it automatically — the moment a new video drops, it starts clipping. Wake up to ready-to-post shorts every morning without touching a thing.
               </p>
-              <PixelBtn color="lavender" size="md" onClick={onSignup}>&gt; GET PRO — START AUTOMATING</PixelBtn>
+              <PixelBtn color="lavender" size="md" onClick={onSignup} style={isMobile ? { width: "100%" } : {}}>&gt; GET PRO — START AUTOMATING</PixelBtn>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

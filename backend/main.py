@@ -2105,8 +2105,8 @@ async def list_backfills(user=Depends(require_pro)):
 
 @app.post("/api/backfill")
 async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
-    if req.days_back not in [30, 60, 90]:
-        raise HTTPException(400, "days_back must be 30, 60, or 90")
+    if req.days_back < 1 or req.days_back > 365:
+        raise HTTPException(400, "days_back must be between 1 and 365")
     # Resolve channel name using the same approach as add_channel
     cmd = [YTDLP, "--flat-playlist", "--playlist-end", "1", "-j", "--no-warnings"]
     if COOKIES_FROM_BROWSER:

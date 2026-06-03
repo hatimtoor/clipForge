@@ -10,6 +10,8 @@ const DAY_OPTIONS = [
   { value: 30,  label: "30 days back" },
   { value: 60,  label: "60 days back" },
   { value: 90,  label: "90 days back" },
+  { value: 180, label: "6 months back" },
+  { value: 365, label: "1 year back" },
 ];
 
 const VPD_OPTIONS = [1, 2, 3, 5];
@@ -201,18 +203,12 @@ export default function DigestPage() {
             {/* Days back */}
             <div>
               <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 8 }}>LOOK BACK</div>
-              <div style={{ display: "flex", gap: 6 }}>
+              <select value={daysBack} onChange={e => setDaysBack(Number(e.target.value))} className="mono"
+                style={{ padding: "9px 12px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12 }}>
                 {DAY_OPTIONS.map(opt => (
-                  <button key={opt.value} onClick={() => setDaysBack(opt.value)} className="pixel" style={{
-                    padding: "8px 12px", fontSize: 8,
-                    background: daysBack === opt.value ? C.amber : C.cream2,
-                    color: C.ink, border: BORDER,
-                    boxShadow: daysBack === opt.value ? "2px 2px 0 " + C.ink : SHADOW_SM,
-                    transform: daysBack === opt.value ? "translate(2px,2px)" : "none",
-                    cursor: "pointer",
-                  }}>{opt.label}</button>
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
-              </div>
+              </select>
             </div>
 
             {/* Videos per day */}

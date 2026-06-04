@@ -1171,9 +1171,14 @@ def write_sendcmd_file(trajectory: list, output_path: Path, fps: float = 30.0) -
 async def get_bg_music_path(url: str) -> Optional[Path]:
     """Download audio from a YouTube URL and cache it. Returns the local path, or None on failure."""
     import re as _re
-    # Use video ID as the cache key when possible
+    import hashlib as _hashlib
+    # Derive a cache key that cannot contain path separators or traversal sequences.
+    # Prefer the 11-char YouTube video id (constrained charset); otherwise hash the URL.
     m = _re.search(r'(?:[?&]v=|youtu\.be/)([A-Za-z0-9_-]{11})', url)
-    cache_key = m.group(1) if m else _re.sub(r'[^A-Za-z0-9_-]', '_', url)[-40:]
+    cache_key = m.group(1) if m else _hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
+    # Defence in depth: ensure the key never escapes the cache directory.
+    if not _re.fullmatch(r'[A-Za-z0-9_-]{1,64}', cache_key):
+        return None
     # Check cache (try common extensions)
     for ext in [".m4a", ".mp3", ".webm", ".opus"]:
         p = MUSIC_CACHE_DIR / f"{cache_key}{ext}"

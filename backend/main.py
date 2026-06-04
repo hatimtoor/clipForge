@@ -1170,33 +1170,45 @@ def write_sendcmd_file(trajectory: list, output_path: Path, fps: float = 30.0) -
 # ── background music cache ────────────────────────────────────────────────────
 async def get_bg_music_path(url: str) -> Optional[Path]:
     """Download audio from a YouTube URL and cache it. Returns the local path, or None on failure."""
-    import re as _re
     import hashlib as _hashlib
-    # Derive a cache key that cannot contain path separators or traversal sequences.
-    # Prefer the 11-char YouTube video id (constrained charset); otherwise hash the URL.
-    m = _re.search(r'(?:[?&]v=|youtu\.be/)([A-Za-z0-9_-]{11})', url)
-    cache_key = m.group(1) if m else _hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
-    # Defence in depth: ensure the key never escapes the cache directory.
-    if not _re.fullmatch(r'[A-Za-z0-9_-]{1,64}', cache_key):
-        return None
-    # Check cache (try common extensions)
-    for ext in [".m4a", ".mp3", ".webm", ".opus"]:
-        p = MUSIC_CACHE_DIR / f"{cache_key}{ext}"
-        if p.exists():
+
+    # Derive the cache filename purely from a SHA-256 hash of the URL — the result is
+    # a fixed-length hex string with no path separators or traversal sequences, so the
+    # user-controlled URL never reaches the filesystem path in a usable form.
+    cache_key = _hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+    base = os.path.realpath(MUSIC_CACHE_DIR)
+
+    def _safe_path(ext: str) -> Optional[Path]:
+        # Resolve the candidate and confirm it stays inside the cache directory.
+        candidate = os.path.realpath(os.path.join(base, f"{cache_key}{ext}"))
+        if os.path.commonpath([base, candidate]) != base:
+            return None
+        return Path(candidate)
+
+    exts = [".m4a", ".mp3", ".webm", ".opus"]
+
+    # Check cache
+    for ext in exts:
+        p = _safe_path(ext)
+        if p and p.exists():
             return p
+
     # Download audio-only
-    out_tmpl = str(MUSIC_CACHE_DIR / cache_key)
+    out_target = _safe_path("")
+    if out_target is None:
+        return None
     cmd = [YTDLP, "-x", "--audio-format", "m4a", "--audio-quality", "128K",
-           "-o", out_tmpl + ".%(ext)s", "--no-playlist", "--quiet", url]
+           "-o", str(out_target) + ".%(ext)s", "--no-playlist", "--quiet", url]
     if COOKIES_FROM_BROWSER:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
     elif COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
     try:
         r = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=180)
-        for ext in [".m4a", ".mp3", ".webm", ".opus"]:
-            p = MUSIC_CACHE_DIR / f"{cache_key}{ext}"
-            if p.exists():
+        for ext in exts:
+            p = _safe_path(ext)
+            if p and p.exists():
                 return p
         print(f"[bg_music] download failed for {url}: {r.stderr[-200:]}", flush=True)
         return None

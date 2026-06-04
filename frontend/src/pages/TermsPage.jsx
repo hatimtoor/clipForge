@@ -24,7 +24,7 @@ export default function TermsPage() {
 
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
           <Section title="1. Agreement">
-            By accessing or using ClipForge at clipforge.duckdns.org ("the Service"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service. ClipForge is operated by Muhammad Hatim Shahid Toor, Pakistan. Contact: hatimtoor2025@gmail.com.
+            By accessing or using ClipForge at clipforging.com ("the Service"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service. ClipForge is operated by Muhammad Hatim Shahid Toor, Pakistan. Contact: hatimtoor2025@gmail.com.
           </Section>
         </PixelCard>
 

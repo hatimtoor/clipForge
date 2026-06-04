@@ -24,7 +24,7 @@ export default function PrivacyPage() {
 
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
           <Section title="1. Who We Are">
-            ClipForge is operated by Muhammad Hatim Shahid Toor ("we", "us", "our"). ClipForge is an AI-powered video clip extraction service accessible at clipforge.duckdns.org. For privacy-related questions, contact us at hatimtoor2025@gmail.com.
+            ClipForge is operated by Muhammad Hatim Shahid Toor ("we", "us", "our"). ClipForge is an AI-powered video clip extraction service accessible at clipforging.com. For privacy-related questions, contact us at hatimtoor2025@gmail.com.
           </Section>
         </PixelCard>
 

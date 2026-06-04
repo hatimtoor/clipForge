@@ -137,7 +137,7 @@ app = FastAPI(title="ClipForge API")
 app.state.limiter = _limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-_APP_URL = os.getenv("APP_URL", "https://clipforge.ai").rstrip("/")
+_APP_URL = os.getenv("APP_URL", "https://clipforging.com").rstrip("/")
 _ALLOWED_ORIGINS = [o.strip() for o in os.getenv(
     "ALLOWED_ORIGINS",
     f"{_APP_URL},http://localhost:5173,http://localhost:8000"
@@ -1818,7 +1818,7 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
         email = await asyncio.to_thread(db_get_user_email, user_id)
         if not email:
             return
-        app_url = os.getenv("APP_URL", "https://clipforge.ai")
+        app_url = os.getenv("APP_URL", "https://clipforging.com")
         from html import escape as _he
         safe_url = _he(video_url)
         if error:

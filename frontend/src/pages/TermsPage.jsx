@@ -24,7 +24,7 @@ export default function TermsPage() {
 
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
           <Section title="1. Agreement">
-            By accessing or using ClipForge at clipforging.com ("the Service"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service. ClipForge is operated by Muhammad Hatim Shahid Toor, Pakistan. Contact: hatimtoor2025@gmail.com.
+            By accessing or using ClipForge at clipforging.com ("the Service"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service. ClipForge is operated by Hatim Toor, Pakistan. Contact: hatimtoor2025@gmail.com.
           </Section>
         </PixelCard>
 
@@ -131,7 +131,7 @@ export default function TermsPage() {
 
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
           <Section title="9. Limitation of Liability">
-            To the maximum extent permitted by applicable law, Muhammad Hatim Shahid Toor and ClipForge shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, or goodwill, arising from your use of or inability to use the Service.
+            To the maximum extent permitted by applicable law, Hatim Toor and ClipForge shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, or goodwill, arising from your use of or inability to use the Service.
             <br /><br />
             Our total liability to you for any claim arising from use of the Service shall not exceed the amount you paid us in the 3 months preceding the claim.
           </Section>
@@ -155,7 +155,7 @@ export default function TermsPage() {
           <Section title="12. Contact">
             For any questions about these Terms:
             <br /><br />
-            <span className="pixel" style={{ fontSize: 10, color: C.ink }}>Muhammad Hatim Shahid Toor</span><br />
+            <span className="pixel" style={{ fontSize: 10, color: C.ink }}>Hatim Toor</span><br />
             <span className="vt" style={{ fontSize: 17, color: C.dim2 }}>hatimtoor2025@gmail.com</span><br />
             <span className="vt" style={{ fontSize: 17, color: C.dim2 }}>Pakistan</span>
           </Section>

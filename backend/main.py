@@ -23,6 +23,12 @@ load_dotenv(_env if _env.exists() else "/home/ubuntu/.env")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 set_groq_keys([GROQ_API_KEY or ""] + [os.getenv(f"GROQ_API_KEY_{i}", "") for i in range(2, 6)])
 
+# Optional OpenRouter primary model for virality analysis (falls back to Groq llama).
+# Set OPENROUTER_API_KEY + OPENROUTER_MODEL in .env to enable; leave unset to stay on Groq.
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "openrouter/owl-alpha")
+OPENROUTER_ENABLED = bool(OPENROUTER_API_KEY)
+
 # Google's OAuth server always returns extra scopes (openid, userinfo.*).
 # This tells oauthlib to accept a superset of the requested scopes without raising.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
@@ -645,7 +651,34 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
     return all_segments
 
 
-# ── virality analysis via Ollama ──────────────────────────────────────────────
+async def _call_openrouter(prompt: str, temp: float = 0.3, max_tokens: int = 2000) -> Optional[str]:
+    """Call the OpenRouter primary analysis model. Returns content, or None on any failure."""
+    if not OPENROUTER_ENABLED:
+        return None
+    import httpx
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": _APP_URL,
+        "X-Title": "ClipForge",
+    }
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temp,
+        "max_tokens": max_tokens,
+    }
+    async with httpx.AsyncClient(timeout=90) as client:
+        resp = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers, json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return (data["choices"][0]["message"]["content"] or "").strip()
+
+
+# ── virality analysis (OpenRouter primary, Groq Llama fallback) ───────────────
 async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int, style_prompt: str = "") -> list:
     log(job_id, f"Analyzing virality: {len(segments)} segments, max_clips={max_clips}, dur={min_dur}-{max_dur}s")
     await update_job(job_id, status="analyzing", progress=66, message="AI is identifying viral moments...")
@@ -670,11 +703,12 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
     clips_per_chunk = max(2, max_clips // len(chunks) + 1)
     all_clips = []
 
-    log(job_id, f"Transcript split into {len(chunks)} chunk(s) for Groq Llama analysis")
+    _analysis_provider = f"OpenRouter ({OPENROUTER_MODEL})" if OPENROUTER_ENABLED else "Groq Llama"
+    log(job_id, f"Transcript split into {len(chunks)} chunk(s) for {_analysis_provider} analysis")
     for chunk_idx, transcript_text in enumerate(chunks):
         # analyzing: 66-77 spread across chunks
         analysis_progress = 66 + int((chunk_idx / len(chunks)) * 11)
-        log(job_id, f"Sending chunk {chunk_idx+1}/{len(chunks)} to Groq Llama ({len(transcript_text)} chars)...")
+        log(job_id, f"Sending chunk {chunk_idx+1}/{len(chunks)} to {_analysis_provider} ({len(transcript_text)} chars)...")
         await update_job(job_id, progress=analysis_progress, message=f"AI analyzing part {chunk_idx+1}/{len(chunks)}...")
 
         focus_line = f"\nFOCUS ON: {style_prompt.strip()}\n" if style_prompt and style_prompt.strip() else ""
@@ -720,6 +754,18 @@ Return valid JSON array only, no markdown, no explanation."""
                 log_fn=lambda m: log(job_id, m),
             )
 
+        async def _call_analysis(temp=0.3):
+            # OpenRouter primary, automatic fallback to Groq llama on any failure
+            if OPENROUTER_ENABLED:
+                try:
+                    out = await _call_openrouter(prompt, temp=temp, max_tokens=2000)
+                    if out:
+                        return out
+                    log(job_id, "  OpenRouter returned empty — falling back to Groq llama")
+                except Exception as e:
+                    log(job_id, f"  OpenRouter error ({e}) — falling back to Groq llama")
+            return await _call_groq(temp)
+
         def _parse_raw(raw: str):
             # Strip markdown fences
             if raw.startswith("```"):
@@ -742,11 +788,11 @@ Return valid JSON array only, no markdown, no explanation."""
             return None
 
         try:
-            raw = await _call_groq(temp=0.3)
+            raw = await _call_analysis(temp=0.3)
             chunk_clips = _parse_raw(raw)
             if chunk_clips is None:
                 log(job_id, f"  chunk {chunk_idx+1} bad JSON on attempt 1, retrying with temp=0.1...")
-                raw = await _call_groq(temp=0.1)
+                raw = await _call_analysis(temp=0.1)
                 chunk_clips = _parse_raw(raw)
             if chunk_clips is None:
                 log(job_id, f"  chunk {chunk_idx+1} still bad JSON after retry — skipping. Raw: {raw[:300]}")
@@ -754,7 +800,7 @@ Return valid JSON array only, no markdown, no explanation."""
             log(job_id, f"  → chunk {chunk_idx+1} returned {len(chunk_clips)} clip candidates")
             all_clips.extend(chunk_clips)
         except Exception as e:
-            log(job_id, f"  !!! Groq API error on chunk {chunk_idx+1}: {e} — skipping chunk")
+            log(job_id, f"  !!! Analysis API error on chunk {chunk_idx+1}: {e} — skipping chunk")
             continue
 
     # Sort by virality score and take top max_clips

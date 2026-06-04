@@ -66,6 +66,8 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
   const [fontSize,       setFontSize]       = useState(ch.caption_font_size ?? null);
   const [highlightColor, setHighlightColor] = useState(ch.caption_highlight_color ?? null);
   const [captionLang,    setCaptionLang]    = useState(ch.caption_language ?? "source");
+  const [bgMusicUrl,     setBgMusicUrl]     = useState(ch.bg_music_url ?? "");
+  const [bgMusicVolume,  setBgMusicVolume]  = useState(ch.bg_music_volume ?? 0.15);
   const { ytStatus } = useApp();
   const [selectedYtChannel, setSelectedYtChannel] = useState(ch.yt_channel_id ?? "");
   const isMobile = useMobile();
@@ -205,6 +207,31 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
                     ))}
                   </div>
                 </div>
+              </div>
+
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
+                <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontFamily: "sans-serif" }}>🎵</span> BACKGROUND MUSIC <span style={{ color: C.dim }}>(optional)</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: C.paper, border: BORDER, marginBottom: 8 }}>
+                  <span className="pixel" style={{ fontSize: 9, color: C.dim, flexShrink: 0 }}>{`>`}</span>
+                  <input value={bgMusicUrl} onChange={e => setBgMusicUrl(e.target.value)}
+                    onBlur={() => patch({ bg_music_url: bgMusicUrl.trim() || null })}
+                    placeholder="paste a YouTube music URL"
+                    className="mono" style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 11, fontWeight: 500, minWidth: 0, outline: "none", border: "none" }} />
+                </div>
+                {bgMusicUrl.trim() && (
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {[["Quiet", 0.08], ["Soft", 0.15], ["Med", 0.30], ["Loud", 0.50]].map(([label, vol]) => (
+                      <button key={label} onClick={() => { setBgMusicVolume(vol); patch({ bg_music_volume: vol }); }} className="pixel" style={{
+                        flex: 1, padding: "6px 4px", fontSize: 7, cursor: "pointer",
+                        background: bgMusicVolume === vol ? C.signal : C.cream2, color: C.ink, border: BORDER,
+                        boxShadow: bgMusicVolume === vol ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                        transform: bgMusicVolume === vol ? "translate(2px,2px)" : "none",
+                      }}>{label}</button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

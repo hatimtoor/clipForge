@@ -22,6 +22,8 @@ export default function HelloPage() {
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
   const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
   const [captionLanguage, setCaptionLanguage] = useState(searchParams.get("caption_language") || "source");
+  const [bgMusicUrl, setBgMusicUrl] = useState("");
+  const [bgMusicVolume, setBgMusicVolume] = useState(0.15);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -76,6 +78,8 @@ export default function HelloPage() {
           caption_font_size: fontSizeOverride || undefined,
           caption_highlight_color: highlightColor || undefined,
           caption_language: captionLanguage || "source",
+          bg_music_url: bgMusicUrl.trim() || undefined,
+          bg_music_volume: bgMusicVolume,
         }),
       });
       const data = await res.json();
@@ -265,6 +269,33 @@ export default function HelloPage() {
                     );
                   })}
                 </div>
+              </div>
+
+              <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginTop: 16 }}>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontFamily: "sans-serif" }}>🎵</span> BACKGROUND MUSIC <span style={{ color: C.dim }}>(optional)</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: C.paper, border: BORDER, marginBottom: 10 }}>
+                  <span className="pixel" style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>{`>`}</span>
+                  <input value={bgMusicUrl} onChange={e => setBgMusicUrl(e.target.value)}
+                    placeholder="paste a YouTube music URL"
+                    className="mono" style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 12, fontWeight: 500, minWidth: 0, outline: "none", border: "none" }} />
+                </div>
+                {bgMusicUrl.trim() && (
+                  <div>
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>MUSIC VOLUME</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {[["Quiet", 0.08], ["Soft", 0.15], ["Medium", 0.30], ["Loud", 0.50]].map(([label, vol]) => (
+                        <button key={label} onClick={() => setBgMusicVolume(vol)} className="pixel" style={{
+                          flex: 1, padding: "8px 4px", fontSize: 8, cursor: "pointer",
+                          background: bgMusicVolume === vol ? C.signal : C.cream2, color: C.ink, border: BORDER,
+                          boxShadow: bgMusicVolume === vol ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                          transform: bgMusicVolume === vol ? "translate(2px,2px)" : "none",
+                        }}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </PixelCard>
 

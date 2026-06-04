@@ -169,10 +169,12 @@ app.add_middleware(_SecurityHeadersMiddleware)
 
 # ── paths ────────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).parent.parent
-OUTPUT_DIR = BASE_DIR / "output"
-TEMP_DIR   = BASE_DIR / "temp"
+OUTPUT_DIR    = BASE_DIR / "output"
+TEMP_DIR      = BASE_DIR / "temp"
+MUSIC_CACHE_DIR = BASE_DIR / "music_cache"
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
+MUSIC_CACHE_DIR.mkdir(exist_ok=True)
 _oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ..., "_ts": monotonic()}
 _OAUTH_STATE_TTL = 600   # 10 minutes
 
@@ -227,6 +229,8 @@ class ClipRequest(BaseModel):
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
     caption_language: str = "source"
+    bg_music_url: Optional[str] = None
+    bg_music_volume: float = 0.15
 
 class JobStatus(BaseModel):
     job_id: str
@@ -254,6 +258,8 @@ class ChannelRequest(BaseModel):
     caption_highlight_color: Optional[str] = None
     caption_language: str = "source"
     yt_channel_id: Optional[str] = None
+    bg_music_url: Optional[str] = None
+    bg_music_volume: float = 0.15
 
 class ChannelPatchRequest(BaseModel):
     auto_upload: Optional[bool] = None
@@ -265,6 +271,8 @@ class ChannelPatchRequest(BaseModel):
     caption_highlight_color: Optional[str] = None
     caption_language: Optional[str] = None
     yt_channel_id: Optional[str] = None
+    bg_music_url: Optional[str] = None
+    bg_music_volume: Optional[float] = None
 
 
 class BackfillRequest(BaseModel):
@@ -279,6 +287,8 @@ class BackfillRequest(BaseModel):
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
     caption_language: str = "source"
+    bg_music_url: Optional[str] = None
+    bg_music_volume: float = 0.15
 
 
 class BackfillPatchRequest(BaseModel):
@@ -293,6 +303,8 @@ class BackfillPatchRequest(BaseModel):
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
     caption_language: Optional[str] = None
+    bg_music_url: Optional[str] = None
+    bg_music_volume: Optional[float] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1144,6 +1156,39 @@ def write_sendcmd_file(trajectory: list, output_path: Path, fps: float = 30.0) -
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+# ── background music cache ────────────────────────────────────────────────────
+async def get_bg_music_path(url: str) -> Optional[Path]:
+    """Download audio from a YouTube URL and cache it. Returns the local path, or None on failure."""
+    import re as _re
+    # Use video ID as the cache key when possible
+    m = _re.search(r'(?:[?&]v=|youtu\.be/)([A-Za-z0-9_-]{11})', url)
+    cache_key = m.group(1) if m else _re.sub(r'[^A-Za-z0-9_-]', '_', url)[-40:]
+    # Check cache (try common extensions)
+    for ext in [".m4a", ".mp3", ".webm", ".opus"]:
+        p = MUSIC_CACHE_DIR / f"{cache_key}{ext}"
+        if p.exists():
+            return p
+    # Download audio-only
+    out_tmpl = str(MUSIC_CACHE_DIR / cache_key)
+    cmd = [YTDLP, "-x", "--audio-format", "m4a", "--audio-quality", "128K",
+           "-o", out_tmpl + ".%(ext)s", "--no-playlist", "--quiet", url]
+    if COOKIES_FROM_BROWSER:
+        cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
+    elif COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    try:
+        r = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=180)
+        for ext in [".m4a", ".mp3", ".webm", ".opus"]:
+            p = MUSIC_CACHE_DIR / f"{cache_key}{ext}"
+            if p.exists():
+                return p
+        print(f"[bg_music] download failed for {url}: {r.stderr[-200:]}", flush=True)
+        return None
+    except Exception as e:
+        print(f"[bg_music] exception for {url}: {e}", flush=True)
+        return None
+
+
 # ── hardcoded caption bar detection ──────────────────────────────────────────
 async def _detect_caption_bar(video_path: Path, duration: float, src_h: int, src_w: int) -> int:
     """
@@ -1218,6 +1263,8 @@ async def create_clips(
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
     caption_segments: Optional[list] = None,
+    bg_music_url: Optional[str] = None,
+    bg_music_volume: float = 0.15,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -1237,6 +1284,16 @@ async def create_clips(
                 log(job_id, f"  Caption bar detected: cropping {caption_crop_px}px from bottom")
     except Exception as _ce:
         log(job_id, f"  Caption detection skipped: {_ce}")
+
+    # Download background music once before the clip loop
+    music_path: Optional[Path] = None
+    if bg_music_url:
+        log(job_id, f"  Fetching background music: {bg_music_url}")
+        music_path = await get_bg_music_path(bg_music_url)
+        if music_path:
+            log(job_id, f"  Background music ready: {music_path.name} (vol={bg_music_volume})")
+        else:
+            log(job_id, "  Background music download failed — rendering without music")
 
     results = []
     for idx, clip in enumerate(clip_defs):
@@ -1342,20 +1399,46 @@ async def create_clips(
                 f"ass={ass_filename}"
             )
 
-        ffmpeg_cmd = [
-            FFMPEG, "-y",
-            "-ss", str(start),
-            "-i", str(video_path),
-            "-t", str(dur),
-            "-vf", vf_string,
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-movflags", "+faststart",
-            str(clip_path),
-        ]
+        if music_path:
+            fc = (
+                f"[0:v]{vf_string}[vout];"
+                f"[0:a]volume=1.0[speech];"
+                f"[1:a]volume={bg_music_volume}[bgm];"
+                f"[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0.5[aout]"
+            )
+            ffmpeg_cmd = [
+                FFMPEG, "-y",
+                "-ss", str(start),
+                "-i", str(video_path),
+                "-stream_loop", "-1",
+                "-i", str(music_path),
+                "-t", str(dur),
+                "-filter_complex", fc,
+                "-map", "[vout]",
+                "-map", "[aout]",
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "23",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-movflags", "+faststart",
+                str(clip_path),
+            ]
+        else:
+            ffmpeg_cmd = [
+                FFMPEG, "-y",
+                "-ss", str(start),
+                "-i", str(video_path),
+                "-t", str(dur),
+                "-vf", vf_string,
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "23",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-movflags", "+faststart",
+                str(clip_path),
+            ]
 
         log(job_id, f"  Running FFmpeg for clip {idx+1}...")
         code, _, err = await run_cmd_async(ffmpeg_cmd, str(job_dir))
@@ -1452,6 +1535,8 @@ async def channel_poller():
                         caption_font_size=ch.get("caption_font_size"),
                         caption_highlight_color=ch.get("caption_highlight_color"),
                         caption_language=ch.get("caption_language", "source"),
+                        bg_music_url=ch.get("bg_music_url") or None,
+                        bg_music_volume=ch.get("bg_music_volume") or 0.15,
                     )
                     asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id")))
             except Exception as e:
@@ -1563,6 +1648,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             font_size=req.caption_font_size,
             highlight_color=req.caption_highlight_color,
             caption_segments=caption_segs,
+            bg_music_url=req.bg_music_url,
+            bg_music_volume=req.bg_music_volume,
         )
 
         await update_job(
@@ -1738,6 +1825,8 @@ async def _process_backfill(bf: dict) -> None:
                 caption_font_size=bf.get("caption_font_size"),
                 caption_highlight_color=bf.get("caption_highlight_color"),
                 caption_language=bf.get("caption_language", "source"),
+                bg_music_url=bf.get("bg_music_url") or None,
+                bg_music_volume=bf.get("bg_music_volume") or 0.15,
             )
             job_data = {
                 "user_id": user_id,
@@ -1834,6 +1923,8 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
         "caption_font_size": req.caption_font_size,
         "caption_highlight_color": req.caption_highlight_color,
         "caption_language": req.caption_language or "source",
+        "bg_music_url": req.bg_music_url or None,
+        "bg_music_volume": req.bg_music_volume,
     })
     job_id = job["id"]
     task = asyncio.create_task(run_pipeline(job_id, req, user_id=user.id))
@@ -2264,6 +2355,8 @@ async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
         "caption_font_size": req.caption_font_size,
         "caption_highlight_color": req.caption_highlight_color,
         "caption_language": req.caption_language,
+        "bg_music_url": req.bg_music_url or None,
+        "bg_music_volume": req.bg_music_volume,
         "processed_video_ids": [],
         "total_videos": 0,
         "status": "active",
@@ -2509,6 +2602,8 @@ async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
         "caption_font_size": req.caption_font_size,
         "caption_highlight_color": req.caption_highlight_color,
         "caption_language": req.caption_language,
+        "bg_music_url": req.bg_music_url or None,
+        "bg_music_volume": req.bg_music_volume,
     })
     return _c(ch_data)
 

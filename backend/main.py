@@ -1304,6 +1304,50 @@ async def _generate_thumbnail(clip_path: Path, title: str, out_path: Path, job_d
         txt_file.unlink(missing_ok=True)
 
 
+# ── scene-aware clip boundaries ───────────────────────────────────────────────
+async def _scene_cuts_near(video_path: Path, t: float, window: float = 0.6, threshold: float = 0.35) -> list:
+    """Return absolute timestamps of scene cuts within ±window seconds of t."""
+    seg_start = max(0.0, t - window)
+    seg_dur = window * 2
+    cmd = [
+        FFMPEG, "-ss", f"{seg_start:.3f}", "-i", str(video_path), "-t", f"{seg_dur:.3f}",
+        "-filter:v", f"select='gt(scene,{threshold})',showinfo", "-an", "-f", "null", "-",
+    ]
+    try:
+        _, _, err = await run_cmd_async(cmd)
+    except Exception:
+        return []
+    cuts = []
+    for m in re.finditer(r"pts_time:([0-9.]+)", err or ""):
+        try:
+            cuts.append(seg_start + float(m.group(1)))
+        except ValueError:
+            pass
+    return cuts
+
+
+async def _snap_to_scene_boundaries(video_path: Path, clip_defs: list, job_id: str) -> None:
+    """Nudge each clip's start/end to the nearest scene cut within a small window (in place)."""
+    for clip in clip_defs:
+        start, end = clip.get("start"), clip.get("end")
+        if start is None or end is None:
+            continue
+        # Snap start — only if it keeps the clip at least 5s long
+        if start > 0.7:
+            cuts = await _scene_cuts_near(video_path, start)
+            if cuts:
+                best = min(cuts, key=lambda c: abs(c - start))
+                if abs(best - start) <= 0.6 and (end - best) >= 5:
+                    clip["start"] = round(best, 3)
+        # Snap end
+        end_cuts = await _scene_cuts_near(video_path, end)
+        if end_cuts:
+            best = min(end_cuts, key=lambda c: abs(c - end))
+            if abs(best - end) <= 0.6 and (best - clip["start"]) >= 5:
+                clip["end"] = round(best, 3)
+    log(job_id, "  Snapped clip boundaries to nearby scene cuts")
+
+
 # ── cut clips + burn subtitles ────────────────────────────────────────────────
 async def create_clips(
     video_path: Path,
@@ -1321,6 +1365,12 @@ async def create_clips(
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
+
+    # Snap clip boundaries to nearby scene cuts so clips don't start/end mid-shot
+    try:
+        await _snap_to_scene_boundaries(video_path, clip_defs, job_id)
+    except Exception as _se:
+        log(job_id, f"  Scene-boundary snap skipped: {_se}")
 
     # Probe once to detect hardcoded subtitle bar before the clip loop
     caption_crop_px = 0

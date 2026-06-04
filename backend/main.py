@@ -78,7 +78,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 
-from r2 import upload_clip, presigned_url, stream_clip, download_clip_to_temp, delete_job_clips, R2_ENABLED
+from r2 import upload_clip, upload_thumbnail, presigned_url, stream_clip, download_clip_to_temp, delete_job_clips, R2_ENABLED
 from db import (
     db_create_job, db_get_job, db_update_job, db_get_user_jobs,
     db_get_active_jobs, db_update_clip_yt_upload, db_update_clip_analytics,
@@ -335,11 +335,17 @@ def _enrich_clips(job: dict) -> dict:
     enriched = []
     for clip in clips:
         filename = clip.get("filename", "")
+        thumb = clip.get("thumbnail")
+        extra = {}
         if filename and job_id:
             url = presigned_url(job_id, filename)
-            enriched.append({**clip, "presigned_url": url} if url else clip)
-        else:
-            enriched.append(clip)
+            if url:
+                extra["presigned_url"] = url
+        if thumb and job_id:
+            turl = presigned_url(job_id, thumb)
+            if turl:
+                extra["thumbnail_url"] = turl
+        enriched.append({**clip, **extra} if extra else clip)
     return {**job, "clips": enriched}
 
 def _c(ch: dict) -> dict:
@@ -1251,6 +1257,53 @@ async def _detect_caption_bar(video_path: Path, duration: float, src_h: int, src
     return min(crop_px, int(src_h * 0.12))
 
 
+# ── auto thumbnail generation ─────────────────────────────────────────────────
+def _wrap_title(title: str, max_chars: int = 16, max_lines: int = 3) -> str:
+    """Word-wrap a title into at most max_lines lines for thumbnail overlay."""
+    words = (title or "").strip().upper().split()
+    lines, cur = [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 <= max_chars or not cur:
+            cur = f"{cur} {w}".strip()
+        else:
+            lines.append(cur)
+            cur = w
+        if len(lines) == max_lines:
+            break
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+    return "\n".join(lines[:max_lines])
+
+
+async def _generate_thumbnail(clip_path: Path, title: str, out_path: Path, job_dir: Path) -> bool:
+    """Grab a frame from the rendered 9:16 clip and overlay a dark band + title at top."""
+    txt_file = job_dir / f"{out_path.stem}_title.txt"
+    try:
+        txt_file.write_text(_wrap_title(title), encoding="utf-8")
+        # textfile path is relative to job_dir (cwd) to avoid colon-escaping issues
+        vf = (
+            "drawbox=x=0:y=0:w=iw:h=420:color=black@0.5:t=fill,"
+            f"drawtext=font=Montserrat:textfile={txt_file.name}:fontcolor=white:"
+            "fontsize=72:borderw=4:bordercolor=black@0.9:"
+            "x=(w-text_w)/2:y=70:line_spacing=14"
+        )
+        cmd = [
+            FFMPEG, "-y", "-ss", "1.2", "-i", str(clip_path),
+            "-vframes", "1", "-vf", vf, "-q:v", "3", str(out_path),
+        ]
+        code, _, err = await run_cmd_async(cmd, str(job_dir))
+        if code != 0 or not out_path.exists():
+            # Retry without the title overlay (font issues) — still produce a frame
+            cmd2 = [FFMPEG, "-y", "-ss", "1.2", "-i", str(clip_path), "-vframes", "1", "-q:v", "3", str(out_path)]
+            code2, _, _ = await run_cmd_async(cmd2, str(job_dir))
+            return code2 == 0 and out_path.exists()
+        return True
+    except Exception:
+        return False
+    finally:
+        txt_file.unlink(missing_ok=True)
+
+
 # ── cut clips + burn subtitles ────────────────────────────────────────────────
 async def create_clips(
     video_path: Path,
@@ -1448,6 +1501,12 @@ async def create_clips(
             continue
 
         log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
+
+        # Generate a thumbnail from the rendered clip
+        thumb_filename = f"clip_{idx+1}_thumb.jpg"
+        thumb_path = OUTPUT_DIR / job_id / thumb_filename
+        thumb_ok = await _generate_thumbnail(clip_path, clip.get("title", f"Clip {idx+1}"), thumb_path, job_dir)
+
         if R2_ENABLED:
             try:
                 upload_clip(clip_path, job_id, clip_filename)
@@ -1455,10 +1514,17 @@ async def create_clips(
                 log(job_id, f"  Uploaded to R2, removed from disk")
             except Exception as e:
                 log(job_id, f"  R2 upload failed (clip kept locally): {e}")
+            if thumb_ok:
+                try:
+                    upload_thumbnail(thumb_path, job_id, thumb_filename)
+                    thumb_path.unlink(missing_ok=True)
+                except Exception as e:
+                    log(job_id, f"  Thumbnail upload failed: {e}")
         results.append({
             **clip,
             "filename": clip_filename,
             "path": f"/clips/{job_id}/{clip_filename}",
+            "thumbnail": thumb_filename if thumb_ok else None,
             "duration": round(dur, 1),
         })
 

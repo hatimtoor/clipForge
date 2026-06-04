@@ -43,6 +43,16 @@ def upload_clip(local_path: Path, job_id: str, filename: str) -> None:
         )
 
 
+def upload_thumbnail(local_path: Path, job_id: str, filename: str) -> None:
+    """Upload a clip thumbnail (JPEG) to R2, served inline for <img> display."""
+    key = clip_key(job_id, filename)
+    with open(local_path, "rb") as f:
+        _get_client().upload_fileobj(
+            f, R2_BUCKET, key,
+            ExtraArgs={"ContentType": "image/jpeg", "ContentDisposition": "inline"},
+        )
+
+
 def presigned_url(job_id: str, filename: str, expires: int = 3600) -> str | None:
     """Generate a short-lived presigned URL for direct browser access to a private R2 clip."""
     try:

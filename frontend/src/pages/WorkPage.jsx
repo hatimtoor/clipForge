@@ -198,6 +198,14 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
     } finally { setDownloading(false); }
   };
 
+  const handleDownloadThumb = () => {
+    if (!clip.thumbnail_url) return;
+    const a = document.createElement("a");
+    a.href = clip.thumbnail_url;
+    a.download = `clip_${idx + 1}_thumbnail.jpg`;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+
   const ytUp = clip.yt_upload;
   const score = clip.virality_score || 0;
   const fillBlocks = Math.round(score / 2);
@@ -215,6 +223,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <PixelBtn color="cream" size="sm" onClick={onPreview}>{isActive ? "|| HIDE" : "> PLAY"}</PixelBtn>
             <PixelBtn color="cream" size="sm" onClick={handleDownload} disabled={downloading}>{downloading ? "..." : "v MP4"}</PixelBtn>
+            {clip.thumbnail_url && <PixelBtn color="cream" size="sm" onClick={handleDownloadThumb}>v JPG</PixelBtn>}
             {ytConnected && (
               ytUp?.status === "done"
                 ? <a href={ytUp.url} target="_blank" rel="noreferrer" className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.yt, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textDecoration: "none", textTransform: "uppercase" }}>{`>`} YT ^</a>
@@ -240,7 +249,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
         </div>
         {isActive && (
           <div ref={previewRef} style={{ borderTop: BORDER, background: C.windowBg }}>
-            <video src={videoSrc} controls autoPlay preload="auto"
+            <video src={videoSrc} poster={clip.thumbnail_url || undefined} controls autoPlay preload="auto"
               style={{ width: "100%", display: "block" }} />
           </div>
         )}
@@ -297,6 +306,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
         <div style={{ padding: "22px 18px", borderLeft: BORDER, display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", background: `${C.paper}88` }}>
           <PixelBtn color="cream" size="sm" onClick={onPreview}>{isActive ? "||" : ">"} {isActive ? "HIDE" : "PLAY"}</PixelBtn>
           <PixelBtn color="cream" size="sm" onClick={handleDownload} disabled={downloading}>{downloading ? "..." : "v MP4"}</PixelBtn>
+          {clip.thumbnail_url && <PixelBtn color="cream" size="sm" onClick={handleDownloadThumb}>v JPG</PixelBtn>}
           {ytConnected && (
             ytUp?.status === "done"
               ? <a href={ytUp.url} target="_blank" rel="noreferrer" className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.yt, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textDecoration: "none", textTransform: "uppercase" }}>{`>`} YT ^</a>
@@ -422,7 +432,7 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
             </div>
             <div style={{ background: C.windowBg, border: BORDER, boxShadow: SHADOW, padding: 0, overflow: "hidden" }}>
               <div style={{ aspectRatio: "9/16", background: C.windowBg, position: "relative" }}>
-                <video src={active.presigned_url || activeToken} controls autoPlay preload="auto" style={{ width: "100%", height: "100%", display: "block", background: "#000" }} />
+                <video src={active.presigned_url || activeToken} poster={active.thumbnail_url || undefined} controls autoPlay preload="auto" style={{ width: "100%", height: "100%", display: "block", background: "#000" }} />
               </div>
             </div>
             <div style={{ marginTop: 14 }}>

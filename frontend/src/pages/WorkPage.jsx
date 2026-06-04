@@ -432,7 +432,38 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
           </div>
         )}
       </div>
+
+      {clips.length > 0 && <RetentionNotice job={job} isMobile={isMobile} />}
     </div>
+  );
+}
+
+function RetentionNotice({ job, isMobile }) {
+  const RETENTION_DAYS = 7;
+  if (job.clips_expired) {
+    return (
+      <PixelCard color={C.hot} padding={isMobile ? 14 : 18} style={{ marginTop: 24, boxShadow: isMobile ? "none" : undefined }}>
+        <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 8 }}>⚠ CLIPS EXPIRED</div>
+        <div className="vt" style={{ fontSize: isMobile ? 15 : 17, color: C.ink, lineHeight: 1.5 }}>
+          These clips were older than {RETENTION_DAYS} days and have been removed from storage. Re-run the job to regenerate them.
+        </div>
+      </PixelCard>
+    );
+  }
+  let daysLeft = null;
+  if (job.created_at) {
+    const elapsed = (Date.now() - new Date(job.created_at).getTime()) / 86400000;
+    daysLeft = Math.max(0, Math.ceil(RETENTION_DAYS - elapsed));
+  }
+  return (
+    <PixelCard color={C.amber} padding={isMobile ? 14 : 18} style={{ marginTop: 24, boxShadow: isMobile ? "none" : undefined }}>
+      <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 8 }}>⏳ HEADS UP</div>
+      <div className="vt" style={{ fontSize: isMobile ? 15 : 17, color: C.ink, lineHeight: 1.5 }}>
+        Clips are auto-deleted {RETENTION_DAYS} days after creation
+        {daysLeft !== null && <> — <strong>{daysLeft === 0 ? "expiring today" : `about ${daysLeft} day${daysLeft === 1 ? "" : "s"} left`}</strong></>}.
+        Download anything you want to keep before then.
+      </div>
+    </PixelCard>
   );
 }
 

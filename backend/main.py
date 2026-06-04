@@ -78,11 +78,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 
-from r2 import upload_clip, presigned_url, stream_clip, download_clip_to_temp, R2_ENABLED
+from r2 import upload_clip, presigned_url, stream_clip, download_clip_to_temp, delete_job_clips, R2_ENABLED
 from db import (
     db_create_job, db_get_job, db_update_job, db_get_user_jobs,
     db_get_active_jobs, db_update_clip_yt_upload, db_update_clip_analytics,
-    db_get_done_jobs_with_uploads,
+    db_get_done_jobs_with_uploads, db_get_expirable_jobs,
     db_create_channel, db_get_channel, db_get_user_channels,
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
     db_get_youtube_token, db_get_user_youtube_tokens, db_upsert_youtube_token, db_delete_youtube_token,
@@ -1875,12 +1875,35 @@ async def backfill_scheduler():
         await asyncio.sleep(3600)  # check every hour
 
 
+CLIP_RETENTION_DAYS = 7
+
+async def clip_cleanup_scheduler():
+    """Delete R2 clips for done jobs older than CLIP_RETENTION_DAYS, once per day."""
+    await asyncio.sleep(120)  # let startup settle
+    while True:
+        try:
+            if R2_ENABLED:
+                jobs = await asyncio.to_thread(db_get_expirable_jobs, CLIP_RETENTION_DAYS)
+                for job in jobs:
+                    job_id = job["id"]
+                    try:
+                        n = await asyncio.to_thread(delete_job_clips, job_id)
+                        await asyncio.to_thread(db_update_job, job_id, {"clips_expired": True})
+                        print(f"[clip_cleanup] expired {n} clips for job {job_id}", flush=True)
+                    except Exception as je:
+                        print(f"[clip_cleanup] failed for job {job_id}: {je}", flush=True)
+        except Exception as e:
+            print(f"[clip_cleanup] error: {e}", flush=True)
+        await asyncio.sleep(86400)  # once per day
+
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(watchdog())
     asyncio.create_task(channel_poller())
     asyncio.create_task(analytics_refresher())
     asyncio.create_task(backfill_scheduler())
+    asyncio.create_task(clip_cleanup_scheduler())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES

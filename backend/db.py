@@ -84,6 +84,20 @@ def db_update_clip_analytics(job_id: str, clip_index: int, analytics: dict) -> N
         get_db().table("jobs").update({"clips": clips}).eq("id", job_id).execute()
 
 
+def db_get_expirable_jobs(days: int = 7) -> list:
+    """Done jobs older than `days` whose clips haven't been expired/deleted yet."""
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    r = (
+        get_db().table("jobs")
+        .select("id,created_at,clips_expired,clips")
+        .eq("status", "done")
+        .lt("created_at", cutoff)
+        .execute()
+    )
+    return [j for j in (r.data or []) if not j.get("clips_expired") and (j.get("clips") or [])]
+
+
 def db_get_done_jobs_with_uploads() -> list:
     """All done jobs that have at least one YouTube-uploaded clip (for analytics refresh)."""
     r = (

@@ -75,3 +75,20 @@ def download_clip_to_temp(job_id: str, filename: str) -> "Path | None":
         return Path(tmp.name)
     except Exception:
         return None
+
+
+def delete_job_clips(job_id: str) -> int:
+    """Delete every R2 object under clips/{job_id}/. Returns the count deleted."""
+    client = _get_client()
+    prefix = f"clips/{job_id}/"
+    deleted = 0
+    try:
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=R2_BUCKET, Prefix=prefix):
+            objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if objs:
+                client.delete_objects(Bucket=R2_BUCKET, Delete={"Objects": objs})
+                deleted += len(objs)
+    except Exception as e:
+        print(f"[r2.delete_job_clips] error for {job_id}: {e}", flush=True)
+    return deleted

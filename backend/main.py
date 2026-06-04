@@ -231,6 +231,7 @@ class ClipRequest(BaseModel):
     caption_language: str = "source"
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
+    trim_silence: bool = False
 
 class JobStatus(BaseModel):
     job_id: str
@@ -260,6 +261,7 @@ class ChannelRequest(BaseModel):
     yt_channel_id: Optional[str] = None
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
+    trim_silence: bool = False
 
 class ChannelPatchRequest(BaseModel):
     auto_upload: Optional[bool] = None
@@ -273,6 +275,7 @@ class ChannelPatchRequest(BaseModel):
     yt_channel_id: Optional[str] = None
     bg_music_url: Optional[str] = None
     bg_music_volume: Optional[float] = None
+    trim_silence: Optional[bool] = None
 
 
 class BackfillRequest(BaseModel):
@@ -289,6 +292,7 @@ class BackfillRequest(BaseModel):
     caption_language: str = "source"
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
+    trim_silence: bool = False
 
 
 class BackfillPatchRequest(BaseModel):
@@ -305,6 +309,7 @@ class BackfillPatchRequest(BaseModel):
     caption_language: Optional[str] = None
     bg_music_url: Optional[str] = None
     bg_music_volume: Optional[float] = None
+    trim_silence: Optional[bool] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1348,6 +1353,107 @@ async def _snap_to_scene_boundaries(video_path: Path, clip_defs: list, job_id: s
     log(job_id, "  Snapped clip boundaries to nearby scene cuts")
 
 
+# ── silence trimming ──────────────────────────────────────────────────────────
+async def _detect_silence(video_path: Path, start: float, dur: float,
+                          min_silence: float = 0.5, noise: str = "-30dB") -> list:
+    """Detect silent ranges (clip-relative, 0-based) within a clip via silencedetect."""
+    cmd = [
+        FFMPEG, "-ss", f"{start:.3f}", "-i", str(video_path), "-t", f"{dur:.3f}",
+        "-af", f"silencedetect=n={noise}:d={min_silence}", "-f", "null", "-",
+    ]
+    try:
+        _, _, err = await run_cmd_async(cmd)
+    except Exception:
+        return []
+    silences, cur = [], None
+    for line in (err or "").splitlines():
+        ms = re.search(r"silence_start:\s*([0-9.]+)", line)
+        me = re.search(r"silence_end:\s*([0-9.]+)", line)
+        if ms:
+            cur = float(ms.group(1))
+        elif me and cur is not None:
+            silences.append((cur, float(me.group(1))))
+            cur = None
+    return silences
+
+
+def _keep_intervals(silences: list, total: float, pad: float = 0.08) -> list:
+    """Complement of silent ranges → list of (start,end) speech intervals to keep."""
+    keep, cursor = [], 0.0
+    for s_start, s_end in silences:
+        # Pad inward so we don't clip the start/end of adjacent speech
+        s_start = min(total, s_start + pad)
+        s_end = max(0.0, s_end - pad)
+        if s_end <= s_start:
+            continue
+        if s_start > cursor:
+            keep.append((cursor, s_start))
+        cursor = max(cursor, s_end)
+    if cursor < total:
+        keep.append((cursor, total))
+    return [(a, b) for a, b in keep if b - a > 0.05]
+
+
+def _remap_segments_for_trim(segments: list, clip_start: float, clip_end: float, keep: list) -> tuple:
+    """Map word timings onto the trimmed timeline. Returns (new_segments, trimmed_dur)."""
+    # cumulative kept-duration offset at the start of each keep interval
+    offsets, acc = [], 0.0
+    for a, b in keep:
+        offsets.append(acc)
+        acc += (b - a)
+    trimmed_dur = acc
+
+    def remap(local: float):
+        for (a, b), off in zip(keep, offsets):
+            if a <= local <= b:
+                return off + (local - a)
+        return None
+
+    new_segments = []
+    src = segments or []
+    for seg in src:
+        for w in _fill_words(seg):
+            ws = w["start"] - clip_start
+            we = w["end"] - clip_start
+            if we < 0 or ws > (clip_end - clip_start):
+                continue
+            ns = remap(max(0.0, ws))
+            ne = remap(min(clip_end - clip_start, we))
+            if ns is None and ne is None:
+                continue
+            ns = ns if ns is not None else (ne - 0.2 if ne else 0.0)
+            ne = ne if ne is not None else ns + 0.2
+            if ne <= ns:
+                ne = ns + 0.1
+            word = w["word"]
+            new_segments.append({
+                "start": round(ns, 3), "end": round(ne, 3),
+                "text": word, "words": [{"word": word, "start": round(ns, 3), "end": round(ne, 3)}],
+            })
+    return new_segments, trimmed_dur
+
+
+async def _build_trimmed_clip(video_path: Path, start: float, dur: float, keep: list, out_path: Path) -> bool:
+    """Render an intermediate clip with silent gaps cut out, preserving source resolution."""
+    parts_v, parts_a, labels = [], [], []
+    for i, (a, b) in enumerate(keep):
+        parts_v.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
+        parts_a.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}]")
+        labels.append(f"[v{i}][a{i}]")
+    n = len(keep)
+    fc = ";".join(parts_v + parts_a) + ";" + "".join(labels) + f"concat=n={n}:v=1:a=1[v][a]"
+    cmd = [
+        FFMPEG, "-y", "-ss", f"{start:.3f}", "-i", str(video_path), "-t", f"{dur:.3f}",
+        "-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20", "-c:a", "aac", str(out_path),
+    ]
+    try:
+        code, _, _ = await run_cmd_async(cmd)
+        return code == 0 and out_path.exists()
+    except Exception:
+        return False
+
+
 # ── cut clips + burn subtitles ────────────────────────────────────────────────
 async def create_clips(
     video_path: Path,
@@ -1362,6 +1468,7 @@ async def create_clips(
     caption_segments: Optional[list] = None,
     bg_music_url: Optional[str] = None,
     bg_music_volume: float = 0.15,
+    trim_silence: bool = False,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -1409,6 +1516,34 @@ async def create_clips(
         progress = 78 + int((idx / len(clip_defs)) * 20)
         await update_job(job_id, progress=progress, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']}")
 
+        # Render source defaults to the original video; silence trimming may swap
+        # it for a pre-trimmed intermediate with gaps cut out.
+        render_src   = video_path
+        render_ss    = start
+        render_dur   = dur
+        ass_segs     = caption_segments if caption_segments is not None else segments
+        ass_clip_start = start
+        ass_clip_end   = end
+        trimmed_file: Optional[Path] = None
+
+        if trim_silence:
+            silences = await _detect_silence(video_path, start, dur)
+            keep = _keep_intervals(silences, dur)
+            removed = dur - sum(b - a for a, b in keep)
+            if keep and len(keep) >= 2 and removed >= 0.8:
+                trimmed_file = job_dir / f"clip_{idx}_trimmed.mp4"
+                if await _build_trimmed_clip(video_path, start, dur, keep, trimmed_file):
+                    remapped, trimmed_dur = _remap_segments_for_trim(
+                        caption_segments if caption_segments is not None else segments,
+                        start, end, keep,
+                    )
+                    render_src, render_ss, render_dur = trimmed_file, 0.0, trimmed_dur
+                    ass_segs, ass_clip_start, ass_clip_end = remapped, 0.0, trimmed_dur
+                    log(job_id, f"  Silence trimmed: removed {removed:.1f}s ({dur:.1f}s → {trimmed_dur:.1f}s)")
+                else:
+                    trimmed_file = None
+                    log(job_id, "  Silence trim failed — rendering full clip")
+
         # Get video dimensions (assume 16:9 source → crop to 9:16 for shorts)
         probe_cmd = [
             FFPROBE, "-v", "quiet", "-print_format", "json",
@@ -1439,9 +1574,9 @@ async def create_clips(
         # Build ASS subtitle
         ass_path = job_dir / f"clip_{idx}.ass"
         build_ass_subtitles(
-            caption_segments if caption_segments is not None else segments,
-            clip_start=start,
-            clip_end=end,
+            ass_segs,
+            clip_start=ass_clip_start,
+            clip_end=ass_clip_end,
             output_path=ass_path,
             video_width=out_w,
             video_height=out_h,
@@ -1470,17 +1605,17 @@ async def create_clips(
                 temp_yolo = job_dir / f"clip_{idx}_yolo.mp4"
                 # Transcode to H.264 so OpenCV can decode it — AV1 source videos
                 # fail silently in OpenCV even though ffmpeg handles them fine.
-                await run_cmd_async([FFMPEG, "-y", "-ss", str(start), "-i", str(video_path),
-                                     "-t", str(dur), "-c:v", "libx264", "-preset", "ultrafast",
+                await run_cmd_async([FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
+                                     "-t", str(render_dur), "-c:v", "libx264", "-preset", "ultrafast",
                                      "-crf", "28", "-an", str(temp_yolo)])
                 detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, src_w, src_h)
                 temp_yolo.unlink(missing_ok=True)
                 log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
                 if len(detections) == 0:
                     await update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (no person detected — using center crop)")
-            trajectory = smooth_crop_trajectory(detections, dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
+            trajectory = smooth_crop_trajectory(detections, render_dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
         else:
-            trajectory = [(0.0, center_crop_x), (round(dur, 3), center_crop_x)]
+            trajectory = [(0.0, center_crop_x), (round(render_dur, 3), center_crop_x)]
         is_dynamic = len(set(x for _, x in trajectory)) > 1
         log(job_id, f"  Crop mode: {'dynamic pan' if is_dynamic else 'static'} (x={trajectory[0][1]})")
 
@@ -1511,11 +1646,11 @@ async def create_clips(
             )
             ffmpeg_cmd = [
                 FFMPEG, "-y",
-                "-ss", str(start),
-                "-i", str(video_path),
+                "-ss", str(render_ss),
+                "-i", str(render_src),
                 "-stream_loop", "-1",
                 "-i", str(music_path),
-                "-t", str(dur),
+                "-t", str(render_dur),
                 "-filter_complex", fc,
                 "-map", "[vout]",
                 "-map", "[aout]",
@@ -1530,9 +1665,9 @@ async def create_clips(
         else:
             ffmpeg_cmd = [
                 FFMPEG, "-y",
-                "-ss", str(start),
-                "-i", str(video_path),
-                "-t", str(dur),
+                "-ss", str(render_ss),
+                "-i", str(render_src),
+                "-t", str(render_dur),
                 "-vf", vf_string,
                 "-c:v", "libx264",
                 "-preset", "fast",
@@ -1570,12 +1705,14 @@ async def create_clips(
                     thumb_path.unlink(missing_ok=True)
                 except Exception as e:
                     log(job_id, f"  Thumbnail upload failed: {e}")
+        if trimmed_file:
+            trimmed_file.unlink(missing_ok=True)
         results.append({
             **clip,
             "filename": clip_filename,
             "path": f"/clips/{job_id}/{clip_filename}",
             "thumbnail": thumb_filename if thumb_ok else None,
-            "duration": round(dur, 1),
+            "duration": round(render_dur, 1),
         })
 
     return results
@@ -1653,6 +1790,7 @@ async def channel_poller():
                         caption_language=ch.get("caption_language", "source"),
                         bg_music_url=ch.get("bg_music_url") or None,
                         bg_music_volume=ch.get("bg_music_volume") or 0.15,
+                        trim_silence=ch.get("trim_silence", False),
                     )
                     asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id")))
             except Exception as e:
@@ -1766,6 +1904,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             caption_segments=caption_segs,
             bg_music_url=req.bg_music_url,
             bg_music_volume=req.bg_music_volume,
+            trim_silence=req.trim_silence,
         )
 
         await update_job(
@@ -1943,6 +2082,7 @@ async def _process_backfill(bf: dict) -> None:
                 caption_language=bf.get("caption_language", "source"),
                 bg_music_url=bf.get("bg_music_url") or None,
                 bg_music_volume=bf.get("bg_music_volume") or 0.15,
+                trim_silence=bf.get("trim_silence", False),
             )
             job_data = {
                 "user_id": user_id,
@@ -2496,6 +2636,7 @@ async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
         "caption_language": req.caption_language,
         "bg_music_url": req.bg_music_url or None,
         "bg_music_volume": req.bg_music_volume,
+        "trim_silence": req.trim_silence,
         "processed_video_ids": [],
         "total_videos": 0,
         "status": "active",
@@ -2743,6 +2884,7 @@ async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
         "caption_language": req.caption_language,
         "bg_music_url": req.bg_music_url or None,
         "bg_music_volume": req.bg_music_volume,
+        "trim_silence": req.trim_silence,
     })
     return _c(ch_data)
 

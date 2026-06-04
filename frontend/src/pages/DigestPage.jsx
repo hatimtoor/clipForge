@@ -90,6 +90,7 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
   const [captionLang,    setCaptionLang]    = useState(bf.caption_language ?? "source");
   const [bgMusicUrl,     setBgMusicUrl]     = useState(bf.bg_music_url ?? "");
   const [bgMusicVolume,  setBgMusicVolume]  = useState(bf.bg_music_volume ?? 0.15);
+  const [trimSilence,    setTrimSilence]    = useState(bf.trim_silence ?? false);
 
   const ytChannels = ytStatus?.channels || [];
   const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
@@ -219,6 +220,17 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
+                    <button onClick={() => { const v = !trimSilence; setTrimSilence(v); patch({ trim_silence: v }); }} className="pixel" style={{
+                      width: "100%", padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
+                      background: trimSilence ? C.signal : C.cream2, color: C.ink, border: BORDER,
+                      boxShadow: trimSilence ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                      transform: trimSilence ? "translate(2px,2px)" : "none",
+                    }}>
+                      ✂ TRIM SILENCE {trimSilence ? "ON" : "OFF"}
+                    </button>
                   </div>
                 </div>
               )}

@@ -17,6 +17,7 @@ export default function HelloPage() {
   const [minDur, setMinDur] = useState(Number(searchParams.get("min_dur")) || 30);
   const [maxDur, setMaxDur] = useState(Number(searchParams.get("max_dur")) || 90);
   const [reframe, setReframe] = useState(searchParams.get("reframe") === "1");
+  const [trimSilence, setTrimSilence] = useState(searchParams.get("trim_silence") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
   const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
@@ -73,6 +74,7 @@ export default function HelloPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe,
+          trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
           caption_style: captionStyle,
           caption_font_size: fontSizeOverride || undefined,
@@ -145,7 +147,7 @@ export default function HelloPage() {
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 8 : 10, marginBottom: 28 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 8 : 10, marginBottom: isMobile ? 12 : 14 }}>
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
@@ -158,6 +160,10 @@ export default function HelloPage() {
                     <div className="vt" style={{ fontSize: 14, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>upgrade to unlock reframe</div>
                   </button>
               }
+            </div>
+
+            <div style={{ marginBottom: 28 }}>
+              <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM SILENCE" hint="cut out pauses & dead air" />
             </div>
 
             {error && (

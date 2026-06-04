@@ -147,7 +147,7 @@ export default function HelloPage() {
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 8 : 10, marginBottom: isMobile ? 12 : 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 8 : 10, marginBottom: 28 }}>
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
@@ -160,10 +160,7 @@ export default function HelloPage() {
                     <div className="vt" style={{ fontSize: 14, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>upgrade to unlock reframe</div>
                   </button>
               }
-            </div>
-
-            <div style={{ marginBottom: 28 }}>
-              <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM SILENCE" hint="cut out pauses & dead air" />
+              <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
             </div>
 
             {error && (

@@ -3047,6 +3047,13 @@ async def serve_spa(full_path: str):
         candidate = (FRONTEND_BUILD / Path(*safe_parts) if safe_parts else FRONTEND_BUILD).resolve()
         if candidate.is_file() and candidate.is_relative_to(FRONTEND_BUILD.resolve()):
             return FileResponse(str(candidate))
+        # Don't fall through to index.html for obvious file/probe requests
+        # (e.g. /.git-credentials, /config/secrets.yml, /vite.config.js). Real
+        # client-side routes have no file extension and no dot-prefixed segment,
+        # so anything that looks like a file gets a clean 404 instead of a 200.
+        last = safe_parts[-1] if safe_parts else ""
+        if "." in last or any(p.startswith(".") for p in safe_parts):
+            raise HTTPException(404, "Not found")
         index = FRONTEND_BUILD / "index.html"
         if index.exists():
             return FileResponse(str(index))

@@ -11,7 +11,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 try:
-    from reframe import _get_yolo, _speaking_person_cx
+    from reframe import _get_yolo, _speaking_person_cx, _audio_rms_per_frame
     _REFRAME_AVAILABLE = True
 except Exception as _reframe_err:
     _REFRAME_AVAILABLE = False
@@ -1080,6 +1080,16 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
     fps    = cap.get(_cv2.CAP_PROP_FPS) or 30.0
     sample_every = max(1, int(fps / 2))  # two samples per second — catch speaker switches faster
 
+    # Audio gating: only track the speaker during actual speech. During silent
+    # pauses the camera holds where it is instead of chasing a fidgeting listener.
+    import numpy as _np
+    try:
+        rms = _audio_rms_per_frame(clip_path, fps, FFMPEG)
+    except Exception:
+        rms = _np.array([])
+    # Quietest ~35% of frames treated as pauses; rest = speech. No audio → track all.
+    speech_threshold = float(_np.percentile(rms, 35)) if len(rms) else 0.0
+
     results: list = []
     prev_frame = None
     frame_idx  = 0
@@ -1090,17 +1100,19 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
         if not ret:
             break
         if frame_idx % sample_every == 0:
-            frames_tried += 1
-            cx = _speaking_person_cx(frame, prev_frame, model)
-            if cx is not None:
-                t = frame_idx / fps
-                crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
-                results.append((round(t, 3), crop_x))
-            prev_frame = frame
+            is_speech = (speech_threshold == 0.0) or (frame_idx < len(rms) and rms[frame_idx] >= speech_threshold)
+            if is_speech:
+                frames_tried += 1
+                cx = _speaking_person_cx(frame, prev_frame, model)
+                if cx is not None:
+                    t = frame_idx / fps
+                    crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
+                    results.append((round(t, 3), crop_x))
+            prev_frame = frame  # update regardless so motion diff stays consistent
         frame_idx += 1
 
     cap.release()
-    print(f"[reframe] {len(results)}/{frames_tried} frames detected a person", flush=True)
+    print(f"[reframe] {len(results)}/{frames_tried} speech-frame samples detected a person (audio-gated)", flush=True)
     return results
 
 
@@ -1686,9 +1698,10 @@ async def create_clips(
                 temp_yolo = job_dir / f"clip_{idx}_yolo.mp4"
                 # Transcode to H.264 so OpenCV can decode it — AV1 source videos
                 # fail silently in OpenCV even though ffmpeg handles them fine.
+                # Keep audio so the sampler can gate tracking to actual speech
                 await run_cmd_async([FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
                                      "-t", str(render_dur), "-c:v", "libx264", "-preset", "ultrafast",
-                                     "-crf", "28", "-an", str(temp_yolo)])
+                                     "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(temp_yolo)])
                 detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, src_w, src_h)
                 temp_yolo.unlink(missing_ok=True)
                 log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")

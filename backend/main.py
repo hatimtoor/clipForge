@@ -92,7 +92,7 @@ from db import (
     db_create_channel, db_get_channel, db_get_user_channels,
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
     db_get_youtube_token, db_get_user_youtube_tokens, db_upsert_youtube_token, db_delete_youtube_token,
-    db_get_profile, db_check_and_reset_quota, db_increment_clips_used,
+    db_get_profile, db_check_and_reset_quota, db_increment_clips_used, db_claim_clips_atomic,
     db_get_user_email,
     FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
     db_create_backfill, db_get_user_backfills, db_get_active_backfills,

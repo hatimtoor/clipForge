@@ -1110,22 +1110,24 @@ def smooth_crop_trajectory(
     fallback_crop_x: int,
     crop_w: int,
     src_w: int,
-    max_speed_px_per_s: float = 260.0,
-    dead_zone_ratio: float = 0.68,
-    min_hold_s: float = 1.2,
+    track_speed_px_per_s: float = 300.0,
+    switch_speed_px_per_s: float = 1500.0,
+    min_hold_s: float = 2.0,
 ) -> list:
     """
-    Dead-zone lazy-pan crop trajectory with ping-pong protection.
+    Active-speaker crop trajectory.
 
-    The crop only moves when the face exits the central dead_zone_ratio of the
-    frame.  Inside that zone the crop holds still, eliminating micro-jitter.
-    When a pan IS needed it eases at max_speed_px_per_s, and a minimum hold time
-    (min_hold_s) between pans prevents rapid back-and-forth switching.
-
-    If the detections show two+ speakers far apart alternating (a podcast /
-    overlapping-talk scenario), chasing each speaker looks terrible, so we
-    detect that and hold a single stable shot centered between them instead.
+    Centers the crop on whoever is currently speaking. Small movements (the same
+    speaker shifting) are tracked gently and a micro dead-zone kills jitter. A
+    large jump (a different speaker taking over) is treated as a SWITCH: it only
+    fires if the current speaker has been held for at least min_hold_s, and then
+    snaps quickly (switch_speed) so the camera doesn't linger on the empty space
+    between people. This gives clean multi-cam-style cuts instead of either
+    ping-ponging or freezing in the middle.
     """
+    def _clamp(x):
+        return max(0, min(int(x), src_w - crop_w))
+
     if not detections:
         return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
 
@@ -1133,7 +1135,7 @@ def smooth_crop_trajectory(
     xs = [x for _, x in detections]
     filtered = []
     for i, (t, x) in enumerate(detections):
-        window = xs[max(0, i-1):i+2]
+        window = xs[max(0, i - 1):i + 2]
         median = sorted(window)[len(window) // 2]
         if abs(x - median) <= 200:
             filtered.append((t, x))
@@ -1141,61 +1143,48 @@ def smooth_crop_trajectory(
     if not filtered:
         return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
 
-    # ── Ping-pong detection ──────────────────────────────────────────────────
-    # face_cx for each sample (detections store crop_x-if-centered)
-    face_cxs = [cx + crop_w // 2 for _, cx in filtered]
-    if len(face_cxs) >= 4:
-        spread = max(face_cxs) - min(face_cxs)
-        reversals = 0
-        for i in range(2, len(face_cxs)):
-            d1 = face_cxs[i - 1] - face_cxs[i - 2]
-            d2 = face_cxs[i] - face_cxs[i - 1]
-            if d1 * d2 < 0 and abs(d2) > crop_w * 0.15:
-                reversals += 1
-        reversal_rate = reversals / max(1, len(face_cxs) - 2)
-        # Speakers spread > half a crop-width apart AND flipping often → hold steady
-        if spread > crop_w * 0.5 and reversal_rate > 0.25:
-            mid_cx = (max(face_cxs) + min(face_cxs)) // 2
-            static_x = max(0, min(int(mid_cx - crop_w / 2), src_w - crop_w))
-            return [(0.0, static_x), (round(clip_duration, 3), static_x)]
+    micro_dead       = crop_w * 0.08   # ignore tiny wiggle (same speaker)
+    switch_threshold = crop_w * 0.22   # bigger than this = a different speaker
 
-    # Dead zone: only reposition when face exits the safe band
-    safe_margin = int((1.0 - dead_zone_ratio) / 2.0 * crop_w)  # px from each edge
-    current_x = fallback_crop_x
-    last_pan_t = -999.0
-    keyframes = [] if (filtered and filtered[0][0] < 0.001) else [(0.0, current_x)]
+    # Center the crop on the first detected speaker
+    first_target = _clamp(filtered[0][1])  # detections already store crop_x-if-centered
+    current_x = first_target
+    last_switch_t = filtered[0][0]
+    keyframes = [(0.0, current_x)] if filtered[0][0] >= 0.001 else []
+    # tag each keyframe: (t, x, is_switch)
+    kf = [(round(filtered[0][0], 3), current_x, True)]
 
-    for t, centered_x in filtered:
-        face_cx = centered_x + crop_w // 2
-        left_bound  = current_x + safe_margin
-        right_bound = current_x + crop_w - safe_margin
-
-        if left_bound <= face_cx <= right_bound:
-            target_x = current_x  # face comfortably inside — hold
-        elif face_cx < left_bound:
-            target_x = max(0, face_cx - safe_margin)
+    for t, centered_x in filtered[1:]:
+        desired = _clamp(centered_x)
+        delta = abs(desired - current_x)
+        if delta <= micro_dead:
+            kf.append((round(t, 3), current_x, False))          # hold — kills jitter
+        elif delta <= switch_threshold:
+            current_x = desired                                  # same speaker drifting — track
+            kf.append((round(t, 3), current_x, False))
         else:
-            target_x = min(src_w - crop_w, face_cx - (crop_w - safe_margin))
+            # Different speaker — only switch if we've held the current one long enough
+            if (t - last_switch_t) >= min_hold_s:
+                current_x = desired
+                last_switch_t = t
+                kf.append((round(t, 3), current_x, True))        # mark as a fast switch
+            else:
+                kf.append((round(t, 3), current_x, False))       # too soon — stay
 
-        # Hysteresis: suppress a new pan if we panned very recently
-        if target_x != current_x and (t - last_pan_t) < min_hold_s:
-            target_x = current_x
-        elif target_x != current_x:
-            last_pan_t = t
+    # Prepend the t=0 bookend if needed
+    if keyframes:
+        kf = [(0.0, keyframes[0][1], False)] + kf
+    if kf[-1][0] < clip_duration:
+        kf.append((round(clip_duration, 3), current_x, False))
 
-        current_x = target_x
-        keyframes.append((round(t, 3), target_x))
-
-    if keyframes[-1][0] < clip_duration:
-        keyframes.append((round(clip_duration, 3), current_x))
-
-    # Rate-limit movement for smooth pans
-    smoothed = [keyframes[0]]
-    for i in range(1, len(keyframes)):
+    # Rate-limit: gentle for tracking, fast snap for speaker switches
+    smoothed = [(kf[0][0], kf[0][1])]
+    for i in range(1, len(kf)):
         t_prev, x_prev = smoothed[-1]
-        t_cur,  x_cur  = keyframes[i]
+        t_cur, x_cur, is_switch = kf[i]
         dt = max(t_cur - t_prev, 0.001)
-        max_delta = int(max_speed_px_per_s * dt)
+        speed = switch_speed_px_per_s if is_switch else track_speed_px_per_s
+        max_delta = int(speed * dt)
         x_cur = x_prev + max(-max_delta, min(max_delta, x_cur - x_prev))
         smoothed.append((t_cur, x_cur))
 

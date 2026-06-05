@@ -1550,27 +1550,31 @@ async def create_clips(
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
 
-    # Snap clip boundaries to nearby scene cuts so clips don't start/end mid-shot
-    try:
-        await _snap_to_scene_boundaries(video_path, clip_defs, job_id)
-    except Exception as _se:
-        log(job_id, f"  Scene-boundary snap skipped: {_se}")
-
-    # Probe once to detect hardcoded subtitle bar before the clip loop
+    # Smart-framing steps (scene-snapping + caption-bar crop) only run with the
+    # 9:16 reframe option on. Free / non-reframe clips get a plain center crop
+    # with no boundary shifting or zoom.
     caption_crop_px = 0
-    try:
-        _pre_probe_cmd = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
-        _, _pre_out, _ = await asyncio.to_thread(run_cmd, _pre_probe_cmd)
-        _pre = json.loads(_pre_out)
-        _pvs = next((s for s in _pre["streams"] if s["codec_type"] == "video"), None)
-        if _pvs:
-            _ph, _pw = int(_pvs["height"]), int(_pvs["width"])
-            _dur = float(_pvs.get("duration") or 60)
-            caption_crop_px = await _detect_caption_bar(video_path, _dur, _ph, _pw)
-            if caption_crop_px > 0:
-                log(job_id, f"  Caption bar detected: cropping {caption_crop_px}px from bottom")
-    except Exception as _ce:
-        log(job_id, f"  Caption detection skipped: {_ce}")
+    if reframe:
+        # Snap clip boundaries to nearby scene cuts so clips don't start/end mid-shot
+        try:
+            await _snap_to_scene_boundaries(video_path, clip_defs, job_id)
+        except Exception as _se:
+            log(job_id, f"  Scene-boundary snap skipped: {_se}")
+
+        # Probe once to detect a hardcoded subtitle bar before the clip loop
+        try:
+            _pre_probe_cmd = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
+            _, _pre_out, _ = await asyncio.to_thread(run_cmd, _pre_probe_cmd)
+            _pre = json.loads(_pre_out)
+            _pvs = next((s for s in _pre["streams"] if s["codec_type"] == "video"), None)
+            if _pvs:
+                _ph, _pw = int(_pvs["height"]), int(_pvs["width"])
+                _dur = float(_pvs.get("duration") or 60)
+                caption_crop_px = await _detect_caption_bar(video_path, _dur, _ph, _pw)
+                if caption_crop_px > 0:
+                    log(job_id, f"  Caption bar detected: cropping {caption_crop_px}px from bottom")
+        except Exception as _ce:
+            log(job_id, f"  Caption detection skipped: {_ce}")
 
     # Download background music once before the clip loop
     music_path: Optional[Path] = None

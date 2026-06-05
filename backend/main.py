@@ -1110,16 +1110,21 @@ def smooth_crop_trajectory(
     fallback_crop_x: int,
     crop_w: int,
     src_w: int,
-    max_speed_px_per_s: float = 400.0,
-    dead_zone_ratio: float = 0.60,
+    max_speed_px_per_s: float = 260.0,
+    dead_zone_ratio: float = 0.68,
+    min_hold_s: float = 1.2,
 ) -> list:
     """
-    Dead-zone lazy-pan crop trajectory.
+    Dead-zone lazy-pan crop trajectory with ping-pong protection.
 
     The crop only moves when the face exits the central dead_zone_ratio of the
-    frame (default 60 %).  Inside that zone the crop holds still, eliminating
-    the constant micro-jitter of always chasing the face center.  When a pan IS
-    needed it eases smoothly at max_speed_px_per_s.
+    frame.  Inside that zone the crop holds still, eliminating micro-jitter.
+    When a pan IS needed it eases at max_speed_px_per_s, and a minimum hold time
+    (min_hold_s) between pans prevents rapid back-and-forth switching.
+
+    If the detections show two+ speakers far apart alternating (a podcast /
+    overlapping-talk scenario), chasing each speaker looks terrible, so we
+    detect that and hold a single stable shot centered between them instead.
     """
     if not detections:
         return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
@@ -1136,11 +1141,28 @@ def smooth_crop_trajectory(
     if not filtered:
         return [(0.0, fallback_crop_x), (round(clip_duration, 3), fallback_crop_x)]
 
+    # ── Ping-pong detection ──────────────────────────────────────────────────
+    # face_cx for each sample (detections store crop_x-if-centered)
+    face_cxs = [cx + crop_w // 2 for _, cx in filtered]
+    if len(face_cxs) >= 4:
+        spread = max(face_cxs) - min(face_cxs)
+        reversals = 0
+        for i in range(2, len(face_cxs)):
+            d1 = face_cxs[i - 1] - face_cxs[i - 2]
+            d2 = face_cxs[i] - face_cxs[i - 1]
+            if d1 * d2 < 0 and abs(d2) > crop_w * 0.15:
+                reversals += 1
+        reversal_rate = reversals / max(1, len(face_cxs) - 2)
+        # Speakers spread > half a crop-width apart AND flipping often → hold steady
+        if spread > crop_w * 0.5 and reversal_rate > 0.25:
+            mid_cx = (max(face_cxs) + min(face_cxs)) // 2
+            static_x = max(0, min(int(mid_cx - crop_w / 2), src_w - crop_w))
+            return [(0.0, static_x), (round(clip_duration, 3), static_x)]
+
     # Dead zone: only reposition when face exits the safe band
-    # detections store crop_x-if-centered, so face_cx = crop_x + crop_w//2
     safe_margin = int((1.0 - dead_zone_ratio) / 2.0 * crop_w)  # px from each edge
     current_x = fallback_crop_x
-    # Only add t=0 bookend if no detection starts at 0 (avoids duplicate timestamps)
+    last_pan_t = -999.0
     keyframes = [] if (filtered and filtered[0][0] < 0.001) else [(0.0, current_x)]
 
     for t, centered_x in filtered:
@@ -1149,14 +1171,17 @@ def smooth_crop_trajectory(
         right_bound = current_x + crop_w - safe_margin
 
         if left_bound <= face_cx <= right_bound:
-            # Face is comfortably inside frame — hold position
-            target_x = current_x
+            target_x = current_x  # face comfortably inside — hold
         elif face_cx < left_bound:
-            # Drifting toward left edge — move just enough to hit safe zone edge
             target_x = max(0, face_cx - safe_margin)
         else:
-            # Drifting toward right edge
             target_x = min(src_w - crop_w, face_cx - (crop_w - safe_margin))
+
+        # Hysteresis: suppress a new pan if we panned very recently
+        if target_x != current_x and (t - last_pan_t) < min_hold_s:
+            target_x = current_x
+        elif target_x != current_x:
+            last_pan_t = t
 
         current_x = target_x
         keyframes.append((round(t, 3), target_x))

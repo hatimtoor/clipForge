@@ -1922,17 +1922,21 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
   <p style="word-break:break-all;color:#1a0d2e;margin:0 0 20px"><strong>Video:</strong> {safe_url}</p>
   <a href="{app_url}/archive" style="display:inline-block;padding:12px 20px;background:#7ddca0;color:#1a0d2e;text-decoration:none;font-weight:bold;border:2px solid #1a0d2e">Open in ClipForge &#x2192;</a>
 </div>"""
+        from_addr = os.getenv("RESEND_FROM", "ClipForge <notifications@updates.clipforging.com>")
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(
+            resp = await client.post(
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "from": "ClipForge <notifications@updates.automationsociety.dpdns.org>",
+                    "from": from_addr,
                     "to": [email],
                     "subject": subject,
                     "html": body,
                 },
             )
+            if resp.status_code >= 400:
+                print(f"[email] Resend rejected ({resp.status_code}): {resp.text[:300]}", flush=True)
+                return
         print(f"[email] Sent '{subject}' to {email}", flush=True)
     except Exception as e:
         print(f"[email] Notification failed (non-fatal): {e}", flush=True)

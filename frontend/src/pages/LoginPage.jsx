@@ -4,6 +4,28 @@ import { C, SHADOW_SM, BORDER, KEYFRAMES } from "../lib/theme";
 import { PixelSprite, ANVIL, ANVIL_PAL, PixelBtn, Field, Tag } from "../components/ui";
 import { supabase } from "../lib/supabase";
 
+// Instant-feedback blocklist of common disposable providers. The real,
+// unbypassable enforcement is the auth.users trigger in Supabase
+// (backend/sql/block_disposable_emails.sql) — this just gives a clean message.
+const DISPOSABLE_DOMAINS = new Set([
+  "mailinator.com", "guerrillamail.com", "guerrillamail.net", "guerrillamail.org",
+  "sharklasers.com", "grr.la", "spam4.me", "10minutemail.com", "10minutemail.net",
+  "temp-mail.org", "temp-mail.io", "tempmail.com", "tempmailo.com", "tempr.email",
+  "throwawaymail.com", "yopmail.com", "yopmail.net", "yopmail.fr", "mailnesia.com",
+  "maildrop.cc", "mailcatch.com", "getnada.com", "nada.email", "dispostable.com",
+  "trashmail.com", "trash-mail.com", "wegwerfmail.de", "tempinbox.com", "emailondeck.com",
+  "fakeinbox.com", "fakemail.net", "mohmal.com", "emailfake.com", "email-fake.com",
+  "mailpoof.com", "inboxkitten.com", "33mail.com", "discard.email", "discardmail.com",
+  "spamgourmet.com", "1secmail.com", "1secmail.org", "1secmail.net", "mailto.plus",
+  "fexbox.org", "burnermail.io", "temp-mail.ru", "mailsac.com", "disposablemail.com",
+  "throwawayemail.com", "tempmailaddress.com", "mailforspam.com", "tmpmail.org",
+]);
+
+function isDisposableEmail(email) {
+  const domain = (email.split("@")[1] || "").trim().toLowerCase();
+  return DISPOSABLE_DOMAINS.has(domain);
+}
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -20,8 +42,19 @@ export default function LoginPage() {
     setLoading(true); setErr("");
     try {
       if (mode === "signup") {
+        if (isDisposableEmail(email)) {
+          setErr("Please use a permanent email address — temporary/disposable email providers aren't allowed.");
+          setLoading(false);
+          return;
+        }
         const { error } = await supabase.auth.signUp({ email, password: pass });
-        if (error) { setErr(error.message); setLoading(false); return; }
+        if (error) {
+          // The DB trigger rejects blocklisted domains we don't have client-side
+          const msg = /disposable|not allowed|database error/i.test(error.message)
+            ? "Please use a permanent email address — temporary/disposable email providers aren't allowed."
+            : error.message;
+          setErr(msg); setLoading(false); return;
+        }
         setSignupDone(true);
         setLoading(false);
         return;

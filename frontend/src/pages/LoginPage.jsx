@@ -49,9 +49,11 @@ export default function LoginPage() {
         }
         const { error } = await supabase.auth.signUp({ email, password: pass });
         if (error) {
-          // The DB trigger rejects blocklisted domains we don't have client-side
-          const msg = /disposable|not allowed|database error/i.test(error.message)
-            ? "Please use a permanent email address — temporary/disposable email providers aren't allowed."
+          // The DB triggers reject disposable domains and email aliases that map
+          // to an existing account. Supabase wraps these generically, so use a
+          // neutral message that's honest for both cases.
+          const msg = /disposable|not allowed|database error|already/i.test(error.message)
+            ? "We couldn't create an account with this email. Please use a different permanent email address (temporary inboxes and aliases of an existing account aren't allowed)."
             : error.message;
           setErr(msg); setLoading(false); return;
         }

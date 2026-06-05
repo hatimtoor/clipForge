@@ -1078,7 +1078,7 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
     model  = _get_yolo()
     cap    = _cv2.VideoCapture(str(clip_path))
     fps    = cap.get(_cv2.CAP_PROP_FPS) or 30.0
-    sample_every = max(1, int(fps))  # one sample per second
+    sample_every = max(1, int(fps / 2))  # two samples per second — catch speaker switches faster
 
     results: list = []
     prev_frame = None
@@ -1112,7 +1112,7 @@ def smooth_crop_trajectory(
     src_w: int,
     track_speed_px_per_s: float = 300.0,
     switch_speed_px_per_s: float = 1500.0,
-    min_hold_s: float = 2.0,
+    min_hold_s: float = 1.0,
 ) -> list:
     """
     Active-speaker crop trajectory.

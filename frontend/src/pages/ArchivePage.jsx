@@ -36,10 +36,11 @@ export default function ArchivePage() {
     setLoading(true);
     try {
       const res = await authFetch(`/api/jobs?limit=${PAGE_SIZE}&offset=0`);
-      const data = await res.json();
-      setJobs(data);
+      const data = res.ok ? await res.json() : [];
+      const arr = Array.isArray(data) ? data : [];
+      setJobs(arr);
       setOffset(PAGE_SIZE);
-      setHasMore(data.length === PAGE_SIZE);
+      setHasMore(arr.length === PAGE_SIZE);
     } catch {} finally {
       setLoading(false);
     }
@@ -50,10 +51,11 @@ export default function ArchivePage() {
     setLoadingMore(true);
     try {
       const res = await authFetch(`/api/jobs?limit=${PAGE_SIZE}&offset=${offset}`);
-      const data = await res.json();
-      setJobs(prev => [...prev, ...data]);
+      const data = res.ok ? await res.json() : [];
+      const arr = Array.isArray(data) ? data : [];
+      setJobs(prev => [...prev, ...arr]);
       setOffset(prev => prev + PAGE_SIZE);
-      setHasMore(data.length === PAGE_SIZE);
+      setHasMore(arr.length === PAGE_SIZE);
     } catch {} finally {
       setLoadingMore(false);
     }
@@ -61,7 +63,7 @@ export default function ArchivePage() {
 
   useEffect(() => { fetchInitial(); }, []);
 
-  const filtered = jobs.filter(j => filter === "all" || j.status === filter);
+  const filtered = (Array.isArray(jobs) ? jobs : []).filter(j => filter === "all" || j.status === filter);
 
   return (
     <div style={{ minHeight: "100vh" }}>

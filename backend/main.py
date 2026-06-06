@@ -282,6 +282,7 @@ class ChannelRequest(BaseModel):
     caption_highlight_color: Optional[str] = None
     caption_language: str = "source"
     yt_channel_id: Optional[str] = None
+    tt_open_id: Optional[str] = None
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
     trim_silence: bool = False
@@ -296,6 +297,7 @@ class ChannelPatchRequest(BaseModel):
     caption_highlight_color: Optional[str] = None
     caption_language: Optional[str] = None
     yt_channel_id: Optional[str] = None
+    tt_open_id: Optional[str] = None
     bg_music_url: Optional[str] = None
     bg_music_volume: Optional[float] = None
     trim_silence: Optional[bool] = None
@@ -316,6 +318,7 @@ class BackfillRequest(BaseModel):
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
     trim_silence: bool = False
+    tt_open_id: Optional[str] = None
 
 
 class BackfillPatchRequest(BaseModel):
@@ -333,6 +336,7 @@ class BackfillPatchRequest(BaseModel):
     bg_music_url: Optional[str] = None
     bg_music_volume: Optional[float] = None
     trim_silence: Optional[bool] = None
+    tt_open_id: Optional[str] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1903,7 +1907,7 @@ async def channel_poller():
                         bg_music_volume=ch.get("bg_music_volume") or 0.15,
                         trim_silence=ch.get("trim_silence", False),
                     )
-                    asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id")))
+                    asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id")))
             except Exception as e:
                 print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
                 db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
@@ -1969,7 +1973,7 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None):
+async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
@@ -2032,21 +2036,29 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         if user_id and final_clips:
             db_increment_clips_used(user_id, len(final_clips))
         if auto_upload and final_clips:
-            log(job_id, f"Auto-uploading {len(final_clips)} clips to YouTube...")
-            for i in range(len(final_clips)):
-                clip = final_clips[i]
-                source_suffix = f"\n\nWatch the full video: {req.url}" if req.url else ""
-                desc = "\n\n".join(filter(None, [clip.get("hook",""), clip.get("reason",""), " ".join(f"#{t}" for t in clip.get("tags",[]))])) + source_suffix
-                upload_data = {
-                    "title": clip.get("title", f"Clip {i+1}"),
-                    "description": desc,
-                    "tags": clip.get("tags", []),
-                    "privacy_status": "public",
-                }
-                if auto_upload_yt_channel:
-                    upload_data["yt_channel_id"] = auto_upload_yt_channel
-                log(job_id, f"  Auto-uploading clip {i+1}/{len(final_clips)}...")
-                await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data, user_id)
+            # YouTube runs when a YT channel is chosen, or as the default when no
+            # TikTok account is the sole chosen target (backward compatible).
+            do_yt = bool(auto_upload_yt_channel) or not auto_upload_tt_account
+            if do_yt:
+                log(job_id, f"Auto-uploading {len(final_clips)} clips to YouTube...")
+                for i in range(len(final_clips)):
+                    clip = final_clips[i]
+                    source_suffix = f"\n\nWatch the full video: {req.url}" if req.url else ""
+                    desc = "\n\n".join(filter(None, [clip.get("hook",""), clip.get("reason",""), " ".join(f"#{t}" for t in clip.get("tags",[]))])) + source_suffix
+                    upload_data = {
+                        "title": clip.get("title", f"Clip {i+1}"),
+                        "description": desc,
+                        "tags": clip.get("tags", []),
+                        "privacy_status": "public",
+                    }
+                    if auto_upload_yt_channel:
+                        upload_data["yt_channel_id"] = auto_upload_yt_channel
+                    log(job_id, f"  Auto-uploading clip {i+1}/{len(final_clips)} to YouTube...")
+                    await asyncio.to_thread(do_youtube_upload, job_id, i, upload_data, user_id)
+            if auto_upload_tt_account:
+                log(job_id, f"Auto-uploading {len(final_clips)} clips to TikTok...")
+                for i in range(len(final_clips)):
+                    await asyncio.to_thread(do_tiktok_upload, job_id, i, {"tt_open_id": auto_upload_tt_account}, user_id)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
         if backfill_id and backfill_video_id:
             bf = await asyncio.to_thread(db_get_backfill, backfill_id)
@@ -2161,6 +2173,7 @@ async def _process_backfill(bf: dict) -> None:
     days_back = bf.get("days_back", 30)
     vpd = bf.get("videos_per_day", 2)
     yt_ch_id = bf.get("yt_upload_channel_id") or None
+    tt_account = bf.get("tt_open_id") or None
     auto_upload = bf.get("auto_upload", False)
     processed = set(bf.get("processed_video_ids") or [])
 
@@ -2211,8 +2224,9 @@ async def _process_backfill(bf: dict) -> None:
             asyncio.create_task(run_pipeline(
                 job["id"], req,
                 user_id=user_id,
-                auto_upload=auto_upload and bool(yt_ch_id),
+                auto_upload=auto_upload and (bool(yt_ch_id) or bool(tt_account)),
                 auto_upload_yt_channel=yt_ch_id if auto_upload else None,
+                auto_upload_tt_account=tt_account if auto_upload else None,
                 backfill_id=bf_id,
                 backfill_video_id=video["id"],
             ))
@@ -2752,6 +2766,7 @@ async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
         "bg_music_url": req.bg_music_url or None,
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,
+        "tt_open_id": req.tt_open_id or None,
         "processed_video_ids": [],
         "total_videos": 0,
         "status": "active",
@@ -3375,6 +3390,7 @@ async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
         "bg_music_url": req.bg_music_url or None,
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,
+        "tt_open_id": req.tt_open_id or None,
     })
     return _c(ch_data)
 

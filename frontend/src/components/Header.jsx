@@ -1,104 +1,18 @@
-import { useState, useRef, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { C, SHADOW_SM, BORDER } from "../lib/theme";
 import { PixelSprite, ANVIL, ANVIL_PAL } from "./ui";
 import { useApp } from "../context/AppContext";
-import { supabase, authFetch } from "../lib/supabase";
+import { supabase } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
 
 export default function Header() {
-  const { profile, isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus, jobActive } = useApp();
+  const { profile, isPro, ytStatus, ttStatus, jobActive } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
-  const [ytError, setYtError] = useState("");
-  const [ytDropdownOpen, setYtDropdownOpen] = useState(false);
-  const [ytHoverRow, setYtHoverRow] = useState(null);
-  const [ytHoverDisconnect, setYtHoverDisconnect] = useState(null);
-  const [ytHoverConnect, setYtHoverConnect] = useState(false);
-  const ytDropdownRef = useRef(null);
   const isMobile = useMobile();
 
   const path = location.pathname.replace("/", "") || "hello";
-  const ytConnected = ytStatus?.connected;
-  const ytChannels = ytStatus?.channels || [];
-  const ttAccounts = ttStatus?.accounts || [];
-
-  useEffect(() => {
-    if (!ytDropdownOpen) return;
-    const handler = (e) => {
-      if (ytDropdownRef.current && !ytDropdownRef.current.contains(e.target)) {
-        setYtDropdownOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [ytDropdownOpen]);
-
-  const handleDisconnectYouTube = async (yt_channel_id) => {
-    const label = yt_channel_id ? "this YouTube channel" : "your YouTube channel";
-    if (!window.confirm(`Disconnect ${label}?`)) return;
-    try {
-      const url = yt_channel_id
-        ? `/api/youtube/disconnect?yt_channel_id=${encodeURIComponent(yt_channel_id)}`
-        : "/api/youtube/disconnect";
-      await authFetch(url, { method: "DELETE" });
-      refreshYtStatus();
-    } catch { setYtError("Could not disconnect. Try again."); }
-  };
-
-  const handleConnectYouTube = async () => {
-    setYtError("");
-    setYtDropdownOpen(false);
-    try {
-      const res = await authFetch("/api/youtube/auth");
-      const data = await res.json();
-      if (!res.ok) { setYtError(data.detail || "YouTube auth failed."); return; }
-      if (!data.auth_url) { setYtError("No auth URL returned."); return; }
-      window.open(data.auth_url, "youtube_auth", "width=600,height=700,scrollbars=yes,resizable=yes");
-      const onMsg = (e) => {
-        if (e.data?.type === "youtube_auth_success") {
-          window.removeEventListener("message", onMsg);
-          refreshYtStatus();
-        } else if (e.data?.type === "youtube_auth_error") {
-          window.removeEventListener("message", onMsg);
-          setYtError(e.data.error || "Auth failed");
-        }
-      };
-      window.addEventListener("message", onMsg);
-    } catch { setYtError("Cannot reach server."); }
-  };
-
-  const handleDisconnectTikTok = async (tt_open_id) => {
-    if (!window.confirm("Disconnect this TikTok account?")) return;
-    try {
-      const url = tt_open_id
-        ? `/api/tiktok/disconnect?tt_open_id=${encodeURIComponent(tt_open_id)}`
-        : "/api/tiktok/disconnect";
-      await authFetch(url, { method: "DELETE" });
-      refreshTtStatus();
-    } catch { setYtError("Could not disconnect TikTok. Try again."); }
-  };
-
-  const handleConnectTikTok = async () => {
-    setYtError("");
-    try {
-      const res = await authFetch("/api/tiktok/auth");
-      const data = await res.json();
-      if (!res.ok) { setYtError(data.detail || "TikTok auth failed."); return; }
-      if (!data.auth_url) { setYtError("No auth URL returned."); return; }
-      window.open(data.auth_url, "tiktok_auth", "width=600,height=700,scrollbars=yes,resizable=yes");
-      const onMsg = (e) => {
-        if (e.data?.type === "tiktok_auth_success") {
-          window.removeEventListener("message", onMsg);
-          refreshTtStatus();
-        } else if (e.data?.type === "tiktok_auth_error") {
-          window.removeEventListener("message", onMsg);
-          setYtError(e.data.error || "TikTok auth failed");
-        }
-      };
-      window.addEventListener("message", onMsg);
-    } catch { setYtError("Cannot reach server."); }
-  };
+  const connectedCount = (ytStatus?.channels?.length || 0) + (ttStatus?.accounts?.length || 0);
 
   const NAV = [
     ["hello",     "HELLO"],
@@ -144,84 +58,18 @@ export default function Header() {
               );
             })}
 
-            {isPro && !isMobile && (
-              <div ref={ytDropdownRef} style={{ position: "relative" }}>
-                <button
-                  onClick={() => setYtDropdownOpen(o => !o)}
-                  className="pixel"
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    padding: "10px 14px", fontSize: 9,
-                    background: ytConnected ? C.yt : C.cream,
-                    color: C.ink, border: BORDER, boxShadow: SHADOW_SM,
-                    cursor: "pointer", textTransform: "uppercase",
-                  }}
-                >
-                  * YT{ytChannels.length > 0 ? ` (${ytChannels.length})` : ""}
-                  <span style={{ fontSize: 7 }}>{ytDropdownOpen ? "▴" : "▾"}</span>
-                </button>
-
-                {ytDropdownOpen && (
-                  <div className="pixel" style={{
-                    position: "absolute", top: "calc(100% + 6px)", right: 0,
-                    background: C.cream, border: BORDER, boxShadow: SHADOW_SM,
-                    minWidth: 190, zIndex: 200,
-                  }}>
-                    {ytChannels.map((ch) => (
-                      <div key={ch.yt_channel_id} style={{
-                        display: "flex", alignItems: "stretch",
-                        borderBottom: `2px solid ${C.ink}`,
-                      }}>
-                        <span
-                          onMouseEnter={() => setYtHoverRow(ch.yt_channel_id)}
-                          onMouseLeave={() => setYtHoverRow(null)}
-                          style={{ flex: 1, padding: "9px 10px", fontSize: 9, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140, cursor: "default", background: ytHoverRow === ch.yt_channel_id ? C.lavender : "transparent", display: "flex", alignItems: "center" }}
-                        >
-                          * {ch.yt_channel_name || "YT"}
-                        </span>
-                        <button
-                          onClick={() => { handleDisconnectYouTube(ch.yt_channel_id); setYtDropdownOpen(false); }}
-                          onMouseEnter={() => setYtHoverDisconnect(ch.yt_channel_id)}
-                          onMouseLeave={() => setYtHoverDisconnect(null)}
-                          className="pixel"
-                          title="Disconnect"
-                          style={{
-                            display: "flex", alignItems: "center", alignSelf: "stretch",
-                            padding: "0 10px", borderLeft: `2px solid ${C.ink}`, color: C.ink,
-                            fontSize: 9, cursor: "pointer", flexShrink: 0,
-                            background: ytHoverDisconnect === ch.yt_channel_id ? C.ytDeep : "transparent",
-                          }}
-                        >×</button>
-                      </div>
-                    ))}
-                    <button
-                      onClick={handleConnectYouTube}
-                      onMouseEnter={() => setYtHoverConnect(true)}
-                      onMouseLeave={() => setYtHoverConnect(false)}
-                      className="pixel"
-                      style={{
-                        width: "100%", padding: "9px 10px", fontSize: 9,
-                        background: ytHoverConnect ? C.signal : "transparent",
-                        color: C.ink, textAlign: "left", cursor: "pointer", display: "block",
-                      }}
-                    >+ connect channel</button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {isPro && !isMobile && (
-              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                {ttAccounts.map(acc => (
-                  <span key={acc.tt_open_id} className="pixel" style={{ display: "inline-flex", alignItems: "center", background: C.ink, color: C.cream, border: BORDER, boxShadow: SHADOW_SM, fontSize: 9 }}>
-                    <span style={{ padding: "10px 10px" }}>♪ {acc.tt_display_name || "TikTok"}</span>
-                    <button onClick={() => handleDisconnectTikTok(acc.tt_open_id)} className="pixel" title="Disconnect" style={{ padding: "10px 10px", background: "transparent", borderLeft: `2px solid ${C.cream}`, color: C.cream, fontSize: 9, cursor: "pointer" }}>×</button>
-                  </span>
-                ))}
-                <button onClick={handleConnectTikTok} className="pixel" style={{ padding: "10px 14px", fontSize: 9, background: C.cream, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer", textTransform: "uppercase" }}>
-                  + TIKTOK
-                </button>
-              </div>
+            {isPro && (
+              <button onClick={() => navigate("/connections")} className="pixel" style={{
+                background: path === "connections" ? C.lavender : C.cream, color: C.ink,
+                padding: isMobile ? "8px 10px" : "10px 16px",
+                fontSize: isMobile ? 9 : 11, border: BORDER,
+                boxShadow: path === "connections" ? `0px 0px 0 ${C.ink}` : SHADOW_SM,
+                transform: path === "connections" ? "translate(3px,3px)" : "translate(0,0)",
+                cursor: "pointer", textTransform: "uppercase",
+              }}>
+                {isMobile ? "LINKS" : "CONNECTIONS"}
+                {connectedCount > 0 && <span style={{ display: "inline-block", marginLeft: 6, fontSize: 8, background: C.signal, color: C.ink, padding: "1px 5px", border: `1px solid ${C.ink}` }}>{connectedCount}</span>}
+              </button>
             )}
 
             {!isPro && (
@@ -235,12 +83,6 @@ export default function Header() {
           </nav>
         </div>
       </header>
-
-      {ytError && (
-        <div style={{ maxWidth: 1320, margin: "0 auto", padding: isMobile ? "0 16px" : "0 32px" }}>
-          <div className="pixel" style={{ padding: "10px 14px", background: `${C.hot}55`, border: `2px solid ${C.hotDeep}`, color: C.hotDeep, fontSize: 9, marginTop: 14 }}>! {ytError}</div>
-        </div>
-      )}
     </>
   );
 }

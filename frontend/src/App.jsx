@@ -33,6 +33,7 @@ import WorkPage     from "./pages/WorkPage";
 import WatchlistPage from "./pages/WatchlistPage";
 import ArchivePage  from "./pages/ArchivePage";
 import DigestPage   from "./pages/DigestPage";
+import ConnectionsPage from "./pages/ConnectionsPage";
 import PrivacyPage  from "./pages/PrivacyPage";
 import TermsPage    from "./pages/TermsPage";
 import LandingPage  from "./pages/LandingPage";
@@ -108,6 +109,7 @@ export default function App() {
           <Route path="/work"      element={<PrivateRoute><WorkPage /></PrivateRoute>} />
           <Route path="/watchlist" element={<PrivateRoute><WatchlistPage /></PrivateRoute>} />
           <Route path="/digest"    element={<PrivateRoute><DigestPage /></PrivateRoute>} />
+          <Route path="/connections" element={<PrivateRoute><ConnectionsPage /></PrivateRoute>} />
           <Route path="/archive"   element={<PrivateRoute><ArchivePage /></PrivateRoute>} />
           <Route path="/privacy"   element={<PrivacyPage />} />
           <Route path="/terms"     element={<TermsPage />} />

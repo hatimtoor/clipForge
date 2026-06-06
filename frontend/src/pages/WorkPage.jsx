@@ -138,8 +138,43 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, ytChannels, onClose, onUpl
   );
 }
 
+// ── TikTok upload button (inbox/draft flow) ────────────────────────────────────
+function TikTokUploadButton({ clip, idx, jobId, ttAccounts }) {
+  const [status, setStatus] = useState(clip.tt_upload?.status || "none");
+  const pollRef = useRef(null);
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
+  const upload = async () => {
+    setStatus("queued");
+    try {
+      const body = ttAccounts?.length ? { tt_open_id: ttAccounts[0].tt_open_id } : {};
+      const res = await authFetch(`/api/tiktok/upload/${jobId}/${idx}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!res.ok) { setStatus("error"); return; }
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await authFetch(`/api/tiktok/upload_status/${jobId}/${idx}`);
+          const s = await r.json();
+          setStatus(s.status);
+          if (["done", "error"].includes(s.status)) clearInterval(pollRef.current);
+        } catch {}
+      }, 2000);
+    } catch { setStatus("error"); }
+  };
+
+  const black = { padding: "6px 12px", fontSize: 9, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textTransform: "uppercase", cursor: "pointer" };
+  if (status === "done")
+    return <span className="pixel" title="Sent to your TikTok inbox — open TikTok to finish posting" style={{ ...black, background: C.ink, color: C.cream, cursor: "default" }}>♪ IN TIKTOK</span>;
+  if (status === "queued" || status === "uploading")
+    return <span className="pixel" style={{ ...black, background: C.amber, color: C.ink }}>♪ SENDING...</span>;
+  if (status === "error")
+    return <button className="pixel" onClick={upload} style={{ ...black, background: C.hot, color: C.ink }}>♪ RETRY</button>;
+  return <button className="pixel" onClick={upload} style={{ ...black, background: C.ink, color: C.cream }}>♪ TIKTOK</button>;
+}
+
 // ── ClipCard ───────────────────────────────────────────────────────────────────
-function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected, jobId }) {
+function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected, jobId, ttConnected, ttAccounts }) {
   const [downloading, setDownloading] = useState(false);
   const [analytics, setAnalytics] = useState(clip.yt_analytics || null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -231,6 +266,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
                   ? <span className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center" }}>^ {ytUp.progress || 0}%</span>
                   : <PixelBtn color="yt" size="sm" onClick={onYTUpload}>^ YT</PixelBtn>
             )}
+            {ttConnected && <TikTokUploadButton clip={clip} idx={idx} jobId={jobId} ttAccounts={ttAccounts} />}
             {hasYtVideo && (
               <button onClick={refreshStats} disabled={statsLoading} className="pixel"
                 style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer", background: C.lavender, border: BORDER, color: C.ink, opacity: statsLoading ? 0.5 : 1 }}>
@@ -314,6 +350,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
                 ? <span className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center" }}>^ {ytUp.progress || 0}%</span>
                 : <PixelBtn color="yt" size="sm" onClick={onYTUpload}>^ YT</PixelBtn>
           )}
+          {ttConnected && <TikTokUploadButton clip={clip} idx={idx} jobId={jobId} ttAccounts={ttAccounts} />}
         </div>
       </div>
     </div>
@@ -321,7 +358,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
-function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadingAll }) {
+function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onNew, onUploadAll, uploadingAll }) {
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
@@ -329,6 +366,8 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
   const previewRef = useRef(null);
   const isMobile = useMobile();
   const ytChannels = ytStatus?.channels || [];
+  const ttConnected = isPro && !!ttStatus?.connected;
+  const ttAccounts = ttStatus?.accounts || [];
   const [uploadAllPickerOpen, setUploadAllPickerOpen] = useState(false);
   const [uploadAllChannel, setUploadAllChannel] = useState(ytChannels[0]?.yt_channel_id || "");
 
@@ -411,6 +450,8 @@ function Results({ job, ytStatus, isPro, onYTUpload, onNew, onUploadAll, uploadi
               key={i} clip={c} idx={i}
               cardColor={palette[i % palette.length]}
               ytConnected={isPro && !!ytStatus?.connected}
+              ttConnected={ttConnected}
+              ttAccounts={ttAccounts}
               isActive={active?.path === c.path}
               onPreview={() => setActive(prev => prev?.path === c.path ? null : c)}
               onYTUpload={() => onYTUpload(c, i)}
@@ -578,7 +619,7 @@ export default function WorkPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const jobId = searchParams.get("job");
-  const { isPro, ytStatus, setJobActive } = useApp();
+  const { isPro, ytStatus, ttStatus, setJobActive } = useApp();
   const isMobileWP = useMobile();
 
   const [job, setJob] = useState(null);
@@ -773,6 +814,7 @@ export default function WorkPage() {
         <Results
           job={job}
           ytStatus={ytStatus}
+          ttStatus={ttStatus}
           isPro={isPro}
           onNew={goNew}
           onYTUpload={(clip, clipIndex) => setYtModal({ clip, clipIndex })}

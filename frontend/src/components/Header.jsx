@@ -7,7 +7,7 @@ import { supabase, authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
 
 export default function Header() {
-  const { profile, isPro, ytStatus, refreshYtStatus, jobActive } = useApp();
+  const { profile, isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus, jobActive } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
   const [ytError, setYtError] = useState("");
@@ -21,6 +21,7 @@ export default function Header() {
   const path = location.pathname.replace("/", "") || "hello";
   const ytConnected = ytStatus?.connected;
   const ytChannels = ytStatus?.channels || [];
+  const ttAccounts = ttStatus?.accounts || [];
 
   useEffect(() => {
     if (!ytDropdownOpen) return;
@@ -61,6 +62,38 @@ export default function Header() {
         } else if (e.data?.type === "youtube_auth_error") {
           window.removeEventListener("message", onMsg);
           setYtError(e.data.error || "Auth failed");
+        }
+      };
+      window.addEventListener("message", onMsg);
+    } catch { setYtError("Cannot reach server."); }
+  };
+
+  const handleDisconnectTikTok = async (tt_open_id) => {
+    if (!window.confirm("Disconnect this TikTok account?")) return;
+    try {
+      const url = tt_open_id
+        ? `/api/tiktok/disconnect?tt_open_id=${encodeURIComponent(tt_open_id)}`
+        : "/api/tiktok/disconnect";
+      await authFetch(url, { method: "DELETE" });
+      refreshTtStatus();
+    } catch { setYtError("Could not disconnect TikTok. Try again."); }
+  };
+
+  const handleConnectTikTok = async () => {
+    setYtError("");
+    try {
+      const res = await authFetch("/api/tiktok/auth");
+      const data = await res.json();
+      if (!res.ok) { setYtError(data.detail || "TikTok auth failed."); return; }
+      if (!data.auth_url) { setYtError("No auth URL returned."); return; }
+      window.open(data.auth_url, "tiktok_auth", "width=600,height=700,scrollbars=yes,resizable=yes");
+      const onMsg = (e) => {
+        if (e.data?.type === "tiktok_auth_success") {
+          window.removeEventListener("message", onMsg);
+          refreshTtStatus();
+        } else if (e.data?.type === "tiktok_auth_error") {
+          window.removeEventListener("message", onMsg);
+          setYtError(e.data.error || "TikTok auth failed");
         }
       };
       window.addEventListener("message", onMsg);
@@ -174,6 +207,20 @@ export default function Header() {
                     >+ connect channel</button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {isPro && !isMobile && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                {ttAccounts.map(acc => (
+                  <span key={acc.tt_open_id} className="pixel" style={{ display: "inline-flex", alignItems: "center", background: C.ink, color: C.cream, border: BORDER, boxShadow: SHADOW_SM, fontSize: 9 }}>
+                    <span style={{ padding: "10px 10px" }}>♪ {acc.tt_display_name || "TikTok"}</span>
+                    <button onClick={() => handleDisconnectTikTok(acc.tt_open_id)} className="pixel" title="Disconnect" style={{ padding: "10px 10px", background: "transparent", borderLeft: `2px solid ${C.cream}`, color: C.cream, fontSize: 9, cursor: "pointer" }}>×</button>
+                  </span>
+                ))}
+                <button onClick={handleConnectTikTok} className="pixel" style={{ padding: "10px 14px", fontSize: 9, background: C.cream, color: C.ink, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer", textTransform: "uppercase" }}>
+                  + TIKTOK
+                </button>
               </div>
             )}
 

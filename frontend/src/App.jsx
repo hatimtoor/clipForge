@@ -52,6 +52,7 @@ export default function App() {
   const [authed, setAuthed] = useState(null);
   const [profile, setProfile] = useState({ plan: "free", clips_used: 0, clips_limit: 10 });
   const [ytStatus, setYtStatus] = useState({ connected: false });
+  const [ttStatus, setTtStatus] = useState({ connected: false });
   const [jobActive, setJobActive] = useState(null); // null | jobId string
 
   const isPro = profile.plan === "pro";
@@ -70,6 +71,13 @@ export default function App() {
     } catch {}
   };
 
+  const refreshTtStatus = async () => {
+    try {
+      const res = await authFetch("/api/tiktok/status");
+      if (res.ok) setTtStatus(await res.json());
+    } catch {}
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthed(!!session);
@@ -83,10 +91,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authed && isPro) refreshYtStatus();
+    if (authed && isPro) { refreshYtStatus(); refreshTtStatus(); }
   }, [authed, isPro]);
 
-  const ctx = { authed, profile, isPro, ytStatus, refreshYtStatus, refreshProfile, jobActive, setJobActive };
+  const ctx = { authed, profile, isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus, refreshProfile, jobActive, setJobActive };
 
   return (
     <BrowserRouter>

@@ -73,6 +73,10 @@ POTTOKEN_URL = os.getenv("POTTOKEN_URL", "")
 YOUTUBE_CLIENT_ID     = os.getenv("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_REDIRECT_URI  = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000/api/youtube/callback")
+
+TIKTOK_CLIENT_KEY     = os.getenv("TIKTOK_CLIENT_KEY", "")
+TIKTOK_CLIENT_SECRET  = os.getenv("TIKTOK_CLIENT_SECRET", "")
+TIKTOK_REDIRECT_URI   = os.getenv("TIKTOK_REDIRECT_URI", "https://clipforging.com/api/tiktok/callback")
 YOUTUBE_API_KEY       = os.getenv("YOUTUBE_API_KEY", "")
 
 from groq import Groq
@@ -92,6 +96,8 @@ from db import (
     db_create_channel, db_get_channel, db_get_user_channels,
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
     db_get_youtube_token, db_get_user_youtube_tokens, db_upsert_youtube_token, db_delete_youtube_token,
+    db_get_tiktok_token, db_get_user_tiktok_tokens, db_upsert_tiktok_token, db_delete_tiktok_token,
+    db_update_clip_tt_upload,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used, db_claim_clips_atomic,
     db_get_user_email,
     FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
@@ -253,6 +259,9 @@ class YouTubeUploadRequest(BaseModel):
     tags: list = []
     privacy_status: str = "public"
     yt_channel_id: Optional[str] = None  # which connected channel to upload to
+
+class TikTokUploadRequest(BaseModel):
+    tt_open_id: Optional[str] = None  # which connected TikTok account to upload to
 
 class ChannelRequest(BaseModel):
     url: str
@@ -2906,6 +2915,290 @@ async def get_youtube_upload_status(job_id: str, clip_index: int, user=Depends(r
     if clip_index >= len(clips):
         raise HTTPException(404, "Clip not found")
     return clips[clip_index].get("yt_upload", {"status": "none"})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TIKTOK CROSS-POSTING (Content Posting API — inbox/draft upload)
+# ══════════════════════════════════════════════════════════════════════════════
+
+TIKTOK_SCOPES = "user.info.basic,video.upload"
+
+
+def _tt_postmsg(msg_type: str, error_text: str = "") -> HTMLResponse:
+    safe_origin = json.dumps(_APP_URL)
+    safe_type   = json.dumps(msg_type)
+    safe_error  = json.dumps(error_text)
+    return HTMLResponse(
+        f"<script>window.opener?.postMessage({{type:{safe_type},error:{safe_error}}},{safe_origin});window.close();</script>"
+    )
+
+
+def _tt_pkce():
+    """Return (code_verifier, code_challenge) for TikTok OAuth PKCE (S256)."""
+    import base64, hashlib, secrets
+    verifier = secrets.token_urlsafe(64)[:128]
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).decode().rstrip("=")
+    return verifier, challenge
+
+
+async def get_tiktok_access_token(user_id: str, tt_open_id: Optional[str] = None) -> Optional[dict]:
+    """Return a token row with a valid access_token, refreshing if expired."""
+    from datetime import datetime, timezone
+    tok = await asyncio.to_thread(db_get_tiktok_token, user_id, tt_open_id)
+    if not tok:
+        return None
+    exp = tok.get("expires_at")
+    needs_refresh = False
+    if exp:
+        try:
+            exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+            # refresh a couple minutes early
+            needs_refresh = (exp_dt - datetime.now(timezone.utc)).total_seconds() < 120
+        except Exception:
+            needs_refresh = True
+    if needs_refresh and tok.get("refresh_token"):
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(
+                    "https://open.tiktokapis.com/v2/oauth/token/",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    data={
+                        "client_key": TIKTOK_CLIENT_KEY,
+                        "client_secret": TIKTOK_CLIENT_SECRET,
+                        "grant_type": "refresh_token",
+                        "refresh_token": tok["refresh_token"],
+                    },
+                )
+                d = r.json()
+                if d.get("access_token"):
+                    from datetime import timedelta
+                    new_exp = (datetime.now(timezone.utc) + timedelta(seconds=int(d.get("expires_in", 86400)))).isoformat()
+                    await asyncio.to_thread(
+                        db_upsert_tiktok_token, user_id, d["access_token"],
+                        d.get("refresh_token", tok["refresh_token"]),
+                        tok.get("tt_open_id", ""), tok.get("tt_display_name", "TikTok"), new_exp,
+                    )
+                    tok["access_token"] = d["access_token"]
+        except Exception as e:
+            print(f"[tiktok] token refresh failed: {e}", flush=True)
+    return tok
+
+
+@app.get("/api/tiktok/auth")
+async def tiktok_auth(user=Depends(require_pro)):
+    if not TIKTOK_CLIENT_KEY or not TIKTOK_CLIENT_SECRET:
+        raise HTTPException(400, "TikTok not configured. Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET in .env")
+    import urllib.parse, secrets
+    verifier, challenge = _tt_pkce()
+    state = secrets.token_urlsafe(24)
+    _oauth_state_set(state, {"user_id": user.id, "code_verifier": verifier})
+    params = {
+        "client_key": TIKTOK_CLIENT_KEY,
+        "scope": TIKTOK_SCOPES,
+        "response_type": "code",
+        "redirect_uri": TIKTOK_REDIRECT_URI,
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    }
+    auth_url = "https://www.tiktok.com/v2/auth/authorize/?" + urllib.parse.urlencode(params)
+    return {"auth_url": auth_url}
+
+
+@app.get("/api/tiktok/callback")
+async def tiktok_callback(code: str = None, state: str = None, error: str = None):
+    if error:
+        return _tt_postmsg("tiktok_auth_error", "Authorization was denied.")
+    state_data = _oauth_state_get(state) if state else None
+    if not code or not state_data:
+        return _tt_postmsg("tiktok_auth_error", "Invalid or expired authorization state.")
+    try:
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        user_id = state_data.get("user_id", "")
+        verifier = state_data.get("code_verifier", "")
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "https://open.tiktokapis.com/v2/oauth/token/",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data={
+                    "client_key": TIKTOK_CLIENT_KEY,
+                    "client_secret": TIKTOK_CLIENT_SECRET,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": TIKTOK_REDIRECT_URI,
+                    "code_verifier": verifier,
+                },
+            )
+            tok = r.json()
+        if not tok.get("access_token"):
+            print(f"[tiktok_callback] token exchange failed: {tok}", flush=True)
+            return _tt_postmsg("tiktok_auth_error", "Failed to complete TikTok authorization.")
+        access_token = tok["access_token"]
+        open_id = tok.get("open_id", "")
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(tok.get("expires_in", 86400)))).isoformat()
+        # Look up display name
+        display_name = "TikTok"
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                ui = await client.get(
+                    "https://open.tiktokapis.com/v2/user/info/",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"fields": "open_id,display_name"},
+                )
+                uj = ui.json()
+                display_name = uj.get("data", {}).get("user", {}).get("display_name") or "TikTok"
+                open_id = uj.get("data", {}).get("user", {}).get("open_id") or open_id
+        except Exception as ue:
+            print(f"[tiktok_callback] user info lookup failed: {ue}", flush=True)
+        await asyncio.to_thread(
+            db_upsert_tiktok_token, user_id, access_token,
+            tok.get("refresh_token"), open_id, display_name, expires_at,
+        )
+        _oauth_states.pop(state, None)
+        return _tt_postmsg("tiktok_auth_success")
+    except Exception as e:
+        print(f"[tiktok_callback] error: {e}", flush=True)
+        return _tt_postmsg("tiktok_auth_error", "Failed to complete TikTok authorization.")
+
+
+@app.get("/api/tiktok/status")
+async def tiktok_status(user=Depends(require_pro)):
+    tokens = await asyncio.to_thread(db_get_user_tiktok_tokens, user.id)
+    if not tokens:
+        return {"connected": False, "accounts": []}
+    accounts = [
+        {"tt_open_id": t.get("tt_open_id", ""), "tt_display_name": t.get("tt_display_name") or "TikTok"}
+        for t in tokens
+    ]
+    return {"connected": True, "accounts": accounts}
+
+
+@app.delete("/api/tiktok/disconnect")
+async def tiktok_disconnect(tt_open_id: Optional[str] = None, user=Depends(require_pro)):
+    await asyncio.to_thread(db_delete_tiktok_token, user.id, tt_open_id or None)
+    return {"ok": True}
+
+
+def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str):
+    """Push a rendered clip to the user's TikTok inbox (draft) via the Content Posting API."""
+    import httpx, asyncio as _aio
+    tmp_path = None
+    try:
+        tok = _aio.run(get_tiktok_access_token(user_id, req_data.get("tt_open_id") or None))
+        if not tok:
+            db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": "Not connected to TikTok"})
+            return
+        access_token = tok["access_token"]
+
+        job = db_get_job(job_id)
+        if not job:
+            return
+        clips = job.get("clips", [])
+        if clip_index >= len(clips):
+            return
+        clip = clips[clip_index]
+        filename = clip.get("filename", "")
+
+        # Get the clip file (download from R2 if needed)
+        local = OUTPUT_DIR / job_id / filename
+        if local.exists():
+            video_path = local
+        elif R2_ENABLED:
+            tmp_path = download_clip_to_temp(job_id, filename)
+            video_path = tmp_path
+        else:
+            video_path = None
+        if not video_path or not Path(video_path).exists():
+            db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": "Clip file not found"})
+            return
+
+        size = Path(video_path).stat().st_size
+        db_update_clip_tt_upload(job_id, clip_index, {"status": "uploading", "progress": 10})
+
+        # 1. init upload (single chunk — clips are short/small)
+        with httpx.Client(timeout=120) as client:
+            init = client.post(
+                "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/",
+                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                json={"source_info": {
+                    "source": "FILE_UPLOAD",
+                    "video_size": size,
+                    "chunk_size": size,
+                    "total_chunk_count": 1,
+                }},
+            )
+            ij = init.json()
+            if ij.get("error", {}).get("code") not in (None, "ok"):
+                db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": ij.get("error", {}).get("message", "init failed")})
+                return
+            upload_url = ij.get("data", {}).get("upload_url")
+            publish_id = ij.get("data", {}).get("publish_id")
+            if not upload_url:
+                db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": "No upload URL from TikTok"})
+                return
+
+            # 2. PUT the whole file as one chunk
+            with open(video_path, "rb") as f:
+                data = f.read()
+            put = client.put(
+                upload_url,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Length": str(size),
+                    "Content-Range": f"bytes 0-{size-1}/{size}",
+                },
+                content=data,
+            )
+            if put.status_code not in (200, 201, 206):
+                db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": f"Upload failed ({put.status_code})"})
+                return
+
+        db_update_clip_tt_upload(job_id, clip_index, {
+            "status": "done", "progress": 100, "publish_id": publish_id,
+            "note": "Sent to your TikTok inbox — open TikTok to finish posting.",
+        })
+        print(f"[tiktok] job={job_id} clip={clip_index} sent to inbox (publish_id={publish_id})", flush=True)
+    except Exception as e:
+        print(f"[tiktok] job={job_id} clip={clip_index} error: {e}", flush=True)
+        db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": "Upload to TikTok failed"})
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+@app.post("/api/tiktok/upload/{job_id}/{clip_index}")
+async def start_tiktok_upload(
+    job_id: str, clip_index: int, req: TikTokUploadRequest,
+    background_tasks: BackgroundTasks, user=Depends(require_pro),
+):
+    job = db_get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    if clip_index >= len(job.get("clips", [])):
+        raise HTTPException(404, "Clip not found")
+    db_update_clip_tt_upload(job_id, clip_index, {"status": "queued", "progress": 0})
+    background_tasks.add_task(do_tiktok_upload, job_id, clip_index, req.model_dump(), user.id)
+    return {"status": "queued"}
+
+
+@app.get("/api/tiktok/upload_status/{job_id}/{clip_index}")
+async def get_tiktok_upload_status(job_id: str, clip_index: int, user=Depends(require_pro)):
+    job = db_get_job(job_id)
+    if not job or job.get("user_id") != user.id:
+        raise HTTPException(404, "Job not found")
+    clips = job.get("clips", [])
+    if clip_index >= len(clips):
+        raise HTTPException(404, "Clip not found")
+    return clips[clip_index].get("tt_upload", {"status": "none"})
 
 
 @app.post("/api/jobs/{job_id}/clips/{clip_index}/refresh_analytics")

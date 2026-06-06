@@ -73,6 +73,17 @@ def db_update_clip_yt_upload(job_id: str, clip_index: int, yt_upload: dict) -> N
         get_db().table("jobs").update({"clips": clips}).eq("id", job_id).execute()
 
 
+def db_update_clip_tt_upload(job_id: str, clip_index: int, tt_upload: dict) -> None:
+    """Update the tt_upload field on a single clip inside the clips JSONB array."""
+    job = db_get_job(job_id)
+    if not job:
+        return
+    clips = job.get("clips", [])
+    if clip_index < len(clips):
+        clips[clip_index]["tt_upload"] = tt_upload
+        get_db().table("jobs").update({"clips": clips}).eq("id", job_id).execute()
+
+
 def db_update_clip_analytics(job_id: str, clip_index: int, analytics: dict) -> None:
     """Store YouTube performance stats on a single clip."""
     job = db_get_job(job_id)
@@ -221,6 +232,56 @@ def db_delete_youtube_token(user_id: str, yt_channel_id: Optional[str] = None) -
     q = get_db().table("youtube_tokens").delete().eq("user_id", user_id)
     if yt_channel_id:
         q = q.eq("yt_channel_id", yt_channel_id)
+    q.execute()
+
+
+# ── TikTok tokens ──────────────────────────────────────────────────────────────
+
+def db_get_tiktok_token(user_id: str, tt_open_id: Optional[str] = None) -> Optional[dict]:
+    """Return one TikTok token row — the specific account if given, else the first."""
+    try:
+        q = get_db().table("tiktok_tokens").select("*").eq("user_id", user_id)
+        if tt_open_id:
+            q = q.eq("tt_open_id", tt_open_id)
+        r = q.limit(1).execute()
+        return r.data[0] if r.data else None
+    except Exception as e:
+        print(f"[db_get_tiktok_token] error for {user_id}: {e}", flush=True)
+        return None
+
+
+def db_get_user_tiktok_tokens(user_id: str) -> list:
+    try:
+        r = get_db().table("tiktok_tokens").select("*").eq("user_id", user_id).execute()
+        return r.data or []
+    except Exception:
+        return []
+
+
+def db_upsert_tiktok_token(
+    user_id: str, access_token: str, refresh_token: Optional[str],
+    tt_open_id: str = "", tt_display_name: str = "", expires_at: Optional[str] = None,
+) -> None:
+    db = get_db()
+    r = db.table("tiktok_tokens").select("id").eq("user_id", user_id).eq("tt_open_id", tt_open_id).execute()
+    payload = {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "tt_display_name": tt_display_name,
+        "expires_at": expires_at,
+    }
+    if r.data:
+        db.table("tiktok_tokens").update(payload).eq("id", r.data[0]["id"]).execute()
+    else:
+        db.table("tiktok_tokens").insert({
+            "user_id": user_id, "tt_open_id": tt_open_id, **payload,
+        }).execute()
+
+
+def db_delete_tiktok_token(user_id: str, tt_open_id: Optional[str] = None) -> None:
+    q = get_db().table("tiktok_tokens").delete().eq("user_id", user_id)
+    if tt_open_id:
+        q = q.eq("tt_open_id", tt_open_id)
     q.execute()
 
 

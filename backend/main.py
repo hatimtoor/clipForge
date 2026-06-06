@@ -2924,7 +2924,7 @@ async def get_youtube_upload_status(job_id: str, clip_index: int, user=Depends(r
 # TIKTOK CROSS-POSTING (Content Posting API — inbox/draft upload)
 # ══════════════════════════════════════════════════════════════════════════════
 
-TIKTOK_SCOPES = "user.info.basic,video.publish"
+TIKTOK_SCOPES = "user.info.basic,video.publish,video.upload"
 
 
 def _tt_postmsg(msg_type: str, error_text: str = "") -> HTMLResponse:
@@ -3145,7 +3145,17 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
             except Exception as ce:
                 print(f"[tiktok] creator_info query failed: {ce}", flush=True)
 
-            # 2. Direct Post init (publishes to the profile; private while unaudited)
+            source_info = {
+                "source": "FILE_UPLOAD",
+                "video_size": size,
+                "chunk_size": size,
+                "total_chunk_count": 1,
+            }
+
+            # 2. Try Direct Post (publishes to the profile). Unaudited apps can't
+            #    direct-post to a public account, so on that error fall back to the
+            #    inbox/draft flow, which works for any account without audit.
+            mode = "direct"
             init = client.post(
                 "https://open.tiktokapis.com/v2/post/publish/video/init/",
                 headers=auth_h,
@@ -3157,16 +3167,22 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
                         "disable_duet": False,
                         "disable_stitch": False,
                     },
-                    "source_info": {
-                        "source": "FILE_UPLOAD",
-                        "video_size": size,
-                        "chunk_size": size,
-                        "total_chunk_count": 1,
-                    },
+                    "source_info": source_info,
                 },
             )
             ij = init.json()
-            print(f"[tiktok] init ({init.status_code}) privacy={privacy} size={size}: {json.dumps(ij)[:600]}", flush=True)
+            print(f"[tiktok] direct init ({init.status_code}) privacy={privacy} size={size}: {json.dumps(ij)[:400]}", flush=True)
+            if ij.get("error", {}).get("code") == "unaudited_client_can_only_post_to_private_accounts":
+                # Fall back to inbox/draft upload (no audit / account-privacy requirement)
+                mode = "inbox"
+                init = client.post(
+                    "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/",
+                    headers=auth_h,
+                    json={"source_info": source_info},
+                )
+                ij = init.json()
+                print(f"[tiktok] inbox init ({init.status_code}): {json.dumps(ij)[:400]}", flush=True)
+
             if ij.get("error", {}).get("code") not in (None, "ok"):
                 err = ij.get("error", {})
                 db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": f"{err.get('code','')}: {err.get('message','init failed')}"})
@@ -3194,13 +3210,17 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
                 db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": f"Upload failed ({put.status_code})"})
                 return
 
-        note = ("Posted privately to your TikTok profile (sandbox/unaudited)."
-                if privacy == "SELF_ONLY" else "Posted to your TikTok profile.")
+        if mode == "inbox":
+            note = "Sent to your TikTok inbox — open the TikTok app to finish posting."
+        elif privacy == "SELF_ONLY":
+            note = "Posted privately to your TikTok profile (unaudited app)."
+        else:
+            note = "Posted to your TikTok profile."
         db_update_clip_tt_upload(job_id, clip_index, {
             "status": "done", "progress": 100, "publish_id": publish_id,
-            "privacy": privacy, "note": note,
+            "mode": mode, "privacy": privacy, "note": note,
         })
-        print(f"[tiktok] job={job_id} clip={clip_index} direct-posted (privacy={privacy}, publish_id={publish_id})", flush=True)
+        print(f"[tiktok] job={job_id} clip={clip_index} {mode} ok (publish_id={publish_id})", flush=True)
     except Exception as e:
         print(f"[tiktok] job={job_id} clip={clip_index} error: {e}", flush=True)
         db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": "Upload to TikTok failed"})

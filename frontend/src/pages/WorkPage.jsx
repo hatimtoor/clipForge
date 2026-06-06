@@ -165,7 +165,7 @@ function TikTokUploadButton({ clip, idx, jobId, ttAccounts }) {
 
   const black = { padding: "6px 12px", fontSize: 9, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textTransform: "uppercase", cursor: "pointer" };
   if (status === "done")
-    return <span className="pixel" title="Posted to your TikTok profile (private while your app is in sandbox/unaudited)" style={{ ...black, background: C.ink, color: C.cream, cursor: "default" }}>♪ POSTED</span>;
+    return <span className="pixel" title="Sent to TikTok — open the TikTok app to find it (in your profile or inbox)" style={{ ...black, background: C.ink, color: C.cream, cursor: "default" }}>♪ SENT</span>;
   if (status === "queued" || status === "uploading")
     return <span className="pixel" style={{ ...black, background: C.amber, color: C.ink }}>♪ SENDING...</span>;
   if (status === "error")

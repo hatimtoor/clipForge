@@ -39,6 +39,10 @@ def db_update_job(job_id: str, updates: dict) -> None:
     get_db().table("jobs").update(updates).eq("id", job_id).execute()
 
 
+def db_delete_job(job_id: str) -> None:
+    get_db().table("jobs").delete().eq("id", job_id).execute()
+
+
 def db_get_user_jobs(user_id: str, limit: int = 20, offset: int = 0) -> list:
     r = (
         get_db().table("jobs")

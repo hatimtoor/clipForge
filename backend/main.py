@@ -93,7 +93,7 @@ from pydantic import BaseModel
 
 from r2 import upload_clip, upload_thumbnail, presigned_url, stream_clip, download_clip_to_temp, delete_job_clips, R2_ENABLED
 from db import (
-    db_create_job, db_get_job, db_update_job, db_get_user_jobs,
+    db_create_job, db_get_job, db_update_job, db_delete_job, db_get_user_jobs,
     db_get_active_jobs, db_update_clip_yt_upload, db_update_clip_analytics,
     db_get_done_jobs_with_uploads, db_get_expirable_jobs,
     db_create_channel, db_get_channel, db_get_user_channels,
@@ -2370,6 +2370,27 @@ async def cancel_job(job_id: str, user=Depends(require_auth)):
     task = _running_tasks.get(job_id)
     if task and not task.done():
         task.cancel()
+    return {"ok": True}
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str, user=Depends(require_auth)):
+    job = db_get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    # Stop it if it's still running
+    task = _running_tasks.get(job_id)
+    if task and not task.done():
+        task.cancel()
+    # Remove its clips from R2 storage
+    if R2_ENABLED:
+        try:
+            await asyncio.to_thread(delete_job_clips, job_id)
+        except Exception as e:
+            print(f"[delete_job] R2 cleanup failed for {job_id}: {e}", flush=True)
+    await asyncio.to_thread(db_delete_job, job_id)
     return {"ok": True}
 
 

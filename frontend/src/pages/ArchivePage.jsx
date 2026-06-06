@@ -61,6 +61,14 @@ export default function ArchivePage() {
     }
   };
 
+  const handleCancel = async (jobId) => {
+    if (!window.confirm("Cancel this job? It will stop processing.")) return;
+    try {
+      await authFetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+      await fetchInitial();
+    } catch {}
+  };
+
   useEffect(() => { fetchInitial(); }, []);
 
   const filtered = (Array.isArray(jobs) ? jobs : []).filter(j => filter === "all" || j.status === filter);
@@ -117,6 +125,7 @@ export default function ArchivePage() {
                     {isDone  && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
                     {isErr   && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
                     {isProc  && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
+                    {isProc  && <PixelBtn color="danger"   size="sm" onClick={e => { e.stopPropagation(); handleCancel(j.job_id); }}>CANCEL</PixelBtn>}
                   </div>
                 </PixelCard>
               );
@@ -149,6 +158,7 @@ export default function ArchivePage() {
                     {isDone  && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
                     {isErr   && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
                     {isProc  && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
+                    {isProc  && <PixelBtn color="danger"   size="sm" onClick={e => { e.stopPropagation(); handleCancel(j.job_id); }}>CANCEL</PixelBtn>}
                   </div>
                 </div>
               );

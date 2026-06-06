@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { C, SHADOW, SHADOW_SM, BORDER, BORDER_SM } from "../lib/theme";
 import { useMobile } from "../hooks/useMobile";
 
@@ -32,10 +32,28 @@ export function PixelBtn({ color = "signal", size = "md", full, children, onClic
   }[color];
   const s = { sm: { p: "6px 12px", f: 9 }, md: { p: "10px 18px", f: 10 }, lg: { p: "14px 24px", f: 11 } }[size];
   const [pressed, setPressed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);  // synchronous guard so rapid clicks can't slip through
   const off = pressed ? 0 : 4;
+
+  // Debounce every click: ignore re-clicks while the handler runs (and for a short
+  // cooldown after). If onClick returns a promise, stay disabled until it settles.
+  // Prevents button-spam from flooding the backend (e.g. queueing 50 jobs).
+  const handleClick = async (e) => {
+    if (busyRef.current || disabled) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await onClick?.(e);
+    } finally {
+      setTimeout(() => { busyRef.current = false; setBusy(false); }, 600);
+    }
+  };
+
+  const isDisabled = disabled || busy;
   return (
     <button
-      type={type} onClick={onClick} disabled={disabled}
+      type={type} onClick={handleClick} disabled={isDisabled}
       onMouseEnter={onMouseEnter}
       onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}
       onMouseLeave={(e) => { setPressed(false); onMouseLeave?.(e); }}
@@ -44,7 +62,7 @@ export function PixelBtn({ color = "signal", size = "md", full, children, onClic
         background: colors.bg, color: C.ink, padding: s.p, fontSize: s.f,
         border: BORDER, boxShadow: `${off}px ${off}px 0 ${C.ink}`,
         transform: `translate(${pressed ? 4 : 0}px,${pressed ? 4 : 0}px)`,
-        cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? .5 : 1,
+        cursor: isDisabled ? "not-allowed" : "pointer", opacity: isDisabled ? .5 : 1,
         width: full ? "100%" : "auto", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
         textTransform: "uppercase", transition: "transform .04s,box-shadow .04s",
         userSelect: "none", ...ext,

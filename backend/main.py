@@ -1907,7 +1907,7 @@ async def channel_poller():
                         bg_music_volume=ch.get("bg_music_volume") or 0.15,
                         trim_silence=ch.get("trim_silence", False),
                     )
-                    asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id")))
+                    _running_tasks[job_id] = asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id")))
             except Exception as e:
                 print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
                 db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
@@ -2165,7 +2165,23 @@ async def _get_videos_since(channel_url: str, days_back: int) -> list:
     return videos
 
 
+_backfill_running: set = set()  # backfill ids currently processing (prevents stacking)
+
+
 async def _process_backfill(bf: dict) -> None:
+    """Guard wrapper — ensures only one run per backfill channel at a time."""
+    bf_id = bf.get("id")
+    if bf_id in _backfill_running:
+        print(f"[backfill] {bf_id} already running — skipping duplicate trigger", flush=True)
+        return
+    _backfill_running.add(bf_id)
+    try:
+        await _process_backfill_inner(bf)
+    finally:
+        _backfill_running.discard(bf_id)
+
+
+async def _process_backfill_inner(bf: dict) -> None:
     from datetime import datetime, timezone
     bf_id = bf["id"]
     user_id = bf["user_id"]
@@ -2221,7 +2237,7 @@ async def _process_backfill(bf: dict) -> None:
                 "max_duration": req.max_duration,
             }
             job = await asyncio.to_thread(db_create_job, job_data)
-            asyncio.create_task(run_pipeline(
+            _running_tasks[job["id"]] = asyncio.create_task(run_pipeline(
                 job["id"], req,
                 user_id=user_id,
                 auto_upload=auto_upload and (bool(yt_ch_id) or bool(tt_account)),
@@ -2788,13 +2804,16 @@ async def patch_backfill(backfill_id: str, req: BackfillPatchRequest, user=Depen
 
 
 @app.post("/api/backfill/{backfill_id}/run")
-async def run_backfill_now(backfill_id: str, user=Depends(require_pro)):
+@_limiter.limit("4/minute")
+async def run_backfill_now(request: Request, backfill_id: str, user=Depends(require_pro)):
     """Manually trigger processing for a backfill channel."""
     bf = await asyncio.to_thread(db_get_backfill, backfill_id)
     if not bf or bf.get("user_id") != user.id:
         raise HTTPException(404, "Not found")
     if bf.get("status") != "active":
         raise HTTPException(400, "Backfill is not active")
+    if backfill_id in _backfill_running:
+        return {"ok": True, "already_running": True}
     asyncio.create_task(_process_backfill(bf))
     return {"ok": True}
 
@@ -3403,7 +3422,8 @@ async def update_channel(channel_id: str, req: ChannelPatchRequest, user=Depends
 
 
 @app.post("/api/channels/{channel_id}/check")
-async def check_channel_now(channel_id: str, user=Depends(require_pro)):
+@_limiter.limit("6/minute")
+async def check_channel_now(request: Request, channel_id: str, user=Depends(require_pro)):
     if not db_channel_owned_by(channel_id, user.id):
         raise HTTPException(404, "Channel not found")
     ch = db_get_channel(channel_id)

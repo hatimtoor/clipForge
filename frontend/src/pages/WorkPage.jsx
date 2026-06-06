@@ -138,43 +138,187 @@ function YouTubeUploadModal({ clip, clipIndex, jobId, ytChannels, onClose, onUpl
   );
 }
 
-// ── TikTok upload button (inbox/draft flow) ────────────────────────────────────
-function TikTokUploadButton({ clip, idx, jobId, ttAccounts }) {
-  const [status, setStatus] = useState(clip.tt_upload?.status || "none");
+// ── TikTok clip button (opens the upload modal) ────────────────────────────────
+const TT_PRIVACY_LABELS = {
+  PUBLIC_TO_EVERYONE: "Everyone",
+  FOLLOWER_OF_CREATOR: "Followers",
+  MUTUAL_FOLLOW_FRIENDS: "Friends only",
+  SELF_ONLY: "Only me (private)",
+};
+
+function TikTokClipButton({ clip, onOpen }) {
+  const st = clip.tt_upload?.status;
+  const black = { padding: "6px 12px", fontSize: 9, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textTransform: "uppercase", cursor: "pointer" };
+  if (st === "done")
+    return <span className="pixel" title={clip.tt_upload?.note || "Sent to TikTok"} style={{ ...black, background: C.ink, color: C.cream, cursor: "default" }}>♪ SENT</span>;
+  if (st === "queued" || st === "uploading")
+    return <span className="pixel" style={{ ...black, background: C.amber, color: C.ink }}>♪ SENDING...</span>;
+  return <button className="pixel" onClick={onOpen} style={{ ...black, background: C.ink, color: C.cream }}>♪ TIKTOK</button>;
+}
+
+// ── TikTok upload modal (audit-compliant: privacy + disclosure) ─────────────────
+function TikTokUploadModal({ clip, clipIndex, jobId, ttAccounts, onClose, onUploaded }) {
+  const tags = clip.tags || [];
+  const defaultCaption = [clip.title || clip.hook || "", tags.map(t => `#${t}`).join(" ")].filter(Boolean).join(" ");
+  const [account, setAccount] = useState(ttAccounts?.[0]?.tt_open_id || "");
+  const [caption, setCaption] = useState(defaultCaption);
+  const [info, setInfo] = useState(null);
+  const [loadingInfo, setLoadingInfo] = useState(true);
+  const [privacy, setPrivacy] = useState("");
+  const [allowComment, setAllowComment] = useState(true);
+  const [allowDuet, setAllowDuet] = useState(true);
+  const [allowStitch, setAllowStitch] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [done, setDone] = useState(null);
+  const [err, setErr] = useState("");
   const pollRef = useRef(null);
   useEffect(() => () => clearInterval(pollRef.current), []);
 
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingInfo(true); setInfo(null); setPrivacy(""); setErr("");
+    (async () => {
+      try {
+        const q = account ? `?tt_open_id=${encodeURIComponent(account)}` : "";
+        const r = await authFetch(`/api/tiktok/creator_info${q}`);
+        const d = await r.json();
+        if (cancelled) return;
+        if (!r.ok) { setErr(d.detail || "Couldn't load TikTok account info."); setLoadingInfo(false); return; }
+        setInfo(d);
+        setAllowComment(!d.comment_disabled);
+        setAllowDuet(!d.duet_disabled);
+        setAllowStitch(!d.stitch_disabled);
+        setLoadingInfo(false);
+      } catch { if (!cancelled) { setErr("Couldn't reach server."); setLoadingInfo(false); } }
+    })();
+    return () => { cancelled = true; };
+  }, [account]);
+
   const upload = async () => {
-    setStatus("queued");
+    if (!privacy) { setErr("Please choose who can view this video."); return; }
+    setUploading(true); setErr("");
     try {
-      const body = ttAccounts?.length ? { tt_open_id: ttAccounts[0].tt_open_id } : {};
-      const res = await authFetch(`/api/tiktok/upload/${jobId}/${idx}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      const res = await authFetch(`/api/tiktok/upload/${jobId}/${clipIndex}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tt_open_id: account || undefined,
+          title: caption,
+          privacy_level: privacy,
+          disable_comment: !allowComment,
+          disable_duet: !allowDuet,
+          disable_stitch: !allowStitch,
+        }),
       });
-      if (!res.ok) { setStatus("error"); return; }
+      if (!res.ok) { setErr("Failed to start upload."); setUploading(false); return; }
       pollRef.current = setInterval(async () => {
         try {
-          const r = await authFetch(`/api/tiktok/upload_status/${jobId}/${idx}`);
+          const r = await authFetch(`/api/tiktok/upload_status/${jobId}/${clipIndex}`);
           const s = await r.json();
-          setStatus(s.status);
-          if (["done", "error"].includes(s.status)) clearInterval(pollRef.current);
+          if (s.status === "done") { clearInterval(pollRef.current); setDone(s); setUploading(false); onUploaded?.(); }
+          if (s.status === "error") { clearInterval(pollRef.current); setErr(s.error || "Upload failed"); setUploading(false); }
         } catch {}
       }, 2000);
-    } catch { setStatus("error"); }
+    } catch { setErr("Failed to start upload."); setUploading(false); }
   };
 
-  const black = { padding: "6px 12px", fontSize: 9, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textTransform: "uppercase", cursor: "pointer" };
-  if (status === "done")
-    return <span className="pixel" title="Sent to TikTok — open the TikTok app to find it (in your profile or inbox)" style={{ ...black, background: C.ink, color: C.cream, cursor: "default" }}>♪ SENT</span>;
-  if (status === "queued" || status === "uploading")
-    return <span className="pixel" style={{ ...black, background: C.amber, color: C.ink }}>♪ SENDING...</span>;
-  if (status === "error")
-    return <button className="pixel" onClick={upload} style={{ ...black, background: C.hot, color: C.ink }}>♪ RETRY</button>;
-  return <button className="pixel" onClick={upload} style={{ ...black, background: C.ink, color: C.cream }}>♪ TIKTOK</button>;
+  const toggle = (label, on, setOn, disabled) => (
+    <button onClick={() => !disabled && setOn(!on)} disabled={disabled} className="pixel" style={{
+      flex: 1, padding: "9px 6px", fontSize: 8, cursor: disabled ? "not-allowed" : "pointer",
+      background: disabled ? C.cream2 : on ? C.signal : C.paper, color: disabled ? C.dim : C.ink,
+      border: BORDER, opacity: disabled ? 0.6 : 1,
+    }}>{label}{disabled ? " (off)" : on ? " ✓" : ""}</button>
+  );
+
+  const privacyOptions = info?.privacy_level_options || [];
+
+  return (
+    <div onClick={e => !uploading && e.target === e.currentTarget && onClose()}
+      style={{ position: "fixed", inset: 0, background: "rgba(26,13,46,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20 }}>
+      <div className="fade" style={{ width: 520, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+        <PixelCard color={C.cream} padding={26}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+            <div className="pixel" style={{ fontSize: 11, color: C.ink }}>♪ TIKTOK / POST</div>
+            {!uploading && <button onClick={onClose} className="pixel" style={{ width: 28, height: 28, background: C.cream2, border: BORDER_SM, fontSize: 14, cursor: "pointer", color: C.ink }}>x</button>}
+          </div>
+
+          {done ? (
+            <div style={{ textAlign: "center" }}>
+              <p className="pixel" style={{ fontSize: 11, color: C.signalDeep, marginBottom: 12 }}>v SENT TO TIKTOK!</p>
+              <p className="vt" style={{ fontSize: 17, color: C.dim2, marginBottom: 18 }}>{done.note || "Open the TikTok app to see it."}</p>
+              <PixelBtn color="signal" onClick={onClose}>CLOSE</PixelBtn>
+            </div>
+          ) : uploading ? (
+            <div>
+              <p className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 12 }}>SENDING TO TIKTOK...</p>
+              <ProgressBar progress={50} color={C.ink} />
+            </div>
+          ) : loadingInfo ? (
+            <p className="vt" style={{ fontSize: 18, color: C.dim2, textAlign: "center", padding: "20px 0" }}>Loading your TikTok account…</p>
+          ) : (
+            <>
+              {ttAccounts && ttAccounts.length > 1 && (
+                <Field label="POST TO">
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                    {ttAccounts.map(acc => {
+                      const sel = account === acc.tt_open_id;
+                      return (
+                        <button key={acc.tt_open_id} onClick={() => setAccount(acc.tt_open_id)} className="pixel"
+                          style={{ padding: "8px 14px", fontSize: 9, background: sel ? C.ink : C.paper, color: sel ? C.cream : C.ink,
+                            border: BORDER, boxShadow: sel ? `0 0 0 ${C.ink}` : SHADOW_SM,
+                            transform: sel ? "translate(3px,3px)" : "none", cursor: "pointer" }}>
+                          ♪ {acc.tt_display_name || "TikTok"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+              )}
+
+              <Field label="CAPTION">
+                <textarea value={caption} onChange={e => setCaption(e.target.value)} rows={3} maxLength={2200} className="mono"
+                  style={{ width: "100%", padding: "10px 12px", background: C.paper, border: BORDER, color: C.ink, fontSize: 13, marginBottom: 14, boxShadow: SHADOW_SM, resize: "vertical" }} />
+              </Field>
+
+              <Field label="WHO CAN VIEW THIS VIDEO">
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                  {privacyOptions.map(o => {
+                    const sel = privacy === o;
+                    return <button key={o} onClick={() => setPrivacy(o)} className="pixel" style={{ padding: "9px 12px", background: sel ? C.signal : C.paper, color: C.ink, border: BORDER, boxShadow: sel ? `0 0 0 ${C.ink}` : SHADOW_SM, transform: sel ? "translate(3px,3px)" : "none", fontSize: 9, cursor: "pointer" }}>{TT_PRIVACY_LABELS[o] || o}</button>;
+                  })}
+                </div>
+              </Field>
+
+              <Field label="ALLOW">
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  {toggle("Comments", allowComment, setAllowComment, info?.comment_disabled)}
+                  {toggle("Duet", allowDuet, setAllowDuet, info?.duet_disabled)}
+                  {toggle("Stitch", allowStitch, setAllowStitch, info?.stitch_disabled)}
+                </div>
+              </Field>
+
+              {/* Required compliance disclosure */}
+              <div className="vt" style={{ fontSize: 14, color: C.dim2, lineHeight: 1.5, marginBottom: 16, padding: "10px 12px", background: `${C.lavender}44`, border: `2px solid ${C.ink}22` }}>
+                By posting, you agree to TikTok's{" "}
+                <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer" style={{ color: C.hotDeep }}>Music Usage Confirmation</a>.
+                Your video will be posted to your selected TikTok account.
+              </div>
+
+              {err && <div className="pixel" style={{ padding: "10px 12px", background: `${C.hot}55`, border: `2px solid ${C.hotDeep}`, color: C.hotDeep, fontSize: 9, marginBottom: 14 }}>! {err}</div>}
+
+              <PixelBtn color="cream" size="lg" full onClick={upload} disabled={!privacy}
+                style={{ background: privacy ? C.ink : C.cream2, color: privacy ? C.cream : C.dim }}>
+                ♪ POST TO TIKTOK
+              </PixelBtn>
+            </>
+          )}
+        </PixelCard>
+      </div>
+    </div>
+  );
 }
 
 // ── ClipCard ───────────────────────────────────────────────────────────────────
-function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytConnected, jobId, ttConnected, ttAccounts }) {
+function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTUpload, ytConnected, jobId, ttConnected, ttAccounts }) {
   const [downloading, setDownloading] = useState(false);
   const [analytics, setAnalytics] = useState(clip.yt_analytics || null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -266,7 +410,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
                   ? <span className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center" }}>^ {ytUp.progress || 0}%</span>
                   : <PixelBtn color="yt" size="sm" onClick={onYTUpload}>^ YT</PixelBtn>
             )}
-            {ttConnected && <TikTokUploadButton clip={clip} idx={idx} jobId={jobId} ttAccounts={ttAccounts} />}
+            {ttConnected && <TikTokClipButton clip={clip} onOpen={() => onTTUpload(clip, idx)} />}
             {hasYtVideo && (
               <button onClick={refreshStats} disabled={statsLoading} className="pixel"
                 style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer", background: C.lavender, border: BORDER, color: C.ink, opacity: statsLoading ? 0.5 : 1 }}>
@@ -350,7 +494,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
                 ? <span className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center" }}>^ {ytUp.progress || 0}%</span>
                 : <PixelBtn color="yt" size="sm" onClick={onYTUpload}>^ YT</PixelBtn>
           )}
-          {ttConnected && <TikTokUploadButton clip={clip} idx={idx} jobId={jobId} ttAccounts={ttAccounts} />}
+          {ttConnected && <TikTokClipButton clip={clip} onOpen={() => onTTUpload(clip, idx)} />}
         </div>
       </div>
     </div>
@@ -358,7 +502,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, ytCon
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
-function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onNew, onUploadAll, uploadingAll }) {
+function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew, onUploadAll, uploadingAll }) {
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
@@ -455,6 +599,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onNew, onUploadAl
               isActive={active?.path === c.path}
               onPreview={() => setActive(prev => prev?.path === c.path ? null : c)}
               onYTUpload={() => onYTUpload(c, i)}
+              onTTUpload={() => onTTUpload(c, i)}
               jobId={job.job_id}
             />
           ))}
@@ -624,6 +769,7 @@ export default function WorkPage() {
 
   const [job, setJob] = useState(null);
   const [ytModal, setYtModal] = useState(null);
+  const [ttModal, setTtModal] = useState(null);
   const [loading, setLoading] = useState(!!jobId);
   const [fetchError, setFetchError] = useState(false);
   const [uploadingAll, setUploadingAll] = useState(false);
@@ -818,6 +964,7 @@ export default function WorkPage() {
           isPro={isPro}
           onNew={goNew}
           onYTUpload={(clip, clipIndex) => setYtModal({ clip, clipIndex })}
+          onTTUpload={(clip, clipIndex) => setTtModal({ clip, clipIndex })}
           onUploadAll={handleUploadAll}
           uploadingAll={uploadingAll}
         />
@@ -828,6 +975,16 @@ export default function WorkPage() {
             jobId={jobId}
             ytChannels={ytStatus?.channels || []}
             onClose={() => setYtModal(null)}
+            onUploaded={refreshJob}
+          />
+        )}
+        {ttModal && (
+          <TikTokUploadModal
+            clip={ttModal.clip}
+            clipIndex={ttModal.clipIndex}
+            jobId={jobId}
+            ttAccounts={ttStatus?.accounts || []}
+            onClose={() => setTtModal(null)}
             onUploaded={refreshJob}
           />
         )}

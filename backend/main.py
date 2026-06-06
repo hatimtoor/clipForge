@@ -265,6 +265,11 @@ class YouTubeUploadRequest(BaseModel):
 
 class TikTokUploadRequest(BaseModel):
     tt_open_id: Optional[str] = None  # which connected TikTok account to upload to
+    title: Optional[str] = None
+    privacy_level: Optional[str] = None
+    disable_comment: bool = False
+    disable_duet: bool = False
+    disable_stitch: bool = False
 
 class ChannelRequest(BaseModel):
     url: str
@@ -3086,6 +3091,38 @@ async def tiktok_disconnect(tt_open_id: Optional[str] = None, user=Depends(requi
     return {"ok": True}
 
 
+@app.get("/api/tiktok/creator_info")
+async def tiktok_creator_info(tt_open_id: Optional[str] = None, user=Depends(require_pro)):
+    """Creator's allowed privacy levels + interaction settings — required by the
+    posting UI so the user picks from what TikTok actually permits for them."""
+    tok = await get_tiktok_access_token(user.id, tt_open_id or None)
+    if not tok:
+        raise HTTPException(400, "Not connected to TikTok")
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(
+                "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+                headers={"Authorization": f"Bearer {tok['access_token']}", "Content-Type": "application/json"},
+            )
+            d = r.json()
+    except Exception as e:
+        print(f"[tiktok] creator_info endpoint error: {e}", flush=True)
+        raise HTTPException(502, "Could not reach TikTok")
+    if d.get("error", {}).get("code") not in (None, "ok"):
+        raise HTTPException(502, d.get("error", {}).get("message", "TikTok creator info failed"))
+    data = d.get("data", {})
+    return {
+        "nickname": data.get("creator_nickname"),
+        "avatar": data.get("creator_avatar_url"),
+        "privacy_level_options": data.get("privacy_level_options", []),
+        "comment_disabled": data.get("comment_disabled", False),
+        "duet_disabled": data.get("duet_disabled", False),
+        "stitch_disabled": data.get("stitch_disabled", False),
+        "max_duration_sec": data.get("max_video_post_duration_sec"),
+    }
+
+
 def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str):
     """Push a rendered clip to the user's TikTok inbox (draft) via the Content Posting API."""
     import httpx, asyncio as _aio
@@ -3122,26 +3159,29 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
         size = Path(video_path).stat().st_size
         db_update_clip_tt_upload(job_id, clip_index, {"status": "uploading", "progress": 10})
 
-        # Build the caption from the clip's title + hashtags (max 2200 chars)
-        is_short = (clip.get("duration") or 0) <= 60
+        # Caption: prefer the one the user typed in the modal, else build from the clip
         tags = clip.get("tags", []) or []
-        caption = " ".join(filter(None, [
+        default_caption = " ".join(filter(None, [
             clip.get("title", "") or clip.get("hook", ""),
             " ".join(f"#{t}" for t in tags),
-        ]))[:2200].strip() or "New clip"
+        ])).strip() or "New clip"
+        caption = (req_data.get("title") or default_caption)[:2200]
+        disable_comment = bool(req_data.get("disable_comment", False))
+        disable_duet    = bool(req_data.get("disable_duet", False))
+        disable_stitch  = bool(req_data.get("disable_stitch", False))
 
         with httpx.Client(timeout=120) as client:
             auth_h = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
-            # 1. Query creator info to learn which privacy levels are allowed
-            privacy = TIKTOK_PRIVACY_LEVEL
+            # 1. Resolve privacy — use the user's choice if allowed, else a valid fallback
+            privacy = req_data.get("privacy_level") or TIKTOK_PRIVACY_LEVEL
             try:
                 ci = client.post("https://open.tiktokapis.com/v2/post/publish/creator_info/query/", headers=auth_h)
                 cj = ci.json()
-                print(f"[tiktok] creator_info ({ci.status_code}): {json.dumps(cj)[:500]}", flush=True)
+                print(f"[tiktok] creator_info ({ci.status_code}): {json.dumps(cj)[:300]}", flush=True)
                 opts = cj.get("data", {}).get("privacy_level_options", [])
                 if opts and privacy not in opts:
-                    privacy = opts[0]  # fall back to a level the creator/app actually allows (SELF_ONLY in sandbox)
+                    privacy = opts[0]
             except Exception as ce:
                 print(f"[tiktok] creator_info query failed: {ce}", flush=True)
 
@@ -3163,9 +3203,9 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
                     "post_info": {
                         "title": caption,
                         "privacy_level": privacy,
-                        "disable_comment": False,
-                        "disable_duet": False,
-                        "disable_stitch": False,
+                        "disable_comment": disable_comment,
+                        "disable_duet": disable_duet,
+                        "disable_stitch": disable_stitch,
                     },
                     "source_info": source_info,
                 },

@@ -77,6 +77,9 @@ YOUTUBE_REDIRECT_URI  = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000
 TIKTOK_CLIENT_KEY     = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_CLIENT_SECRET  = os.getenv("TIKTOK_CLIENT_SECRET", "")
 TIKTOK_REDIRECT_URI   = os.getenv("TIKTOK_REDIRECT_URI", "https://clipforging.com/api/tiktok/callback")
+# SELF_ONLY (private) is forced for unaudited apps. After audit, set to
+# PUBLIC_TO_EVERYONE in .env to publish publicly.
+TIKTOK_PRIVACY_LEVEL  = os.getenv("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")
 YOUTUBE_API_KEY       = os.getenv("YOUTUBE_API_KEY", "")
 
 from groq import Groq
@@ -2921,7 +2924,7 @@ async def get_youtube_upload_status(job_id: str, clip_index: int, user=Depends(r
 # TIKTOK CROSS-POSTING (Content Posting API — inbox/draft upload)
 # ══════════════════════════════════════════════════════════════════════════════
 
-TIKTOK_SCOPES = "user.info.basic,video.upload"
+TIKTOK_SCOPES = "user.info.basic,video.publish"
 
 
 def _tt_postmsg(msg_type: str, error_text: str = "") -> HTMLResponse:
@@ -3119,17 +3122,46 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
         size = Path(video_path).stat().st_size
         db_update_clip_tt_upload(job_id, clip_index, {"status": "uploading", "progress": 10})
 
-        # 1. init upload (single chunk — clips are short/small)
+        # Build the caption from the clip's title + hashtags (max 2200 chars)
+        is_short = (clip.get("duration") or 0) <= 60
+        tags = clip.get("tags", []) or []
+        caption = " ".join(filter(None, [
+            clip.get("title", "") or clip.get("hook", ""),
+            " ".join(f"#{t}" for t in tags),
+        ]))[:2200].strip() or "New clip"
+
         with httpx.Client(timeout=120) as client:
+            auth_h = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+            # 1. Query creator info to learn which privacy levels are allowed
+            privacy = TIKTOK_PRIVACY_LEVEL
+            try:
+                ci = client.post("https://open.tiktokapis.com/v2/post/publish/creator_info/query/", headers=auth_h)
+                opts = ci.json().get("data", {}).get("privacy_level_options", [])
+                if opts and privacy not in opts:
+                    privacy = opts[0]  # fall back to a level the creator/app actually allows (SELF_ONLY in sandbox)
+            except Exception:
+                pass
+
+            # 2. Direct Post init (publishes to the profile; private while unaudited)
             init = client.post(
-                "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/",
-                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
-                json={"source_info": {
-                    "source": "FILE_UPLOAD",
-                    "video_size": size,
-                    "chunk_size": size,
-                    "total_chunk_count": 1,
-                }},
+                "https://open.tiktokapis.com/v2/post/publish/video/init/",
+                headers=auth_h,
+                json={
+                    "post_info": {
+                        "title": caption,
+                        "privacy_level": privacy,
+                        "disable_comment": False,
+                        "disable_duet": False,
+                        "disable_stitch": False,
+                    },
+                    "source_info": {
+                        "source": "FILE_UPLOAD",
+                        "video_size": size,
+                        "chunk_size": size,
+                        "total_chunk_count": 1,
+                    },
+                },
             )
             ij = init.json()
             if ij.get("error", {}).get("code") not in (None, "ok"):
@@ -3141,7 +3173,7 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
                 db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": "No upload URL from TikTok"})
                 return
 
-            # 2. PUT the whole file as one chunk
+            # 3. PUT the whole file as one chunk
             with open(video_path, "rb") as f:
                 data = f.read()
             put = client.put(
@@ -3157,11 +3189,13 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
                 db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": f"Upload failed ({put.status_code})"})
                 return
 
+        note = ("Posted privately to your TikTok profile (sandbox/unaudited)."
+                if privacy == "SELF_ONLY" else "Posted to your TikTok profile.")
         db_update_clip_tt_upload(job_id, clip_index, {
             "status": "done", "progress": 100, "publish_id": publish_id,
-            "note": "Sent to your TikTok inbox — open TikTok to finish posting.",
+            "privacy": privacy, "note": note,
         })
-        print(f"[tiktok] job={job_id} clip={clip_index} sent to inbox (publish_id={publish_id})", flush=True)
+        print(f"[tiktok] job={job_id} clip={clip_index} direct-posted (privacy={privacy}, publish_id={publish_id})", flush=True)
     except Exception as e:
         print(f"[tiktok] job={job_id} clip={clip_index} error: {e}", flush=True)
         db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": "Upload to TikTok failed"})

@@ -3137,11 +3137,13 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
             privacy = TIKTOK_PRIVACY_LEVEL
             try:
                 ci = client.post("https://open.tiktokapis.com/v2/post/publish/creator_info/query/", headers=auth_h)
-                opts = ci.json().get("data", {}).get("privacy_level_options", [])
+                cj = ci.json()
+                print(f"[tiktok] creator_info ({ci.status_code}): {json.dumps(cj)[:500]}", flush=True)
+                opts = cj.get("data", {}).get("privacy_level_options", [])
                 if opts and privacy not in opts:
                     privacy = opts[0]  # fall back to a level the creator/app actually allows (SELF_ONLY in sandbox)
-            except Exception:
-                pass
+            except Exception as ce:
+                print(f"[tiktok] creator_info query failed: {ce}", flush=True)
 
             # 2. Direct Post init (publishes to the profile; private while unaudited)
             init = client.post(
@@ -3164,8 +3166,10 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
                 },
             )
             ij = init.json()
+            print(f"[tiktok] init ({init.status_code}) privacy={privacy} size={size}: {json.dumps(ij)[:600]}", flush=True)
             if ij.get("error", {}).get("code") not in (None, "ok"):
-                db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": ij.get("error", {}).get("message", "init failed")})
+                err = ij.get("error", {})
+                db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": f"{err.get('code','')}: {err.get('message','init failed')}"})
                 return
             upload_url = ij.get("data", {}).get("upload_url")
             publish_id = ij.get("data", {}).get("publish_id")
@@ -3186,6 +3190,7 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
                 content=data,
             )
             if put.status_code not in (200, 201, 206):
+                print(f"[tiktok] PUT upload failed ({put.status_code}): {put.text[:300]}", flush=True)
                 db_update_clip_tt_upload(job_id, clip_index, {"status": "error", "error": f"Upload failed ({put.status_code})"})
                 return
 

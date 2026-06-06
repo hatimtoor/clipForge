@@ -502,7 +502,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
-function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew, onUploadAll, uploadingAll }) {
+function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew, onUploadAll, onUploadAllTikTok, uploadingAll }) {
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
@@ -514,9 +514,12 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
   const ttAccounts = ttStatus?.accounts || [];
   const [uploadAllPickerOpen, setUploadAllPickerOpen] = useState(false);
   const [uploadAllChannel, setUploadAllChannel] = useState(ytChannels[0]?.yt_channel_id || "");
+  const [ttPickerOpen, setTtPickerOpen] = useState(false);
+  const [ttAllAccount, setTtAllAccount] = useState(ttAccounts[0]?.tt_open_id || "");
 
   const ytConnected = isPro && !!ytStatus?.connected;
   const uploadableCount = clips.filter(c => !c.yt_upload || !["done", "uploading", "queued"].includes(c.yt_upload?.status)).length;
+  const ttUploadableCount = clips.filter(c => !c.tt_upload || !["done", "uploading", "queued"].includes(c.tt_upload?.status)).length;
 
   const handleUploadAllClick = () => {
     if (ytChannels.length > 1) {
@@ -529,6 +532,16 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
   const handleUploadAllConfirm = () => {
     setUploadAllPickerOpen(false);
     onUploadAll(uploadAllChannel);
+  };
+
+  const handleTtAllClick = () => {
+    if (ttAccounts.length > 1) setTtPickerOpen(true);
+    else onUploadAllTikTok(ttAccounts[0]?.tt_open_id || "");
+  };
+
+  const handleTtAllConfirm = () => {
+    setTtPickerOpen(false);
+    onUploadAllTikTok(ttAllAccount);
   };
 
   useEffect(() => {
@@ -577,6 +590,41 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                     <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                       <PixelBtn color="yt" size="sm" onClick={handleUploadAllConfirm} disabled={!uploadAllChannel}>UPLOAD ALL</PixelBtn>
                       <PixelBtn color="cream" size="sm" onClick={() => setUploadAllPickerOpen(false)}>CANCEL</PixelBtn>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {ttConnected && ttUploadableCount > 0 && (
+              <div style={{ position: "relative" }}>
+                <button onClick={handleTtAllClick} disabled={uploadingAll} className="pixel" style={{
+                  padding: isMobile ? "6px 12px" : "10px 18px", fontSize: isMobile ? 9 : 10,
+                  background: C.ink, color: C.cream, border: BORDER, boxShadow: SHADOW_SM,
+                  cursor: uploadingAll ? "not-allowed" : "pointer", textTransform: "uppercase", opacity: uploadingAll ? 0.5 : 1,
+                }}>
+                  {isMobile ? "♪ ALL TO TT" : "♪ ALL TO TIKTOK"}
+                </button>
+                {ttPickerOpen && (
+                  <div className="pixel" style={{
+                    position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 200,
+                    background: C.cream, border: BORDER, boxShadow: SHADOW_SM, minWidth: 210, padding: 12,
+                  }}>
+                    <div style={{ fontSize: 8, color: C.dim2, marginBottom: 10 }}>SELECT TIKTOK ACCOUNT</div>
+                    {ttAccounts.map(a => (
+                      <button key={a.tt_open_id} onClick={() => setTtAllAccount(a.tt_open_id)} className="pixel" style={{
+                        display: "block", width: "100%", textAlign: "left", padding: "8px 10px", marginBottom: 6, fontSize: 9,
+                        background: ttAllAccount === a.tt_open_id ? C.ink : C.cream2,
+                        color: ttAllAccount === a.tt_open_id ? C.cream : C.ink, border: BORDER, cursor: "pointer",
+                      }}>
+                        {ttAllAccount === a.tt_open_id ? "♪ " : "  "}{a.tt_display_name || a.tt_open_id}
+                      </button>
+                    ))}
+                    <div className="vt" style={{ fontSize: 13, color: C.dim2, lineHeight: 1.4, margin: "8px 0" }}>
+                      By posting, you agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer" style={{ color: C.hotDeep }}>Music Usage Confirmation</a>.
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={handleTtAllConfirm} disabled={!ttAllAccount} className="pixel" style={{ padding: "6px 12px", fontSize: 9, background: C.ink, color: C.cream, border: BORDER, cursor: ttAllAccount ? "pointer" : "not-allowed", opacity: ttAllAccount ? 1 : 0.5 }}>SEND ALL</button>
+                      <PixelBtn color="cream" size="sm" onClick={() => setTtPickerOpen(false)}>CANCEL</PixelBtn>
                     </div>
                   </div>
                 )}
@@ -868,6 +916,35 @@ export default function WorkPage() {
     }, 2000);
   };
 
+  const handleUploadAllTikTok = async (account) => {
+    if (!job?.clips || uploadingAll) return;
+    setUploadingAll(true);
+    clearInterval(uploadAllPollRef.current);
+    const toUpload = job.clips
+      .map((c, i) => ({ clip: c, idx: i }))
+      .filter(({ clip }) => !clip.tt_upload || !["done", "uploading", "queued"].includes(clip.tt_upload?.status));
+    for (const { clip, idx } of toUpload) {
+      try {
+        await authFetch(`/api/tiktok/upload/${jobId}/${idx}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tt_open_id: account || undefined }),
+        });
+      } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    uploadAllPollRef.current = setInterval(async () => {
+      const d = await fetchJob(jobId);
+      if (!d) return;
+      setJob(d);
+      const allSettled = (d.clips || []).every(c => !c.tt_upload || ["done", "error"].includes(c.tt_upload?.status));
+      if (allSettled) {
+        clearInterval(uploadAllPollRef.current);
+        setUploadingAll(false);
+      }
+    }, 2000);
+  };
+
   const goNew = () => navigate("/hello");
 
   if (loading) {
@@ -966,6 +1043,7 @@ export default function WorkPage() {
           onYTUpload={(clip, clipIndex) => setYtModal({ clip, clipIndex })}
           onTTUpload={(clip, clipIndex) => setTtModal({ clip, clipIndex })}
           onUploadAll={handleUploadAll}
+          onUploadAllTikTok={handleUploadAllTikTok}
           uploadingAll={uploadingAll}
         />
         {ytModal && (

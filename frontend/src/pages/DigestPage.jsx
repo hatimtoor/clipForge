@@ -71,7 +71,7 @@ function Stepper({ label, val, onAdj, min, max, step, suffix = "" }) {
   );
 }
 
-function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
+function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMobile }) {
   const isCompleted = bf.status === "completed";
   const processed   = (bf.processed_video_ids || []).length;
   const total       = bf.total_videos || 0;
@@ -79,6 +79,7 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
   const [daysBack,       setDaysBack]       = useState(bf.days_back ?? 30);
   const [videosPerDay,   setVideosPerDay]   = useState(bf.videos_per_day ?? 2);
   const [ytChannelId,    setYtChannelId]    = useState(bf.yt_upload_channel_id ?? "");
+  const [ttAccountId,    setTtAccountId]    = useState(bf.tt_open_id ?? "");
   const [autoUpload,     setAutoUpload]     = useState(bf.auto_upload ?? false);
   const [maxClips,       setMaxClips]       = useState(bf.max_clips ?? 3);
   const [minDur,         setMinDur]         = useState(bf.min_duration ?? 30);
@@ -93,6 +94,7 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
   const [trimSilence,    setTrimSilence]    = useState(bf.trim_silence ?? false);
 
   const ytChannels = ytStatus?.channels || [];
+  const ttAccounts = ttStatus?.accounts || [];
   const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
 
   const patch = (fields) => onPatch(bf.id, fields);
@@ -284,7 +286,7 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
           {/* YT channel */}
           {ytChannels.length > 0 && (
             <div>
-              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 5 }}>UPLOAD TO</div>
+              <div className="pixel" style={{ fontSize: 7, color: C.ytDeep, marginBottom: 5 }}>▶ YOUTUBE</div>
               {ytChannels.length === 1 ? (
                 <div className="pixel" style={{ fontSize: 7, padding: "7px 8px", background: C.yt, border: BORDER, color: C.ink }}>
                   * {ytChannels[0].yt_channel_name || "YouTube"}
@@ -299,6 +301,19 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
             </div>
           )}
 
+          {/* TikTok account */}
+          {ttAccounts.length > 0 && (
+            <div>
+              <div className="pixel" style={{ fontSize: 7, color: C.ink, marginBottom: 5 }}>♪ TIKTOK</div>
+              <select value={ttAccountId}
+                onChange={e => { setTtAccountId(e.target.value); patch({ tt_open_id: e.target.value || null }); }}
+                className="pixel" style={{ width: "100%", padding: "7px 8px", background: C.paper, color: C.ink, border: BORDER, fontSize: 7 }}>
+                <option value="">— off —</option>
+                {ttAccounts.map(a => <option key={a.tt_open_id} value={a.tt_open_id}>{a.tt_display_name || a.tt_open_id}</option>)}
+              </select>
+            </div>
+          )}
+
           {!isCompleted && (
             <PixelBtn color="amber" size="sm" onClick={() => onRunNow(bf.id)}>RUN NOW</PixelBtn>
           )}
@@ -310,7 +325,7 @@ function DigestCard({ bf, ytStatus, onRemove, onRunNow, onPatch, isMobile }) {
 }
 
 export default function DigestPage() {
-  const { ytStatus, isPro } = useApp();
+  const { ytStatus, ttStatus, isPro } = useApp();
   const isMobile = useMobile();
   const [backfills, setBackfills] = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -427,7 +442,7 @@ export default function DigestPage() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {backfills.map(bf => (
-              <DigestCard key={bf.id} bf={bf} ytStatus={ytStatus}
+              <DigestCard key={bf.id} bf={bf} ytStatus={ytStatus} ttStatus={ttStatus}
                 onRemove={handleRemove} onRunNow={handleRunNow} onPatch={handlePatch} isMobile={isMobile} />
             ))}
           </div>

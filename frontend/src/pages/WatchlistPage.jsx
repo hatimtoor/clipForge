@@ -57,7 +57,7 @@ function UpgradeGate() {
   );
 }
 
-function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, onSetUploadChannel }) {
+function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, onSetUploadChannel, onSetTtAccount }) {
   const [maxClips, setMaxClips] = useState(ch.max_clips ?? 3);
   const [minDur,   setMinDur]   = useState(ch.min_duration ?? 30);
   const [maxDur,   setMaxDur]   = useState(ch.max_duration ?? 90);
@@ -69,8 +69,9 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
   const [bgMusicUrl,     setBgMusicUrl]     = useState(ch.bg_music_url ?? "");
   const [bgMusicVolume,  setBgMusicVolume]  = useState(ch.bg_music_volume ?? 0.15);
   const [trimSilence,    setTrimSilence]    = useState(ch.trim_silence ?? false);
-  const { ytStatus } = useApp();
+  const { ytStatus, ttStatus } = useApp();
   const [selectedYtChannel, setSelectedYtChannel] = useState(ch.yt_channel_id ?? "");
+  const [selectedTtAccount, setSelectedTtAccount] = useState(ch.tt_open_id ?? "");
   const isMobile = useMobile();
 
   const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
@@ -262,16 +263,30 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
             <span style={{ fontSize: 14, fontFamily: "sans-serif" }}>🎉</span>
             {ch.auto_upload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
           </button>
-          {ch.auto_upload && ytStatus && ytStatus.connected && ytStatus.channels && ytStatus.channels.length > 0 && (
+          {ch.auto_upload && ytStatus?.connected && (ytStatus.channels || []).length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 6 }}>UPLOAD TO</div>
+              <div className="pixel" style={{ fontSize: 7, color: C.ytDeep, marginBottom: 6 }}>▶ YOUTUBE</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <select value={selectedYtChannel} onChange={e => setSelectedYtChannel(e.target.value)} className="mono" style={{ flex: 1, padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER }}>
                   {ytStatus.channels.map(c => (
                     <option key={c.yt_channel_id} value={c.yt_channel_id}>{c.yt_channel_name || c.yt_channel_id}</option>
                   ))}
                 </select>
-                <PixelBtn color="hot" size="sm" onClick={() => onSetUploadChannel(ch, selectedYtChannel)}>SAVE</PixelBtn>
+                <PixelBtn color="yt" size="sm" onClick={() => onSetUploadChannel(ch, selectedYtChannel)}>SAVE</PixelBtn>
+              </div>
+            </div>
+          )}
+          {ch.auto_upload && ttStatus?.connected && (ttStatus.accounts || []).length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div className="pixel" style={{ fontSize: 7, color: C.ink, marginBottom: 6 }}>♪ TIKTOK</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <select value={selectedTtAccount} onChange={e => setSelectedTtAccount(e.target.value)} className="mono" style={{ flex: 1, padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER }}>
+                  <option value="">— off —</option>
+                  {ttStatus.accounts.map(a => (
+                    <option key={a.tt_open_id} value={a.tt_open_id}>{a.tt_display_name || a.tt_open_id}</option>
+                  ))}
+                </select>
+                <button onClick={() => onSetTtAccount(ch, selectedTtAccount)} className="pixel" style={{ padding: "8px 14px", fontSize: 9, background: C.ink, color: C.cream, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer" }}>SAVE</button>
               </div>
             </div>
           )}
@@ -361,6 +376,15 @@ function WatchlistContent() {
     fetchChannels();
   };
 
+  const handleSetTtAccount = async (ch, tt_open_id) => {
+    await authFetch(`/api/channels/${ch.channel_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tt_open_id: tt_open_id || null }),
+    });
+    fetchChannels();
+  };
+
   const handleCheckNow = async (id) => {
     setCheckingId(id);
     await authFetch(`/api/channels/${id}/check`, { method: "POST" });
@@ -416,6 +440,7 @@ function WatchlistContent() {
               onCheckNow={handleCheckNow}
               checking={checkingId === ch.channel_id}
               onSetUploadChannel={handleSetUploadChannel}
+              onSetTtAccount={handleSetTtAccount}
             />
           ))}
         </div>

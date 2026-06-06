@@ -153,7 +153,7 @@ function TikTokClipButton({ clip, onOpen }) {
     return <span className="pixel" title={clip.tt_upload?.note || "Sent to TikTok"} style={{ ...black, background: C.ink, color: C.cream, cursor: "default" }}>♪ SENT</span>;
   if (st === "queued" || st === "uploading")
     return <span className="pixel" style={{ ...black, background: C.amber, color: C.ink }}>♪ SENDING...</span>;
-  return <button className="pixel" onClick={onOpen} style={{ ...black, background: C.ink, color: C.cream }}>♪ TIKTOK</button>;
+  return <PixelBtn color="cream" size="sm" onClick={onOpen} style={{ background: C.ink, color: C.cream }}>♪ TIKTOK</PixelBtn>;
 }
 
 // ── TikTok upload modal (audit-compliant: privacy + disclosure) ─────────────────
@@ -597,13 +597,9 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
             )}
             {ttConnected && ttUploadableCount > 0 && (
               <div style={{ position: "relative" }}>
-                <button onClick={handleTtAllClick} disabled={uploadingAll} className="pixel" style={{
-                  padding: isMobile ? "6px 12px" : "10px 18px", fontSize: isMobile ? 9 : 10,
-                  background: C.ink, color: C.cream, border: BORDER, boxShadow: SHADOW_SM,
-                  cursor: uploadingAll ? "not-allowed" : "pointer", textTransform: "uppercase", opacity: uploadingAll ? 0.5 : 1,
-                }}>
+                <PixelBtn color="cream" size={isMobile ? "sm" : "md"} onClick={handleTtAllClick} disabled={uploadingAll} style={{ background: C.ink, color: C.cream }}>
                   {isMobile ? "♪ ALL TO TT" : "♪ ALL TO TIKTOK"}
-                </button>
+                </PixelBtn>
                 {ttPickerOpen && (
                   <div className="pixel" style={{
                     position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 200,
@@ -623,7 +619,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                       By posting, you agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer" style={{ color: C.hotDeep }}>Music Usage Confirmation</a>.
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={handleTtAllConfirm} disabled={!ttAllAccount} className="pixel" style={{ padding: "6px 12px", fontSize: 9, background: C.ink, color: C.cream, border: BORDER, cursor: ttAllAccount ? "pointer" : "not-allowed", opacity: ttAllAccount ? 1 : 0.5 }}>SEND ALL</button>
+                      <PixelBtn color="cream" size="sm" onClick={handleTtAllConfirm} disabled={!ttAllAccount} style={{ background: C.ink, color: C.cream }}>SEND ALL</PixelBtn>
                       <PixelBtn color="cream" size="sm" onClick={() => setTtPickerOpen(false)}>CANCEL</PixelBtn>
                     </div>
                   </div>

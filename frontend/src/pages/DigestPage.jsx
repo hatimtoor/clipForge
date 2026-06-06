@@ -244,18 +244,11 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
         <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", minWidth: isMobile ? "auto" : 180 }}>
 
           {/* Auto upload toggle */}
-          <button onClick={() => { setAutoUpload(v => { const next = !v; patch({ auto_upload: next }); return next; }); }}
-            className="pixel" style={{
-              padding: "10px 12px", fontSize: 8, textAlign: "center", width: "100%",
-              background: autoUpload ? C.signal : C.cream2, color: C.ink, border: BORDER,
-              boxShadow: autoUpload ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-              transform: autoUpload ? "translate(2px,2px)" : "none",
-              cursor: "pointer", transition: "all .1s",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            }}>
+          <PixelBtn color={autoUpload ? "signal" : "cream"} size="sm" full
+            onClick={() => { setAutoUpload(v => { const next = !v; patch({ auto_upload: next }); return next; }); }}>
             <span style={{ fontSize: 14, fontFamily: "sans-serif" }}>🎉</span>
             {autoUpload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
-          </button>
+          </PixelBtn>
 
           {/* Look back */}
           <div>

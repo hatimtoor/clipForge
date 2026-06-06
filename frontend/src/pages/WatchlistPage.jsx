@@ -251,18 +251,10 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
         </div>
 
         <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", minWidth: isMobile ? "auto" : 170 }}>
-          <button onClick={() => onToggleAutoUpload(ch)} className="pixel" style={{
-            padding: "10px 12px", fontSize: 8, textAlign: "center",
-            background: ch.auto_upload ? C.signal : C.cream2,
-            color: C.ink, border: BORDER,
-            boxShadow: ch.auto_upload ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-            transform: ch.auto_upload ? "translate(2px,2px)" : "none",
-            cursor: "pointer", transition: "all .1s",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-          }}>
+          <PixelBtn color={ch.auto_upload ? "signal" : "cream"} size="sm" full onClick={() => onToggleAutoUpload(ch)}>
             <span style={{ fontSize: 14, fontFamily: "sans-serif" }}>🎉</span>
             {ch.auto_upload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
-          </button>
+          </PixelBtn>
           {ch.auto_upload && ytStatus?.connected && (ytStatus.channels || []).length > 0 && (
             <div style={{ marginTop: 8 }}>
               <div className="pixel" style={{ fontSize: 7, color: C.ytDeep, marginBottom: 6 }}>▶ YOUTUBE</div>
@@ -286,7 +278,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
                     <option key={a.tt_open_id} value={a.tt_open_id}>{a.tt_display_name || a.tt_open_id}</option>
                   ))}
                 </select>
-                <button onClick={() => onSetTtAccount(ch, selectedTtAccount)} className="pixel" style={{ padding: "8px 14px", fontSize: 9, background: C.ink, color: C.cream, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer" }}>SAVE</button>
+                <PixelBtn color="cream" size="sm" onClick={() => onSetTtAccount(ch, selectedTtAccount)} style={{ background: C.ink, color: C.cream }}>SAVE</PixelBtn>
               </div>
             </div>
           )}

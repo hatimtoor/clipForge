@@ -117,9 +117,7 @@ export default function ConnectionsPage() {
           {ttAccounts.map(acc => (
             <AccountRow key={acc.tt_open_id} label={`♪ ${acc.tt_display_name || "TikTok"}`} onDisconnect={() => disconnectTt(acc.tt_open_id)} />
           ))}
-          <button onClick={() => connect("tiktok")} className="pixel" style={{
-            padding: "12px 18px", fontSize: 10, background: C.ink, color: C.cream, border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer", textTransform: "uppercase",
-          }}>+ CONNECT TIKTOK ACCOUNT</button>
+          <PixelBtn color="cream" size="md" onClick={() => connect("tiktok")} style={{ background: C.ink, color: C.cream }}>+ CONNECT TIKTOK ACCOUNT</PixelBtn>
         </PixelCard>
 
         <PixelCard color={C.lavender} padding={16} style={{ marginTop: 18, boxShadow: isMobile ? "none" : undefined }}>

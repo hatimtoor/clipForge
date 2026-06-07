@@ -154,7 +154,7 @@ export default function HelloPage() {
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
-                ? <Toggle on={reframe && clipStyle !== "blur_bg"} setOn={v => setReframe(v)} label="REFRAME" hint="YOLO speaker tracking → 9:16 portrait" disabled={clipStyle === "blur_bg"} />
+                ? <Toggle on={reframe && clipStyle !== "blur_bg"} setOn={v => { setReframe(v); if (v) setClipStyle("reframe"); }} label="REFRAME" hint="YOLO speaker tracking → 9:16 portrait" />
                 : <button className="pixel" style={{ textAlign: "left", padding: 14, background: C.cream2, color: C.dim, border: BORDER, boxShadow: SHADOW_SM, cursor: "not-allowed", opacity: .7 }} disabled>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <span style={{ fontSize: 10 }}>REFRAME</span>
@@ -164,7 +164,7 @@ export default function HelloPage() {
                   </button>
               }
               <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
-              <Toggle on={clipStyle === "blur_bg"} setOn={v => setClipStyle(v ? "blur_bg" : "reframe")} label="BLUR BG" hint="landscape clip on blurred background" />
+              <Toggle on={clipStyle === "blur_bg"} setOn={v => { setClipStyle(v ? "blur_bg" : "reframe"); if (v) setReframe(false); }} label="BLUR BG" hint="landscape clip on blurred background" />
             </div>
 
             {error && (

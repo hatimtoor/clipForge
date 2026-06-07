@@ -8,6 +8,20 @@ import { useMobile } from "../hooks/useMobile";
 
 const PAGE_SIZE = 20;
 
+// Delete (×) button — PixelBtn tactile feel, turns red on hover
+function DeleteButton({ onDelete }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <PixelBtn color="cream" size="sm"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={(e) => { e.stopPropagation(); onDelete(); }}
+      style={{ background: hover ? C.ytDeep : C.cream2, color: hover ? C.cream : C.ink, padding: "6px 11px", fontSize: 13, lineHeight: 1 }}>
+      ×
+    </PixelBtn>
+  );
+}
+
 export default function ArchivePage() {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState([]);
@@ -70,7 +84,6 @@ export default function ArchivePage() {
   };
 
   const handleDelete = async (jobId) => {
-    if (!window.confirm("Delete this job permanently? This also removes its clips from storage.")) return;
     try {
       await authFetch(`/api/jobs/${jobId}`, { method: "DELETE" });
       setJobs(prev => prev.filter(j => j.job_id !== jobId));
@@ -126,8 +139,7 @@ export default function ArchivePage() {
                     <Tag bg={isDone ? C.signal : isErr ? C.hot : isCancelled ? C.cream2 : C.amber}>* {j.status?.toUpperCase()}</Tag>
                     <span className="vt" style={{ fontSize: 15, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
                     {isDone && j.clips?.length > 0 && <span className="pixel" style={{ fontSize: 8, color: C.ink }}>{j.clips.length} CLIPS</span>}
-                    <button onClick={e => { e.stopPropagation(); handleDelete(j.job_id); }} className="pixel" title="Delete job"
-                      style={{ marginLeft: "auto", width: 24, height: 24, background: C.cream2, border: `2px solid ${C.ink}`, color: C.ink, fontSize: 12, cursor: "pointer", lineHeight: 1 }}>×</button>
+                    <span style={{ marginLeft: "auto" }}><DeleteButton onDelete={() => handleDelete(j.job_id)} /></span>
                   </div>
                   <div className="mono" style={{ fontSize: 12, color: C.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: isErr ? 6 : 10 }}>{j.url}</div>
                   {isErr && <div className="vt" style={{ fontSize: 15, color: C.hotDeep, marginBottom: 8 }}>! {j.error?.split("\n").pop()}</div>}
@@ -169,8 +181,7 @@ export default function ArchivePage() {
                     {isErr   && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
                     {isProc  && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
                     {isProc  && <PixelBtn color="danger"   size="sm" onClick={e => { e.stopPropagation(); handleCancel(j.job_id); }}>CANCEL</PixelBtn>}
-                    <button onClick={e => { e.stopPropagation(); handleDelete(j.job_id); }} className="pixel" title="Delete job"
-                      style={{ width: 28, height: 28, background: C.cream2, border: `2px solid ${C.ink}`, color: C.ink, fontSize: 13, cursor: "pointer", lineHeight: 1, flexShrink: 0 }}>×</button>
+                    <DeleteButton onDelete={() => handleDelete(j.job_id)} />
                   </div>
                 </div>
               );

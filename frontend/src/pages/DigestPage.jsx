@@ -225,33 +225,23 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
                     )}
                   </div>
 
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22`, display: "flex", gap: 6 }}>
                     <button onClick={() => { const v = !trimSilence; setTrimSilence(v); patch({ trim_silence: v }); }} className="pixel" style={{
-                      width: "100%", padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
+                      flex: 1, padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
                       background: trimSilence ? C.signal : C.cream2, color: C.ink, border: BORDER,
                       boxShadow: trimSilence ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
                       transform: trimSilence ? "translate(2px,2px)" : "none",
                     }}>
-                      ✂ TRIM SILENCE {trimSilence ? "ON" : "OFF"}
+                      ✂ TRIM {trimSilence ? "ON" : "OFF"}
                     </button>
-                  </div>
-
-                  <div style={{ marginTop: 10 }}>
-                    <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 6 }}>CLIP STYLE</div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {[["reframe", "REFRAME"], ["blur_bg", "BLUR BG"]].map(([id, label]) => {
-                        const active = clipStyle === id;
-                        return (
-                          <button key={id} onClick={() => { setClipStyle(id); patch({ clip_style: id }); }} className="pixel"
-                            style={{ flex: 1, padding: "8px 10px", fontSize: 8, cursor: "pointer", border: BORDER,
-                              background: active ? C.ink : C.cream2, color: active ? C.cream : C.ink,
-                              boxShadow: active ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                              transform: active ? "translate(2px,2px)" : "none" }}>
-                            {label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <button onClick={() => { const v = clipStyle !== "blur_bg"; const s = v ? "blur_bg" : "reframe"; setClipStyle(s); patch({ clip_style: s }); }} className="pixel" style={{
+                      flex: 1, padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
+                      background: clipStyle === "blur_bg" ? C.signal : C.cream2, color: C.ink, border: BORDER,
+                      boxShadow: clipStyle === "blur_bg" ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                      transform: clipStyle === "blur_bg" ? "translate(2px,2px)" : "none",
+                    }}>
+                      ▣ BLUR BG {clipStyle === "blur_bg" ? "ON" : "OFF"}
+                    </button>
                   </div>
                 </div>
               )}

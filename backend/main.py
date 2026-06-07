@@ -231,6 +231,9 @@ def _clip_token_verify(token: str, job_id: str, filename: str) -> bool:
 
 # Running asyncio tasks — keyed by job_id so they can be cancelled
 _running_tasks: dict[str, asyncio.Task] = {}
+# Limit concurrent YouTube downloads so the digest's parallel videos don't get
+# throttled into failed-stream merge errors. Other pipeline phases stay parallel.
+_download_sem = asyncio.Semaphore(2)
 
 # ── request / response models ─────────────────────────────────────────────────
 class ClipRequest(BaseModel):
@@ -422,6 +425,12 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         "-o", str(video_path),
         "--no-playlist",
         "--newline",  # one progress line per update
+        # Resilience against transient/throttled stream downloads (the cause of
+        # "video.fNNN.mp4 not found" merge failures when YouTube throttles).
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "--file-access-retries", "5",
+        "--retry-sleep", "3",
     ]
     if COOKIES_FROM_BROWSER:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
@@ -483,28 +492,29 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         _progress_q.put(None)  # sentinel — signals drainer to stop
         return p.returncode, "".join(tail)
 
-    loop = asyncio.get_event_loop()
-    download_future = loop.run_in_executor(None, _run_download)
+    async with _download_sem:
+        loop = asyncio.get_event_loop()
+        download_future = loop.run_in_executor(None, _run_download)
 
-    # Drain progress updates from the event loop thread so the Supabase
-    # httpx client is never called from the thread-pool executor.
-    done = False
-    while not done:
-        await asyncio.sleep(0.2)
-        while True:
-            try:
-                item = _progress_q.get_nowait()
-                if item is None:
-                    done = True
+        # Drain progress updates from the event loop thread so the Supabase
+        # httpx client is never called from the thread-pool executor.
+        done = False
+        while not done:
+            await asyncio.sleep(0.2)
+            while True:
+                try:
+                    item = _progress_q.get_nowait()
+                    if item is None:
+                        done = True
+                        break
+                    await update_job(job_id, **item)
+                except _queue.Empty:
                     break
-                await update_job(job_id, **item)
-            except _queue.Empty:
-                break
-        # If the future raised an exception the sentinel may never arrive.
-        if not done and download_future.done():
-            done = True
+            # If the future raised an exception the sentinel may never arrive.
+            if not done and download_future.done():
+                done = True
 
-    returncode, tail = await download_future
+        returncode, tail = await download_future
     if returncode != 0:
         log(job_id, f"yt-dlp failed (exit {returncode})")
         raise RuntimeError(f"yt-dlp failed: {tail[-500:]}")

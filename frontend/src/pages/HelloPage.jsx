@@ -17,6 +17,7 @@ export default function HelloPage() {
   const [minDur, setMinDur] = useState(Number(searchParams.get("min_dur")) || 30);
   const [maxDur, setMaxDur] = useState(Number(searchParams.get("max_dur")) || 90);
   const [reframe, setReframe] = useState(searchParams.get("reframe") === "1");
+  const [clipStyle, setClipStyle] = useState(searchParams.get("clip_style") || "reframe");
   const [trimSilence, setTrimSilence] = useState(searchParams.get("trim_silence") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
   const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
@@ -73,7 +74,9 @@ export default function HelloPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur, reframe,
+          url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur,
+          reframe: clipStyle !== "blur_bg" && reframe,
+          clip_style: clipStyle,
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
           caption_style: captionStyle,
@@ -147,11 +150,11 @@ export default function HelloPage() {
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 8 : 10, marginBottom: 28 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 8 : 10, marginBottom: 14 }}>
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
-                ? <Toggle on={reframe} setOn={setReframe} label="9:16" hint="auto-reframe speaker to portrait" />
+                ? <Toggle on={reframe && clipStyle !== "blur_bg"} setOn={v => setReframe(v)} label="9:16" hint="auto-reframe speaker to portrait" disabled={clipStyle === "blur_bg"} />
                 : <button className="pixel" style={{ textAlign: "left", padding: 14, background: C.cream2, color: C.dim, border: BORDER, boxShadow: SHADOW_SM, cursor: "not-allowed", opacity: .7 }} disabled>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <span style={{ fontSize: 10 }}>9:16</span>
@@ -162,6 +165,25 @@ export default function HelloPage() {
               }
               <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
             </div>
+
+            {/* Clip style selector — sits below the toggle row */}
+            {isPro && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 28 }}>
+                {[["reframe", "REFRAME", "YOLO speaker tracking → 9:16 portrait"], ["blur_bg", "BLUR BG", "landscape clip centred on blurred background"]].map(([id, label, hint]) => {
+                  const active = clipStyle === id;
+                  return (
+                    <button key={id} onClick={() => setClipStyle(id)} className="pixel"
+                      style={{ flex: 1, padding: "10px 12px", textAlign: "left", cursor: "pointer", border: BORDER,
+                        background: active ? C.ink : C.cream2, color: active ? C.cream : C.ink,
+                        boxShadow: active ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                        transform: active ? "translate(2px,2px)" : "none" }}>
+                      <div style={{ fontSize: 9, marginBottom: 4 }}>{label}</div>
+                      <div className="vt" style={{ fontSize: 13, color: active ? C.cream2 : C.dim2, textTransform: "none", letterSpacing: 0, lineHeight: 1.2 }}>{hint}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {error && (
               <div className="pixel" style={{ padding: "10px 12px", background: `${C.hot}55`, border: `2px solid ${C.hotDeep}`, color: C.hotDeep, fontSize: 9, marginBottom: 16 }}>

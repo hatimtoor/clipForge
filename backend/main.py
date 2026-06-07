@@ -242,6 +242,7 @@ class ClipRequest(BaseModel):
     min_duration: int = 30
     max_duration: int = 90
     reframe: bool = False
+    clip_style: str = "reframe"  # "reframe" | "blur_bg"
     style_prompt: Optional[str] = None
     caption_style: str = "bold_bottom"
     caption_font_size: Optional[int] = None
@@ -280,6 +281,7 @@ class ChannelRequest(BaseModel):
     max_clips: int = 3
     min_duration: int = 30
     max_duration: int = 90
+    clip_style: str = "reframe"  # "reframe" | "blur_bg"
     caption_style: str = "bold_bottom"
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
@@ -295,6 +297,7 @@ class ChannelPatchRequest(BaseModel):
     max_clips: Optional[int] = None
     min_duration: Optional[int] = None
     max_duration: Optional[int] = None
+    clip_style: Optional[str] = None
     caption_style: Optional[str] = None
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
@@ -314,6 +317,7 @@ class BackfillRequest(BaseModel):
     max_clips: int = 3
     min_duration: int = 30
     max_duration: int = 90
+    clip_style: str = "reframe"  # "reframe" | "blur_bg"
     caption_style: str = "bold_bottom"
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
@@ -332,6 +336,7 @@ class BackfillPatchRequest(BaseModel):
     max_clips: Optional[int] = None
     min_duration: Optional[int] = None
     max_duration: Optional[int] = None
+    clip_style: Optional[str] = None
     caption_style: Optional[str] = None
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
@@ -1587,6 +1592,7 @@ async def create_clips(
     job_dir: Path,
     job_id: str,
     reframe: bool = False,
+    clip_style: str = "reframe",
     caption_style: str = "bold_bottom",
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
@@ -1767,7 +1773,53 @@ async def create_clips(
                 f"ass={ass_filename}"
             )
 
-        if music_path:
+        if clip_style == "blur_bg":
+            # Blur-background style: keep the landscape clip centred in 9:16,
+            # fill the black bars with a blurred+scaled copy of the same clip.
+            # No YOLO needed — the source video is never cropped.
+            blur_bg_fc = (
+                f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+                f"crop={out_w}:{out_h},boxblur=20:5[bg];"
+                f"[0:v]scale={out_w}:-2:force_original_aspect_ratio=decrease[fg];"
+                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[overlaid];"
+                f"[overlaid]ass={ass_filename}[vout]"
+            )
+            if music_path:
+                blur_bg_fc += (
+                    f";[0:a]volume=1.0[speech];"
+                    f"[1:a]volume={bg_music_volume}[bgm];"
+                    f"[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0.5[aout]"
+                )
+                ffmpeg_cmd = [
+                    FFMPEG, "-y",
+                    "-ss", str(render_ss),
+                    "-i", str(render_src),
+                    "-stream_loop", "-1",
+                    "-i", str(music_path),
+                    "-t", str(render_dur),
+                    "-filter_complex", blur_bg_fc,
+                    "-map", "[vout]",
+                    "-map", "[aout]",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    str(clip_path),
+                ]
+            else:
+                ffmpeg_cmd = [
+                    FFMPEG, "-y",
+                    "-ss", str(render_ss),
+                    "-i", str(render_src),
+                    "-t", str(render_dur),
+                    "-filter_complex", blur_bg_fc,
+                    "-map", "[vout]",
+                    "-map", "0:a?",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    str(clip_path),
+                ]
+        elif music_path:
             fc = (
                 f"[0:v]{vf_string}[vout];"
                 f"[0:a]volume=1.0[speech];"
@@ -1908,12 +1960,14 @@ async def channel_poller():
                         "source": "watchlist", "channel_id": channel_id,
                     })
                     job_id = job["id"]
+                    _ch_clip_style = ch.get("clip_style", "reframe")
                     req = ClipRequest(
                         url=video_url,
                         max_clips=ch.get("max_clips", 3),
                         min_duration=ch.get("min_duration", 30),
                         max_duration=ch.get("max_duration", 90),
-                        reframe=True,
+                        reframe=_ch_clip_style != "blur_bg",
+                        clip_style=_ch_clip_style,
                         caption_style=ch.get("caption_style", "bold_bottom"),
                         caption_font_size=ch.get("caption_font_size"),
                         caption_highlight_color=ch.get("caption_highlight_color"),
@@ -2032,6 +2086,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         final_clips = await create_clips(
             video_path, clips, segments, job_dir, job_id,
             reframe=req.reframe,
+            clip_style=req.clip_style,
             caption_style=req.caption_style or "bold_bottom",
             font_size=req.caption_font_size,
             highlight_color=req.caption_highlight_color,
@@ -2229,12 +2284,14 @@ async def _process_backfill_inner(bf: dict) -> None:
 
     for video in to_process:
         try:
+            _bf_clip_style = bf.get("clip_style", "reframe")
             req = ClipRequest(
                 url=video["url"],
                 max_clips=bf.get("max_clips", 3),
                 min_duration=bf.get("min_duration", 30),
                 max_duration=bf.get("max_duration", 90),
-                reframe=True,
+                reframe=_bf_clip_style != "blur_bg",
+                clip_style=_bf_clip_style,
                 caption_style=bf.get("caption_style", "bold_bottom"),
                 caption_font_size=bf.get("caption_font_size"),
                 caption_highlight_color=bf.get("caption_highlight_color"),
@@ -2815,6 +2872,7 @@ async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
         "caption_font_size": req.caption_font_size,
         "caption_highlight_color": req.caption_highlight_color,
         "caption_language": req.caption_language,
+        "clip_style": req.clip_style,
         "bg_music_url": req.bg_music_url or None,
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,
@@ -3431,6 +3489,7 @@ async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
         "caption_font_size": req.caption_font_size,
         "caption_highlight_color": req.caption_highlight_color,
         "caption_language": req.caption_language,
+        "clip_style": req.clip_style,
         "bg_music_url": req.bg_music_url or None,
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,

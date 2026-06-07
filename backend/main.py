@@ -507,7 +507,12 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
                     if item is None:
                         done = True
                         break
-                    await update_job(job_id, **item)
+                    # Progress writes are cosmetic — a transient DB hiccup here
+                    # must never abort an in-flight download.
+                    try:
+                        await update_job(job_id, **item)
+                    except Exception as e:
+                        log(job_id, f"progress update skipped: {e}")
                 except _queue.Empty:
                     break
             # If the future raised an exception the sentinel may never arrive.

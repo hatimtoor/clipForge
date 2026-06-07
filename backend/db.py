@@ -4,10 +4,29 @@ All tables: jobs, channels, youtube_tokens, profiles.
 Uses the service_role key so RLS is bypassed — the API layer enforces ownership.
 """
 import os
+import time
 from typing import Optional
+import httpx
 from supabase import create_client, Client
 
 _client: Optional[Client] = None
+
+# Transient connection errors. The Supabase client uses a single shared HTTP/2
+# connection; when many pipelines write concurrently (e.g. a digest running
+# several videos at once), that multiplexed connection can get corrupted and the
+# server drops it ("Server disconnected"). These are safe to retry on a fresh
+# connection — a single one-off manual run never hits this, which is why digest
+# failed while manual worked.
+_RETRYABLE = (
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.PoolTimeout,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+)
 
 
 def get_db() -> Client:
@@ -19,16 +38,35 @@ def get_db() -> Client:
     return _client
 
 
+def _retry_db(fn, attempts: int = 4):
+    """Run a Supabase call, retrying transient connection drops on a fresh client.
+
+    On a retryable error we null the global client so the next get_db() rebuilds
+    a brand-new connection instead of reusing the corrupted one.
+    """
+    global _client
+    last = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except _RETRYABLE as e:
+            last = e
+            _client = None  # force a clean connection on the next get_db()
+            time.sleep(0.3 * (i + 1))
+    if last:
+        raise last
+
+
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
 def db_create_job(data: dict) -> dict:
-    r = get_db().table("jobs").insert(data).execute()
+    r = _retry_db(lambda: get_db().table("jobs").insert(data).execute())
     return r.data[0]
 
 
 def db_get_job(job_id: str) -> Optional[dict]:
     try:
-        r = get_db().table("jobs").select("*").eq("id", job_id).execute()
+        r = _retry_db(lambda: get_db().table("jobs").select("*").eq("id", job_id).execute())
         return r.data[0] if r.data else None
     except Exception as e:
         print(f"[db_get_job] error for {job_id}: {e}", flush=True)
@@ -36,11 +74,11 @@ def db_get_job(job_id: str) -> Optional[dict]:
 
 
 def db_update_job(job_id: str, updates: dict) -> None:
-    get_db().table("jobs").update(updates).eq("id", job_id).execute()
+    _retry_db(lambda: get_db().table("jobs").update(updates).eq("id", job_id).execute())
 
 
 def db_delete_job(job_id: str) -> None:
-    get_db().table("jobs").delete().eq("id", job_id).execute()
+    _retry_db(lambda: get_db().table("jobs").delete().eq("id", job_id).execute())
 
 
 def db_get_user_jobs(user_id: str, limit: int = 20, offset: int = 0) -> list:

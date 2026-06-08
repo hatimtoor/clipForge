@@ -597,7 +597,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
             # Drop hallucinated segments: no real speech, or model was very uncertain
             no_speech  = seg.get("no_speech_prob", 0.0) if isinstance(seg, dict) else getattr(seg, "no_speech_prob", 0.0)
             avg_logprob = seg.get("avg_logprob", 0.0)  if isinstance(seg, dict) else getattr(seg, "avg_logprob", 0.0)
-            if no_speech > 0.4 or avg_logprob < -1.0:
+            if no_speech > 0.65 or avg_logprob < -1.3:
                 log(job_id, f"  [hallucination] dropped seg '{s_text[:40]}' (no_speech={no_speech:.2f}, logprob={avg_logprob:.2f})")
                 hallucinations_dropped += 1
                 continue
@@ -670,7 +670,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
                 # Drop hallucinated segments
                 no_speech   = seg.get("no_speech_prob", 0.0) if isinstance(seg, dict) else getattr(seg, "no_speech_prob", 0.0)
                 avg_logprob = seg.get("avg_logprob", 0.0)    if isinstance(seg, dict) else getattr(seg, "avg_logprob", 0.0)
-                if no_speech > 0.4 or avg_logprob < -1.0:
+                if no_speech > 0.65 or avg_logprob < -1.3:
                     log(job_id, f"  [hallucination] dropped seg '{s_text[:40]}' (no_speech={no_speech:.2f}, logprob={avg_logprob:.2f})")
                     hallucinations_dropped += 1
                     continue
@@ -1020,11 +1020,12 @@ def build_ass_subtitles(
     caption_style: str = "bold_bottom",
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
+    margin_v_override: Optional[int] = None,
 ):
     default_line, highlight_line = _CAPTION_STYLES.get(caption_style, _CAPTION_STYLES["bold_bottom"])
 
     # Apply per-job overrides on top of the chosen style preset
-    if font_size is not None or highlight_color is not None:
+    if font_size is not None or highlight_color is not None or margin_v_override is not None:
         def _apply(line: str, is_default: bool) -> str:
             parts = line.split(",")
             if font_size is not None:
@@ -1034,6 +1035,8 @@ def build_ass_subtitles(
                 # word is "spoken".  All dialogue events use the Default style, so this
                 # is the only field that actually changes what the viewer sees.
                 parts[3] = _hex_to_ass(highlight_color)
+            if margin_v_override is not None:
+                parts[20] = str(margin_v_override)  # MarginV field (0-indexed)
             return ",".join(parts)
         default_line = _apply(default_line, is_default=True)
         highlight_line = _apply(highlight_line, is_default=False)
@@ -1706,6 +1709,19 @@ async def create_clips(
         out_w = 1080
         out_h = 1920
 
+        # For blur_bg, compute where the foreground video ends so captions land
+        # in the bottom blurred zone rather than on top of the main video.
+        blur_bg_margin_v = None
+        if clip_style == "blur_bg":
+            fg_h = int(src_h * out_w / src_w)
+            fg_h = max(2, fg_h - (fg_h % 2))  # ensure even
+            fg_h = min(fg_h, out_h)
+            fg_bottom = (out_h + fg_h) // 2
+            bottom_zone = out_h - fg_bottom
+            eff_font = font_size or 72
+            # Centre the caption text in the bottom blur zone
+            blur_bg_margin_v = max(30, (bottom_zone - eff_font) // 2)
+
         # Build ASS subtitle
         ass_path = job_dir / f"clip_{idx}.ass"
         build_ass_subtitles(
@@ -1718,6 +1734,7 @@ async def create_clips(
             caption_style=caption_style,
             font_size=font_size,
             highlight_color=highlight_color,
+            margin_v_override=blur_bg_margin_v,
         )
 
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])

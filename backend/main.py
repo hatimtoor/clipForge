@@ -2002,22 +2002,123 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
         safe_url = _he(video_url)
         if error:
             subject = "ClipForge — your job hit an error"
-            body = f"""<div style="font-family:monospace;max-width:540px;margin:0 auto;padding:32px 24px;background:#fef7e4;border:3px solid #1a0d2e">
-  <div style="font-size:22px;font-weight:bold;color:#1a0d2e;margin-bottom:8px">&#x26A0;&#xFE0F; Job failed</div>
-  <p style="color:#4a3d68;margin:0 0 12px">Your ClipForge job ran into a problem and couldn&#x27;t finish.</p>
-  <p style="word-break:break-all;color:#1a0d2e;margin:0 0 6px"><strong>Video:</strong> {safe_url}</p>
-  <p style="color:#d4669a;margin:0 0 20px"><strong>Error:</strong> An error occurred while processing your video.</p>
-  <a href="{app_url}/archive" style="display:inline-block;padding:12px 20px;background:#f5a3c7;color:#1a0d2e;text-decoration:none;font-weight:bold;border:2px solid #1a0d2e">View in Archive &#x2192;</a>
-</div>"""
+            body = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#ebe1c4;font-family:monospace">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ebe1c4;padding:32px 16px">
+  <tr><td align="center">
+    <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;border:3px solid #1a0d2e;box-shadow:6px 6px 0 #1a0d2e">
+
+      <!-- header -->
+      <tr>
+        <td style="background:#1a0d2e;padding:14px 24px">
+          <span style="font-family:monospace;font-size:13px;font-weight:bold;letter-spacing:2px;color:#f4ecd6;text-transform:uppercase">&#x2702; CLIPFORGE</span>
+        </td>
+      </tr>
+
+      <!-- accent bar -->
+      <tr><td style="background:#f5a3c7;height:6px;border-bottom:3px solid #1a0d2e"></td></tr>
+
+      <!-- body -->
+      <tr>
+        <td style="background:#fef7e4;padding:32px 28px">
+
+          <p style="font-family:monospace;font-size:10px;letter-spacing:2px;color:#6b5b8a;margin:0 0 10px;text-transform:uppercase">! PIPELINE ERROR</p>
+          <p style="font-family:monospace;font-size:24px;font-weight:bold;color:#1a0d2e;margin:0 0 20px;line-height:1.2">Your job hit<br>a problem.</p>
+
+          <table width="100%" cellpadding="0" cellspacing="0" style="border:2px solid #1a0d2e;margin-bottom:24px">
+            <tr>
+              <td style="background:#ebe1c4;padding:10px 14px;border-bottom:2px solid #1a0d2e">
+                <span style="font-family:monospace;font-size:9px;letter-spacing:1px;color:#6b5b8a;text-transform:uppercase">SOURCE VIDEO</span>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#fef7e4;padding:10px 14px">
+                <span style="font-family:monospace;font-size:11px;color:#1a0d2e;word-break:break-all">{safe_url}</span>
+              </td>
+            </tr>
+          </table>
+
+          <p style="font-family:monospace;font-size:13px;color:#4a3d68;margin:0 0 28px;line-height:1.6">
+            ClipForge ran into an error and couldn&#x27;t finish this job.<br>
+            Head to the Archive to retry with the same settings &#x2192;
+          </p>
+
+          <a href="{app_url}/archive" style="display:inline-block;font-family:monospace;font-size:11px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;text-decoration:none;color:#1a0d2e;background:#f5a3c7;border:3px solid #1a0d2e;box-shadow:4px 4px 0 #1a0d2e;padding:13px 22px">VIEW IN ARCHIVE &gt;</a>
+
+        </td>
+      </tr>
+
+      <!-- footer -->
+      <tr>
+        <td style="background:#ebe1c4;border-top:3px solid #1a0d2e;padding:14px 28px">
+          <span style="font-family:monospace;font-size:9px;letter-spacing:1px;color:#6b5b8a;text-transform:uppercase">clipforging.com &mdash; your AI clip forge</span>
+        </td>
+      </tr>
+
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
         else:
             noun = "clip" if clip_count == 1 else "clips"
             subject = f"ClipForge — {clip_count} {noun} ready to ship!"
-            body = f"""<div style="font-family:monospace;max-width:540px;margin:0 auto;padding:32px 24px;background:#fef7e4;border:3px solid #1a0d2e">
-  <div style="font-size:22px;font-weight:bold;color:#1a0d2e;margin-bottom:8px">&#x2705; Your clips are ready</div>
-  <p style="color:#4a3d68;margin:0 0 12px"><span style="font-size:32px;color:#1a0d2e;font-weight:bold">{clip_count}</span> {noun} forged and waiting for you.</p>
-  <p style="word-break:break-all;color:#1a0d2e;margin:0 0 20px"><strong>Video:</strong> {safe_url}</p>
-  <a href="{app_url}/archive" style="display:inline-block;padding:12px 20px;background:#7ddca0;color:#1a0d2e;text-decoration:none;font-weight:bold;border:2px solid #1a0d2e">Open in ClipForge &#x2192;</a>
-</div>"""
+            body = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#ebe1c4;font-family:monospace">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ebe1c4;padding:32px 16px">
+  <tr><td align="center">
+    <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;border:3px solid #1a0d2e;box-shadow:6px 6px 0 #1a0d2e">
+
+      <!-- header -->
+      <tr>
+        <td style="background:#1a0d2e;padding:14px 24px">
+          <span style="font-family:monospace;font-size:13px;font-weight:bold;letter-spacing:2px;color:#f4ecd6;text-transform:uppercase">&#x2702; CLIPFORGE</span>
+        </td>
+      </tr>
+
+      <!-- accent bar -->
+      <tr><td style="background:#7ddca0;height:6px;border-bottom:3px solid #1a0d2e"></td></tr>
+
+      <!-- body -->
+      <tr>
+        <td style="background:#fef7e4;padding:32px 28px">
+
+          <p style="font-family:monospace;font-size:10px;letter-spacing:2px;color:#3aa86a;margin:0 0 10px;text-transform:uppercase">&#x2713; JOB COMPLETE</p>
+          <table cellpadding="0" cellspacing="0" style="margin-bottom:20px">
+            <tr>
+              <td style="font-family:monospace;font-size:64px;font-weight:bold;color:#1a0d2e;line-height:1;padding-right:16px;vertical-align:middle">{clip_count}</td>
+              <td style="font-family:monospace;font-size:20px;font-weight:bold;color:#1a0d2e;vertical-align:middle;line-height:1.2">{noun.upper()}<br><span style="font-size:13px;color:#6b5b8a;font-weight:normal">forged &amp; ready</span></td>
+            </tr>
+          </table>
+
+          <table width="100%" cellpadding="0" cellspacing="0" style="border:2px solid #1a0d2e;margin-bottom:28px">
+            <tr>
+              <td style="background:#ebe1c4;padding:10px 14px;border-bottom:2px solid #1a0d2e">
+                <span style="font-family:monospace;font-size:9px;letter-spacing:1px;color:#6b5b8a;text-transform:uppercase">SOURCE VIDEO</span>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#fef7e4;padding:10px 14px">
+                <span style="font-family:monospace;font-size:11px;color:#1a0d2e;word-break:break-all">{safe_url}</span>
+              </td>
+            </tr>
+          </table>
+
+          <a href="{app_url}/archive" style="display:inline-block;font-family:monospace;font-size:11px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;text-decoration:none;color:#1a0d2e;background:#7ddca0;border:3px solid #1a0d2e;box-shadow:4px 4px 0 #1a0d2e;padding:13px 22px">OPEN IN CLIPFORGE &gt;</a>
+
+        </td>
+      </tr>
+
+      <!-- footer -->
+      <tr>
+        <td style="background:#ebe1c4;border-top:3px solid #1a0d2e;padding:14px 28px">
+          <span style="font-family:monospace;font-size:9px;letter-spacing:1px;color:#6b5b8a;text-transform:uppercase">clipforging.com &mdash; your AI clip forge</span>
+        </td>
+      </tr>
+
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
         from_addr = os.getenv("RESEND_FROM", "ClipForge <notifications@updates.clipforging.com>")
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(

@@ -111,13 +111,13 @@ export default function ConnectionsPage() {
         {/* TikTok */}
         <PixelCard color={C.cream} padding={isMobile ? 16 : 22}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-            <span className="pixel" style={{ fontSize: 11, background: C.ink, color: C.cream, padding: "8px 12px", border: BORDER }}>♪ TIKTOK</span>
+            <span className="pixel" style={{ fontSize: 11, background: C.tt, color: C.ink, padding: "8px 12px", border: BORDER }}>♪ TIKTOK</span>
             <span className="vt" style={{ fontSize: 15, color: C.dim2 }}>{ttAccounts.length} account{ttAccounts.length === 1 ? "" : "s"} connected</span>
           </div>
           {ttAccounts.map(acc => (
             <AccountRow key={acc.tt_open_id} label={`♪ ${acc.tt_display_name || "TikTok"}`} onDisconnect={() => disconnectTt(acc.tt_open_id)} />
           ))}
-          <PixelBtn color="cream" size="md" onClick={() => connect("tiktok")} style={{ background: C.ink, color: C.cream }}>+ CONNECT TIKTOK ACCOUNT</PixelBtn>
+          <PixelBtn color="tt" size="md" onClick={() => connect("tiktok")}>+ CONNECT TIKTOK ACCOUNT</PixelBtn>
         </PixelCard>
 
         <PixelCard color={C.lavender} padding={16} style={{ marginTop: 18, boxShadow: isMobile ? "none" : undefined }}>

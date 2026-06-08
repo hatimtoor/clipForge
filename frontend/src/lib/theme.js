@@ -14,6 +14,8 @@ export const C = {
   peach: "#ffc4a3",
   yt: "#ff7a7a",
   ytDeep: "#d44a4a",
+  tt: "#7ec8e3",
+  ttDeep: "#3a9ac4",
   dim: "#6b5b8a",
   dim2: "#4a3d68",
   windowBg: "#2a1d4a",

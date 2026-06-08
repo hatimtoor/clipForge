@@ -28,6 +28,7 @@ export function PixelBtn({ color = "signal", size = "md", full, children, onClic
     lavender: { bg: C.lavender, deep: C.lavenderDeep },
     cream:    { bg: C.cream,    deep: "#c4b88e" },
     yt:       { bg: C.yt,       deep: C.ytDeep },
+    tt:       { bg: C.tt,       deep: C.ttDeep },
     danger:   { bg: "#ff8888",  deep: "#cc4444" },
   }[color];
   const s = { sm: { p: "6px 12px", f: 9 }, md: { p: "10px 18px", f: 10 }, lg: { p: "14px 24px", f: 11 } }[size];

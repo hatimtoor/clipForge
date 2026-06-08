@@ -150,10 +150,10 @@ function TikTokClipButton({ clip, onOpen }) {
   const st = clip.tt_upload?.status;
   const black = { padding: "6px 12px", fontSize: 9, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textTransform: "uppercase", cursor: "pointer" };
   if (st === "done")
-    return <span className="pixel" title={clip.tt_upload?.note || "Sent to TikTok"} style={{ ...black, background: C.ink, color: C.cream, cursor: "default" }}>♪ SENT</span>;
+    return <span className="pixel" title={clip.tt_upload?.note || "Sent to TikTok"} style={{ ...black, background: C.ttDeep, color: C.cream, cursor: "default" }}>♪ SENT</span>;
   if (st === "queued" || st === "uploading")
-    return <span className="pixel" style={{ ...black, background: C.amber, color: C.ink }}>♪ SENDING...</span>;
-  return <PixelBtn color="cream" size="sm" onClick={onOpen} style={{ background: C.ink, color: C.cream }}>♪ TIKTOK</PixelBtn>;
+    return <span className="pixel" style={{ ...black, background: C.tt, color: C.ink }}>♪ SENDING...</span>;
+  return <PixelBtn color="tt" size="sm" onClick={onOpen}>♪ TIKTOK</PixelBtn>;
 }
 
 // ── TikTok upload modal (audit-compliant: privacy + disclosure) ─────────────────
@@ -250,7 +250,7 @@ function TikTokUploadModal({ clip, clipIndex, jobId, ttAccounts, onClose, onUplo
           ) : uploading ? (
             <div>
               <p className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 12 }}>SENDING TO TIKTOK...</p>
-              <ProgressBar progress={50} color={C.ink} />
+              <ProgressBar progress={50} color={C.tt} />
             </div>
           ) : loadingInfo ? (
             <p className="vt" style={{ fontSize: 18, color: C.dim2, textAlign: "center", padding: "20px 0" }}>Loading your TikTok account…</p>
@@ -263,7 +263,7 @@ function TikTokUploadModal({ clip, clipIndex, jobId, ttAccounts, onClose, onUplo
                       const sel = account === acc.tt_open_id;
                       return (
                         <button key={acc.tt_open_id} onClick={() => setAccount(acc.tt_open_id)} className="pixel"
-                          style={{ padding: "8px 14px", fontSize: 9, background: sel ? C.ink : C.paper, color: sel ? C.cream : C.ink,
+                          style={{ padding: "8px 14px", fontSize: 9, background: sel ? C.tt : C.paper, color: C.ink,
                             border: BORDER, boxShadow: sel ? `0 0 0 ${C.ink}` : SHADOW_SM,
                             transform: sel ? "translate(3px,3px)" : "none", cursor: "pointer" }}>
                           ♪ {acc.tt_display_name || "TikTok"}
@@ -305,8 +305,7 @@ function TikTokUploadModal({ clip, clipIndex, jobId, ttAccounts, onClose, onUplo
 
               {err && <div className="pixel" style={{ padding: "10px 12px", background: `${C.hot}55`, border: `2px solid ${C.hotDeep}`, color: C.hotDeep, fontSize: 9, marginBottom: 14 }}>! {err}</div>}
 
-              <PixelBtn color="cream" size="lg" full onClick={upload} disabled={!privacy}
-                style={{ background: privacy ? C.ink : C.cream2, color: privacy ? C.cream : C.dim }}>
+              <PixelBtn color="tt" size="lg" full onClick={upload} disabled={!privacy}>
                 ♪ POST TO TIKTOK
               </PixelBtn>
             </>
@@ -597,7 +596,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
             )}
             {ttConnected && ttUploadableCount > 0 && (
               <div style={{ position: "relative" }}>
-                <PixelBtn color="cream" size={isMobile ? "sm" : "md"} onClick={handleTtAllClick} disabled={uploadingAll} style={{ background: C.ink, color: C.cream }}>
+                <PixelBtn color="tt" size={isMobile ? "sm" : "md"} onClick={handleTtAllClick} disabled={uploadingAll}>
                   {isMobile ? "♪ ALL TO TT" : "♪ ALL TO TIKTOK"}
                 </PixelBtn>
                 {ttPickerOpen && (
@@ -609,8 +608,8 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                     {ttAccounts.map(a => (
                       <button key={a.tt_open_id} onClick={() => setTtAllAccount(a.tt_open_id)} className="pixel" style={{
                         display: "block", width: "100%", textAlign: "left", padding: "8px 10px", marginBottom: 6, fontSize: 9,
-                        background: ttAllAccount === a.tt_open_id ? C.ink : C.cream2,
-                        color: ttAllAccount === a.tt_open_id ? C.cream : C.ink, border: BORDER, cursor: "pointer",
+                        background: ttAllAccount === a.tt_open_id ? C.tt : C.cream2,
+                        color: C.ink, border: BORDER, cursor: "pointer",
                       }}>
                         {ttAllAccount === a.tt_open_id ? "♪ " : "  "}{a.tt_display_name || a.tt_open_id}
                       </button>
@@ -619,7 +618,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                       By posting, you agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer" style={{ color: C.hotDeep }}>Music Usage Confirmation</a>.
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <PixelBtn color="cream" size="sm" onClick={handleTtAllConfirm} disabled={!ttAllAccount} style={{ background: C.ink, color: C.cream }}>SEND ALL</PixelBtn>
+                      <PixelBtn color="tt" size="sm" onClick={handleTtAllConfirm} disabled={!ttAllAccount}>SEND ALL</PixelBtn>
                       <PixelBtn color="cream" size="sm" onClick={() => setTtPickerOpen(false)}>CANCEL</PixelBtn>
                     </div>
                   </div>

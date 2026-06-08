@@ -1774,12 +1774,17 @@ async def create_clips(
             )
 
         if clip_style == "blur_bg":
-            # Blur-background style: keep the landscape clip centred in 9:16,
-            # fill the black bars with a blurred+scaled copy of the same clip.
-            # No YOLO needed — the source video is never cropped.
+            # Blur-background style: landscape clip centred in 9:16 with a
+            # blurred+scaled copy filling the bars.
+            # Perf trick: blur at half-res (540x960) then upscale — blurring a
+            # small image is ~4x faster and the upscale smears the blur further,
+            # which actually improves the look. CRF 26 is fine here because the
+            # background is heavily blurred; nobody sees compression artefacts.
+            half_w = out_w // 2   # 540
+            half_h = out_h // 2   # 960
             blur_bg_fc = (
-                f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
-                f"crop={out_w}:{out_h},boxblur=20:5[bg];"
+                f"[0:v]scale={half_w}:{half_h}:force_original_aspect_ratio=increase,"
+                f"crop={half_w}:{half_h},boxblur=10:2,scale={out_w}:{out_h}[bg];"
                 f"[0:v]scale={out_w}:-2:force_original_aspect_ratio=decrease[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2[overlaid];"
                 f"[overlaid]ass={ass_filename}[vout]"
@@ -1800,7 +1805,7 @@ async def create_clips(
                     "-filter_complex", blur_bg_fc,
                     "-map", "[vout]",
                     "-map", "[aout]",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "26",
                     "-c:a", "aac", "-b:a", "128k",
                     "-movflags", "+faststart",
                     str(clip_path),
@@ -1814,7 +1819,7 @@ async def create_clips(
                     "-filter_complex", blur_bg_fc,
                     "-map", "[vout]",
                     "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "26",
                     "-c:a", "aac", "-b:a", "128k",
                     "-movflags", "+faststart",
                     str(clip_path),

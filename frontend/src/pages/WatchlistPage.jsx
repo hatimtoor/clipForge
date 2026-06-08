@@ -287,7 +287,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
                     <option key={a.tt_open_id} value={a.tt_open_id}>{a.tt_display_name || a.tt_open_id}</option>
                   ))}
                 </select>
-                <PixelBtn color="cream" size="sm" onClick={() => onSetTtAccount(ch, selectedTtAccount)} style={{ background: C.ink, color: C.cream }}>SAVE</PixelBtn>
+                <PixelBtn color="tt" size="sm" onClick={() => onSetTtAccount(ch, selectedTtAccount)}>SAVE</PixelBtn>
               </div>
             </div>
           )}

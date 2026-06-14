@@ -235,6 +235,13 @@ _running_tasks: dict[str, asyncio.Task] = {}
 # throttled into failed-stream merge errors. Other pipeline phases stay parallel.
 _download_sem = asyncio.Semaphore(2)
 
+# Validate every user-supplied URL before it reaches yt-dlp's argv. This blocks
+# both SSRF (yt-dlp fetching arbitrary internal targets) and argument injection
+# (a value like "--exec=..." being parsed by yt-dlp as an option instead of a URL).
+_YOUTUBE_URL_RE = re.compile(
+    r'^https?://(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)/'
+)
+
 # ── request / response models ─────────────────────────────────────────────────
 class ClipRequest(BaseModel):
     url: str
@@ -445,7 +452,7 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
     # Tell yt-dlp exactly where ffmpeg is so it can merge streams reliably
     cmd += ["--ffmpeg-location", str(Path(FFMPEG).parent)]
-    cmd.append(url)
+    cmd += ["--", url]  # "--" stops yt-dlp parsing the URL as an option flag
 
     _pct_re = re.compile(r'\[download\]\s+(\d+\.?\d*)%')
     # Two-stream tracking: yt-dlp downloads video then audio separately
@@ -1000,9 +1007,31 @@ async def translate_segments(segments: list, target_lang: str, job_id: str) -> l
     return out
 
 
-def _hex_to_ass(hex_color: str) -> str:
-    """Convert #RRGGBB to ASS &H00BBGGRR format (fully opaque)."""
-    h = hex_color.lstrip("#")
+def _ass_escape(text: str) -> str:
+    """Strip characters that would break out of an ASS dialogue field — override
+    braces and the backslash escape lead-in — so transcript text can't inject ASS
+    tags or corrupt the subtitle file."""
+    return (
+        text.replace("\\", "")
+            .replace("{", "")
+            .replace("}", "")
+            .replace("\r", " ")
+            .replace("\n", " ")
+    )
+
+
+_HEX_COLOR_RE = re.compile(r'^#?[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$')
+
+
+def _hex_to_ass(hex_color: str) -> Optional[str]:
+    """Convert #RGB or #RRGGBB to ASS &H00BBGGRR format (fully opaque).
+
+    Returns None for anything that isn't a valid hex colour so a malformed
+    user-supplied value is ignored rather than crashing the render.
+    """
+    if not hex_color or not _HEX_COLOR_RE.match(hex_color.strip()):
+        return None
+    h = hex_color.strip().lstrip("#")
     if len(h) == 3:
         h = "".join(c * 2 for c in h)
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -1034,7 +1063,9 @@ def build_ass_subtitles(
                 # SecondaryColour (parts[3]) = the karaoke sweep colour shown before a
                 # word is "spoken".  All dialogue events use the Default style, so this
                 # is the only field that actually changes what the viewer sees.
-                parts[3] = _hex_to_ass(highlight_color)
+                ass_color = _hex_to_ass(highlight_color)
+                if ass_color is not None:  # ignore malformed colours, keep the preset
+                    parts[3] = ass_color
             if margin_v_override is not None:
                 parts[20] = str(margin_v_override)  # MarginV field (0-indexed)
             return ",".join(parts)
@@ -1091,7 +1122,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         karaoke_text = ""
         for w in group:
             dur_cs = max(1, int((w["end"] - w["start"]) * 100))
-            karaoke_text += f"{{\\k{dur_cs}}}{w['word'].strip().upper()} "
+            safe_word = _ass_escape(w["word"].strip().upper())
+            karaoke_text += f"{{\\k{dur_cs}}}{safe_word} "
 
         karaoke_text = karaoke_text.strip()
         events.append(
@@ -1288,6 +1320,14 @@ async def get_bg_music_path(url: str) -> Optional[Path]:
     """Download audio from a YouTube URL and cache it. Returns the local path, or None on failure."""
     import hashlib as _hashlib
 
+    # Reject anything that isn't a genuine YouTube URL before it reaches yt-dlp's
+    # argv — this is the single chokepoint for background-music URLs coming from
+    # manual jobs, watchlist channels, and digest backfills alike.
+    if not url or not _YOUTUBE_URL_RE.match(url.strip()):
+        print(f"[bg_music] rejected non-YouTube URL: {url!r}", flush=True)
+        return None
+    url = url.strip()
+
     # Derive the cache filename purely from a SHA-256 hash of the URL — the result is
     # a fixed-length hex string with no path separators or traversal sequences, so the
     # user-controlled URL never reaches the filesystem path in a usable form.
@@ -1315,11 +1355,12 @@ async def get_bg_music_path(url: str) -> Optional[Path]:
     if out_target is None:
         return None
     cmd = [YTDLP, "-x", "--audio-format", "m4a", "--audio-quality", "128K",
-           "-o", str(out_target) + ".%(ext)s", "--no-playlist", "--quiet", url]
+           "-o", str(out_target) + ".%(ext)s", "--no-playlist", "--quiet"]
     if COOKIES_FROM_BROWSER:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
     elif COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd += ["--", url]  # "--" stops yt-dlp parsing the URL as an option flag
     try:
         r = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=180)
         for ext in exts:
@@ -2505,10 +2546,6 @@ async def startup_event():
 # API ROUTES
 # ══════════════════════════════════════════════════════════════════════════════
 
-_YOUTUBE_URL_RE = re.compile(
-    r'^https?://(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com)/'
-)
-
 @app.post("/api/clip")
 @_limiter.limit("10/minute")
 async def start_clip(request: Request, req: ClipRequest, user=Depends(require_auth)):
@@ -2957,13 +2994,16 @@ async def list_backfills(user=Depends(require_pro)):
 async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
     if req.days_back < 1 or req.days_back > 365:
         raise HTTPException(400, "days_back must be between 1 and 365")
+    if not _YOUTUBE_URL_RE.match(req.channel_url.strip()):
+        raise HTTPException(400, "Only YouTube channel URLs are accepted.")
+    req.channel_url = req.channel_url.strip()
     # Resolve channel name using the same approach as add_channel
     cmd = [YTDLP, "--flat-playlist", "--playlist-end", "1", "-j", "--no-warnings"]
     if COOKIES_FROM_BROWSER:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
     elif COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
-    cmd.append(req.channel_url)
+    cmd += ["--", req.channel_url]  # "--" stops yt-dlp parsing the URL as an option flag
     def _resolve():
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -3567,12 +3607,15 @@ async def list_channels(user=Depends(require_pro)):
 
 @app.post("/api/channels")
 async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
+    if not _YOUTUBE_URL_RE.match(req.url.strip()):
+        raise HTTPException(400, "Only YouTube channel URLs are accepted.")
+    req.url = req.url.strip()
     cmd = [YTDLP, "--flat-playlist", "--playlist-end", "1", "-j", "--no-warnings"]
     if COOKIES_FROM_BROWSER:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
     elif COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
-    cmd.append(req.url)
+    cmd += ["--", req.url]  # "--" stops yt-dlp parsing the URL as an option flag
     def _resolve():
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)

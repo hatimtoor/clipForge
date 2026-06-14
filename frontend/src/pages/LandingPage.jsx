@@ -159,6 +159,48 @@ function FeaturesSection({ isMobile }) {
   );
 }
 
+function ToolsSection({ isMobile }) {
+  const tools = [
+    { icon: "🎬", color: C.peach,    tag: null,           title: "BLUR BACKGROUND",    desc: "Landscape clip centered on a blurred, scaled background — full 9:16 frame, no black bars, no crop." },
+    { icon: "🎵", color: C.signal,   tag: null,           title: "BACKGROUND MUSIC",   desc: "Paste any YouTube music URL. Lay a bed track under every clip at the volume you choose." },
+    { icon: "✂️", color: C.amber,    tag: null,           title: "TRIM SILENCE",       desc: "Dead air and long pauses cut automatically. Tighter pacing, higher watch time, no manual editing." },
+    { icon: "📺", color: C.lavender, tag: "PRO",          title: "DIGEST",             desc: "Backfill an entire channel's history. Clips from every video ever uploaded, completely hands-free." },
+    { icon: "♪",  color: C.tt,       tag: "COMING SOON",  title: "TIKTOK AUTO-UPLOAD", desc: "Connect your TikTok account and publish clips directly — no downloading, no re-uploading." },
+    { icon: "🎨", color: C.cream2,   tag: null,           title: "CAPTION STYLES",     desc: "Bold bottom, center pop, or minimal. Custom font size and highlight color per job." },
+  ];
+
+  return (
+    <section style={{ padding: isMobile ? "40px 16px" : "72px 40px", background: `${C.ink}05` }}>
+      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 48 }}>
+          <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 12 }}>&gt; BUILT-IN TOOLS</div>
+          <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 24, color: C.ink }}>Everything in one pipeline.</h2>
+          <p className="vt" style={{ fontSize: isMobile ? 18 : 21, color: C.dim2, maxWidth: 540, margin: "12px auto 0", lineHeight: 1.5 }}>
+            No stitching together apps. Every tool runs in the same job — one link, one click, one batch of ready-to-post clips.
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? 10 : 16 }}>
+          {tools.map((t) => (
+            <PixelCard key={t.title} color={C.cream} padding={isMobile ? 14 : 22} style={{ position: "relative" }}>
+              {t.tag && (
+                <div style={{ position: "absolute", top: -10, right: 12, background: t.tag === "COMING SOON" ? C.ink : C.amber, border: BORDER, padding: "4px 10px" }}>
+                  <span className="pixel" style={{ fontSize: 6, color: t.tag === "COMING SOON" ? C.cream : C.ink }}>{t.tag}</span>
+                </div>
+              )}
+              <div style={{ width: 38, height: 38, background: t.color, border: BORDER, boxShadow: SHADOW_SM, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14, fontSize: 18 }}>
+                {t.icon}
+              </div>
+              <div className="pixel" style={{ fontSize: isMobile ? 7 : 8, color: C.ink, marginBottom: 8 }}>{t.title}</div>
+              <p className="vt" style={{ fontSize: isMobile ? 13 : 16, color: C.dim2, lineHeight: 1.4, margin: 0 }}>{t.desc}</p>
+            </PixelCard>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function WatchlistSection({ onSignup, isMobile }) {
   return (
     <section style={{ padding: isMobile ? "40px 16px" : "72px 40px", background: `${C.ink}08` }}>
@@ -170,11 +212,11 @@ function WatchlistSection({ onSignup, isMobile }) {
                 <span className="pixel" style={{ fontSize: 8, color: C.lavender }}>PRO FEATURE</span>
               </div>
               <h2 className="pixel" style={{ fontSize: isMobile ? 14 : 22, color: C.ink, lineHeight: 1.5, marginBottom: 16 }}>
-                Watchlist.<br />
+                Watchlist & Digest.<br />
                 <span style={{ color: C.lavenderDeep }}>Set it. Forget it.<br />Never miss a clip.</span>
               </h2>
               <p className="vt" style={{ fontSize: isMobile ? 18 : 22, color: C.dim2, lineHeight: 1.5, marginBottom: 24 }}>
-                Add any YouTube channel to your watchlist. ClipForge monitors it automatically — the moment a new video drops, it starts clipping. Wake up to ready-to-post shorts every morning without touching a thing.
+                <strong style={{ color: C.ink }}>Watchlist</strong> monitors any YouTube channel — the moment a new video drops, clipping starts automatically. <strong style={{ color: C.ink }}>Digest</strong> goes further: backfill the entire channel history and get clips from every video ever uploaded.
               </p>
               <PixelBtn color="lavender" size="md" onClick={onSignup} style={isMobile ? { width: "100%" } : {}}>&gt; GET PRO — START AUTOMATING</PixelBtn>
             </div>
@@ -216,10 +258,15 @@ function PricingSection({ onSignup, isMobile }) {
     "Word-by-word captions",
     "Hook scoring",
     "Download MP4",
-    "YouTube auto-upload",
     "9:16 auto-reframe",
-    "Priority processing",
+    "Blur background style",
+    "Background music",
+    "Trim silence",
+    "Caption styles & colors",
     "Watchlist automation",
+    "Digest (backfill history)",
+    "YouTube auto-upload",
+    "TikTok auto-upload (soon)",
   ];
 
   return (
@@ -305,6 +352,7 @@ export default function LandingPage() {
       <HeroSection onSignup={onSignup} isMobile={isMobile} />
       <HowItWorksSection isMobile={isMobile} />
       <FeaturesSection isMobile={isMobile} />
+      <ToolsSection isMobile={isMobile} />
       <WatchlistSection onSignup={onSignup} isMobile={isMobile} />
       <PricingSection onSignup={onSignup} isMobile={isMobile} />
       <Footer isMobile={isMobile} />

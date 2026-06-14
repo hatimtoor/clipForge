@@ -137,7 +137,7 @@ cp frontend/.env.example frontend/.env.local   # Vite (browser) config
 - **`frontend/.env.local`** holds only the two `VITE_` Supabase values (these are exposed to the browser — never put a secret here).
 - **`.env`** holds everything else. Only the four Required values plus the R2 block are needed to boot; every other section (OpenRouter, YouTube, TikTok, Resend, cookies) is optional and unlocks the matching feature when set. See [`.env.example`](.env.example) for the full annotated list.
 
-> **Where `.env` is loaded from:** the backend reads `.env` from the clipforge root (one level above this `clipper/` folder) in local dev, or `/home/ubuntu/.env` on the server.
+> **Where `.env` is loaded from:** the backend reads `.env` from the clipforge root (one level above the `clipper/` folder) in local dev, or `/home/ubuntu/.env` on the server.
 >
 > **COOKIES_FROM_BROWSER:** when set, yt-dlp reads live cookies directly from the browser profile — they never expire. If not set, it falls back to a `cookies.txt` file at the clipforge root.
 

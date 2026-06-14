@@ -2967,6 +2967,33 @@ def _do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: st
                 print(f"[yt_upload] attempt {attempt+1} failed ({conn_err}), retrying in {wait}s...", flush=True)
                 _time.sleep(wait)
 
+        # Set the custom thumbnail we generated. Best-effort: custom thumbnails
+        # require a phone-verified YouTube channel, so an unverified account gets
+        # a 403 here — that must NOT fail the upload, since the video is already
+        # published. The local thumbnail is deleted after R2 upload, so re-fetch
+        # it from R2 when it isn't on disk.
+        thumb_name = clip.get("thumbnail")
+        if video_id and thumb_name:
+            thumb_local = OUTPUT_DIR / job_id / thumb_name
+            thumb_temp = None
+            try:
+                if not thumb_local.exists() and R2_ENABLED:
+                    thumb_temp = download_clip_to_temp(job_id, thumb_name)
+                    thumb_local = thumb_temp
+                if thumb_local and Path(thumb_local).exists():
+                    youtube.thumbnails().set(
+                        videoId=video_id,
+                        media_body=MediaFileUpload(str(thumb_local), mimetype="image/jpeg"),
+                    ).execute()
+                    print(f"[yt_upload] thumbnail set for {video_id}", flush=True)
+                else:
+                    print(f"[yt_upload] thumbnail '{thumb_name}' unavailable, skipping", flush=True)
+            except Exception as thumb_err:
+                print(f"[yt_upload] thumbnail set failed for {video_id} (non-fatal — channel may be unverified): {thumb_err}", flush=True)
+            finally:
+                if thumb_temp and Path(thumb_temp).exists():
+                    Path(thumb_temp).unlink(missing_ok=True)
+
         db_update_clip_yt_upload(job_id, clip_index, {
             "status": "done",
             "progress": 100,

@@ -1050,11 +1050,12 @@ def build_ass_subtitles(
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
     margin_v_override: Optional[int] = None,
+    alignment_override: Optional[int] = None,
 ):
     default_line, highlight_line = _CAPTION_STYLES.get(caption_style, _CAPTION_STYLES["bold_bottom"])
 
     # Apply per-job overrides on top of the chosen style preset
-    if font_size is not None or highlight_color is not None or margin_v_override is not None:
+    if font_size is not None or highlight_color is not None or margin_v_override is not None or alignment_override is not None:
         def _apply(line: str, is_default: bool) -> str:
             parts = line.split(",")
             if font_size is not None:
@@ -1066,6 +1067,11 @@ def build_ass_subtitles(
                 ass_color = _hex_to_ass(highlight_color)
                 if ass_color is not None:  # ignore malformed colours, keep the preset
                     parts[3] = ass_color
+            if alignment_override is not None:
+                # Alignment (parts[17]). Must be forced to a bottom value for the
+                # MarginV override to take effect — ASS ignores MarginV for the
+                # middle-row alignments (4/5/6), e.g. the center_pop style.
+                parts[17] = str(alignment_override)
             if margin_v_override is not None:
                 parts[20] = str(margin_v_override)  # MarginV field (0-indexed)
             return ",".join(parts)
@@ -1776,6 +1782,9 @@ async def create_clips(
             font_size=font_size,
             highlight_color=highlight_color,
             margin_v_override=blur_bg_margin_v,
+            # Force bottom-center alignment in blur_bg so captions land in the
+            # bottom blur zone even for center-aligned styles like POP.
+            alignment_override=2 if clip_style == "blur_bg" else None,
         )
 
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])

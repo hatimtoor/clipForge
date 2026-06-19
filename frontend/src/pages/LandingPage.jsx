@@ -294,13 +294,13 @@ function PricingSection({ onSignup, isMobile }) {
           </PixelCard>
 
           {/* Pro */}
-          <PixelCard color={C.hotDeep} padding={isMobile ? 24 : 32} style={{ position: "relative", opacity: 0.82 }}>
+          <PixelCard color={C.hotDeep} padding={isMobile ? 24 : 32} style={{ position: "relative" }}>
             <div style={{ position: "absolute", top: -14, right: 20, background: C.ink, border: BORDER, padding: "6px 12px" }}>
-              <span className="pixel" style={{ fontSize: 8, color: C.amber }}>COMING SOON</span>
+              <span className="pixel" style={{ fontSize: 8, color: C.amber }}>MOST POPULAR</span>
             </div>
             <div className="pixel" style={{ fontSize: 9, color: `${C.cream}cc`, marginBottom: 8 }}>PRO</div>
             <div className="pixel" style={{ fontSize: isMobile ? 28 : 36, color: C.cream, marginBottom: 4 }}>$29<span style={{ fontSize: 14 }}>/mo</span></div>
-            <div className="vt" style={{ fontSize: 18, color: `${C.cream}bb`, marginBottom: 24 }}>launching soon</div>
+            <div className="vt" style={{ fontSize: 18, color: `${C.cream}bb`, marginBottom: 24 }}>or $290/yr — 2 months free</div>
             <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px", display: "flex", flexDirection: "column", gap: 10 }}>
               {pro.map(f => (
                 <li key={f} className="pixel" style={{ fontSize: 8, color: C.cream, display: "flex", gap: 10, alignItems: "center" }}>
@@ -308,7 +308,7 @@ function PricingSection({ onSignup, isMobile }) {
                 </li>
               ))}
             </ul>
-            <PixelBtn color="cream" full style={{ opacity: 0.5, cursor: "not-allowed", pointerEvents: "none" }}>COMING SOON</PixelBtn>
+            <PixelBtn color="cream" full onClick={onSignup}>GET PRO</PixelBtn>
           </PixelCard>
         </div>
 

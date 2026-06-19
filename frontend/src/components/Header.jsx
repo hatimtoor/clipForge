@@ -73,9 +73,18 @@ export default function Header() {
             )}
 
             {!isPro && (
-              <span className="pixel" style={{ padding: isMobile ? "5px 8px" : "6px 10px", fontSize: 8, background: C.amber, color: C.ink, border: BORDER, boxShadow: SHADOW_SM }}>
-                FREE {profile.clips_used}/{profile.clips_limit}
-              </span>
+              <>
+                <span className="pixel" style={{ padding: isMobile ? "5px 8px" : "6px 10px", fontSize: 8, background: C.amber, color: C.ink, border: BORDER, boxShadow: SHADOW_SM }}>
+                  FREE {profile.clips_used}/{profile.clips_limit}
+                </span>
+                {profile.billing_enabled && (
+                  <button onClick={() => navigate("/upgrade")} className="pixel" style={{
+                    padding: isMobile ? "6px 9px" : "8px 12px", fontSize: isMobile ? 8 : 9,
+                    background: C.hot, color: C.ink, border: BORDER, boxShadow: SHADOW_SM,
+                    cursor: "pointer", textTransform: "uppercase",
+                  }}>UPGRADE</button>
+                )}
+              </>
             )}
 
             <button onClick={() => supabase.auth.signOut()} className="pixel" title="Sign out"

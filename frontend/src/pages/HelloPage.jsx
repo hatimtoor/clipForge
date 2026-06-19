@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { C, BORDER, SHADOW_SM, SHADOW, KEYFRAMES } from "../lib/theme";
 import { PixelBtn, PixelCard, NumField, Toggle, Tag } from "../components/ui";
@@ -10,7 +10,21 @@ import { useMobile } from "../hooks/useMobile";
 export default function HelloPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { isPro, setJobActive } = useApp();
+  const { isPro, setJobActive, refreshProfile } = useApp();
+
+  // Returning from a Lemon Squeezy checkout: the webhook grants Pro server-side,
+  // but may land a moment after the redirect — poll the profile a few times so
+  // the UI flips to Pro without a manual refresh.
+  useEffect(() => {
+    if (searchParams.get("upgraded") !== "1") return;
+    let n = 0;
+    const id = setInterval(() => {
+      refreshProfile?.();
+      if (++n >= 5) clearInterval(id);
+    }, 2000);
+    window.history.replaceState({}, "", "/hello");  // drop the ?upgraded flag
+    return () => clearInterval(id);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const [url, setUrl] = useState(searchParams.get("url") || "");
   const [maxClips, setMaxClips] = useState(Number(searchParams.get("max_clips")) || 5);

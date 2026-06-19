@@ -92,6 +92,7 @@ from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 
 from r2 import upload_clip, upload_thumbnail, presigned_url, stream_clip, download_clip_to_temp, delete_job_clips, R2_ENABLED
+import billing
 from db import (
     db_create_job, db_get_job, db_update_job, db_delete_job, db_get_user_jobs,
     db_get_active_jobs, db_update_clip_yt_upload, db_update_clip_analytics,
@@ -102,7 +103,7 @@ from db import (
     db_get_tiktok_token, db_get_user_tiktok_tokens, db_upsert_tiktok_token, db_delete_tiktok_token,
     db_update_clip_tt_upload,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used, db_claim_clips_atomic,
-    db_get_user_email,
+    db_get_user_email, db_update_profile,
     FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
     db_create_backfill, db_get_user_backfills, db_get_active_backfills,
     db_get_backfill, db_update_backfill, db_delete_backfill,
@@ -2659,12 +2660,99 @@ async def get_profile(user=Depends(require_auth)):
         "plan": profile.get("plan", "free"),
         "clips_used": profile.get("clips_used", 0),
         "clips_limit": FREE_MONTHLY_CLIP_LIMIT,
+        "subscription_status": profile.get("subscription_status"),
+        "plan_renews_at": profile.get("plan_renews_at"),
+        "has_subscription": bool(profile.get("ls_subscription_id")),
+        "billing_enabled": billing.LS_ENABLED,
     }
 
 
 @app.get("/api/system")
 async def system_status(user=Depends(require_auth)):
     return {"reframe_available": _REFRAME_AVAILABLE}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BILLING (Lemon Squeezy)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/billing/checkout")
+@_limiter.limit("10/minute")
+async def billing_checkout(request: Request, plan: str = "monthly", user=Depends(require_auth)):
+    """Create a Lemon Squeezy hosted checkout for the current user and return its URL."""
+    if not billing.LS_ENABLED:
+        raise HTTPException(503, "Billing is not configured.")
+    if plan not in ("monthly", "annual"):
+        raise HTTPException(400, "Invalid plan.")
+    if not billing.variant_for_plan(plan):
+        raise HTTPException(503, "This plan is not available.")
+    redirect_url = f"{_APP_URL}/hello?upgraded=1"
+    try:
+        url = await billing.create_checkout(user.id, getattr(user, "email", "") or "", plan, redirect_url)
+    except Exception as e:
+        print(f"[billing] checkout creation failed for {user.id}: {e}", flush=True)
+        raise HTTPException(502, "Could not start checkout. Please try again.")
+    if not url:
+        raise HTTPException(502, "Could not start checkout. Please try again.")
+    return {"url": url}
+
+
+@app.get("/api/billing/portal")
+async def billing_portal(user=Depends(require_auth)):
+    """Return the Lemon Squeezy customer-portal URL so a subscriber can manage/cancel."""
+    profile = db_get_profile(user.id) or {}
+    sub_id = profile.get("ls_subscription_id")
+    if not sub_id:
+        raise HTTPException(404, "No active subscription.")
+    url = await billing.get_portal_url(sub_id)
+    if not url:
+        raise HTTPException(502, "Could not open the billing portal. Please try again.")
+    return {"url": url}
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request):
+    """Lemon Squeezy webhook — the single source of truth for a user's plan."""
+    raw = await request.body()
+    signature = request.headers.get("X-Signature", "")
+    if not billing.verify_webhook(raw, signature):
+        raise HTTPException(401, "Invalid signature")
+
+    try:
+        body = json.loads(raw)
+    except Exception:
+        raise HTTPException(400, "Invalid payload")
+
+    meta = body.get("meta", {})
+    event = meta.get("event_name", "")
+    custom = meta.get("custom_data", {}) or {}
+    user_id = custom.get("user_id")
+    data = body.get("data", {}) or {}
+    attrs = data.get("attributes", {}) or {}
+
+    # Only subscription_* events carry the data we map to a plan.
+    if not event.startswith("subscription_"):
+        return {"ok": True, "ignored": event}
+    if not user_id:
+        print(f"[billing] webhook {event} missing custom user_id — skipping", flush=True)
+        return {"ok": True, "skipped": "no user_id"}
+
+    status = attrs.get("status", "")
+    is_pro = status in billing.PRO_STATUSES
+    updates = {
+        "plan": "pro" if is_pro else "free",
+        "ls_subscription_id": str(data.get("id")) if data.get("id") else None,
+        "ls_customer_id": str(attrs.get("customer_id")) if attrs.get("customer_id") else None,
+        "subscription_status": status,
+        "plan_renews_at": attrs.get("renews_at"),
+    }
+    try:
+        await asyncio.to_thread(db_update_profile, user_id, updates)
+        print(f"[billing] {event} → user={user_id} status={status} plan={updates['plan']}", flush=True)
+    except Exception as e:
+        print(f"[billing] webhook db update failed for {user_id}: {e}", flush=True)
+        raise HTTPException(500, "Update failed")
+    return {"ok": True}
 
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')

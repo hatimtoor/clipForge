@@ -350,6 +350,12 @@ def db_get_profile(user_id: str) -> Optional[dict]:
         return None
 
 
+def db_update_profile(user_id: str, updates: dict) -> None:
+    """Patch arbitrary profile fields (plan, billing metadata). Used by the
+    Lemon Squeezy webhook to grant/revoke Pro."""
+    _retry_db(lambda: get_db().table("profiles").update(updates).eq("id", user_id).execute())
+
+
 def db_check_and_reset_quota(user_id: str) -> dict:
     """
     Return the profile, resetting the monthly clip counter if 30+ days have passed.

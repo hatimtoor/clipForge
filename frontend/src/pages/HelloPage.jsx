@@ -117,6 +117,20 @@ export default function HelloPage() {
 
   const effectiveFontSize = fontSizeOverride ?? STYLE_FONT_DEFAULTS[captionStyle] ?? 72;
 
+  // Locked stand-in for a Pro-only toggle — clicking sends free users to /upgrade.
+  const ProToggle = ({ label, hint }) => (
+    <button onClick={() => navigate("/upgrade")} className="pixel" style={{
+      textAlign: "left", padding: 14, background: C.cream2, color: C.dim,
+      border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <span style={{ fontSize: 10 }}>{label}</span>
+        <Tag bg={C.amber} color={C.ink}>PRO</Tag>
+      </div>
+      <div className="vt" style={{ fontSize: 14, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
+    </button>
+  );
+
   return (
     <div style={{ minHeight: "100vh", overflowX: "clip" }}>
       <style>{KEYFRAMES}</style>
@@ -169,16 +183,16 @@ export default function HelloPage() {
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
                 ? <Toggle on={reframe && clipStyle !== "blur_bg"} setOn={v => { setReframe(v); if (v) setClipStyle("reframe"); }} label="REFRAME" hint="YOLO speaker tracking → 9:16 portrait" />
-                : <button className="pixel" style={{ textAlign: "left", padding: 14, background: C.cream2, color: C.dim, border: BORDER, boxShadow: SHADOW_SM, cursor: "not-allowed", opacity: .7 }} disabled>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <span style={{ fontSize: 10 }}>REFRAME</span>
-                      <Tag bg={C.amber} color={C.ink}>PRO</Tag>
-                    </div>
-                    <div className="vt" style={{ fontSize: 14, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>upgrade to unlock reframe</div>
-                  </button>
+                : <ProToggle label="REFRAME" hint="upgrade to unlock reframe" />
               }
-              <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
-              <Toggle on={clipStyle === "blur_bg"} setOn={v => { setClipStyle(v ? "blur_bg" : "reframe"); if (v) setReframe(false); }} label="BLUR BG" hint="landscape clip on blurred background" />
+              {isPro
+                ? <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
+                : <ProToggle label="TRIM" hint="upgrade to cut pauses & dead air" />
+              }
+              {isPro
+                ? <Toggle on={clipStyle === "blur_bg"} setOn={v => { setClipStyle(v ? "blur_bg" : "reframe"); if (v) setReframe(false); }} label="BLUR BG" hint="landscape clip on blurred background" />
+                : <ProToggle label="BLUR BG" hint="upgrade for blurred-background clips" />
+              }
             </div>
 
             {error && (

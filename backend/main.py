@@ -2567,6 +2567,11 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
     max_clips_per_job = PRO_MAX_CLIPS_PER_JOB if plan == "pro" else FREE_MAX_CLIPS_PER_JOB
     if req.reframe and plan != "pro":
         raise HTTPException(403, "Auto-reframe (9:16) requires a Pro plan. Upgrade to unlock.")
+    if plan != "pro":
+        if req.clip_style == "blur_bg":
+            raise HTTPException(403, "Blur background style requires a Pro plan. Upgrade to unlock.")
+        if req.trim_silence:
+            raise HTTPException(403, "Trim silence requires a Pro plan. Upgrade to unlock.")
     req.max_clips = min(req.max_clips, max_clips_per_job)
     if plan != "pro":
         claimed = db_claim_clips_atomic(user.id, req.max_clips, FREE_MONTHLY_CLIP_LIMIT)

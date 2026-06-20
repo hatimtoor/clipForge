@@ -31,20 +31,20 @@ export default function UpgradePage() {
   const navigate = useNavigate();
   const isMobile = useMobile();
   const { isPro, profile } = useApp();
-  const [cycle, setCycle] = useState("annual");  // "monthly" | "annual"
-  const [loading, setLoading] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState(null);  // "monthly" | "annual" | null
+  const [loading, setLoading] = useState(false);          // portal
   const [error, setError] = useState("");
 
-  const startCheckout = async () => {
-    setError(""); setLoading(true);
+  const startCheckout = async (plan) => {
+    setError(""); setLoadingPlan(plan);
     try {
-      const res = await authFetch(`/api/billing/checkout?plan=${cycle}`, { method: "POST" });
+      const res = await authFetch(`/api/billing/checkout?plan=${plan}`, { method: "POST" });
       const data = await res.json();
-      if (!res.ok || !data.url) { setError(data.detail || "Could not start checkout."); setLoading(false); return; }
+      if (!res.ok || !data.url) { setError(data.detail || "Could not start checkout."); setLoadingPlan(null); return; }
       window.location.href = data.url;  // redirect to Lemon Squeezy hosted checkout
     } catch {
       setError("Could not reach the server. Try again.");
-      setLoading(false);
+      setLoadingPlan(null);
     }
   };
 
@@ -60,8 +60,6 @@ export default function UpgradePage() {
       setLoading(false);
     }
   };
-
-  const p = PRICE[cycle];
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -97,35 +95,38 @@ export default function UpgradePage() {
             {error && <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginTop: 16 }}>! {error}</div>}
           </PixelCard>
         ) : (
-          <PixelCard color={C.cream} padding={isMobile ? 22 : 32}>
-            {/* Billing cycle toggle */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 24, justifyContent: "center" }}>
-              {[["annual", "ANNUAL"], ["monthly", "MONTHLY"]].map(([key, label]) => (
-                <button key={key} onClick={() => setCycle(key)} className="pixel"
-                  style={{
-                    padding: "10px 18px", fontSize: 10, cursor: "pointer", border: BORDER,
-                    background: cycle === key ? C.signal : C.paper, color: C.ink,
-                    boxShadow: cycle === key ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                    transform: cycle === key ? "translate(2px,2px)" : "none",
-                  }}>
-                  {label}{key === "annual" && <span style={{ marginLeft: 6, fontSize: 8, color: C.hotDeep }}>SAVE 17%</span>}
-                </button>
-              ))}
-            </div>
+          <PixelCard color={C.cream} padding={isMobile ? 18 : 28}>
+            {/* Both plans side by side */}
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 14 : 20, marginBottom: 24 }}>
+              {/* Annual */}
+              <div style={{ border: BORDER, boxShadow: SHADOW, background: C.paper, padding: "26px 18px 18px", position: "relative", textAlign: "center" }}>
+                <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", background: C.signal, border: BORDER, padding: "3px 10px", whiteSpace: "nowrap" }}>
+                  <span className="pixel" style={{ fontSize: 7, color: C.ink }}>BEST VALUE · SAVE 17%</span>
+                </div>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>ANNUAL</div>
+                <div>
+                  <span className="pixel" style={{ fontSize: isMobile ? 28 : 34, color: C.ink }}>{PRICE.annual.amount}</span>
+                  <span className="pixel" style={{ fontSize: 13, color: C.dim2 }}>{PRICE.annual.suffix}</span>
+                </div>
+                <div className="vt" style={{ fontSize: 15, color: C.dim2, marginTop: 4, marginBottom: 16 }}>{PRICE.annual.note}</div>
+                <PixelBtn color="hot" size="md" full onClick={() => startCheckout("annual")} disabled={!!loadingPlan}>
+                  {loadingPlan === "annual" ? "STARTING..." : "GET ANNUAL"}
+                </PixelBtn>
+              </div>
 
-            <div style={{ textAlign: "center", marginBottom: 24 }}>
-              <span className="pixel" style={{ fontSize: isMobile ? 30 : 38, color: C.ink }}>{p.amount}</span>
-              <span className="pixel" style={{ fontSize: 14, color: C.dim2 }}>{p.suffix}</span>
-              <div className="vt" style={{ fontSize: 16, color: C.dim2, marginTop: 4 }}>{p.note}</div>
+              {/* Monthly */}
+              <div style={{ border: BORDER, boxShadow: SHADOW_SM, background: C.paper, padding: "26px 18px 18px", textAlign: "center" }}>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>MONTHLY</div>
+                <div>
+                  <span className="pixel" style={{ fontSize: isMobile ? 28 : 34, color: C.ink }}>{PRICE.monthly.amount}</span>
+                  <span className="pixel" style={{ fontSize: 13, color: C.dim2 }}>{PRICE.monthly.suffix}</span>
+                </div>
+                <div className="vt" style={{ fontSize: 15, color: C.dim2, marginTop: 4, marginBottom: 16 }}>{PRICE.monthly.note}</div>
+                <PixelBtn color="cream" size="md" full onClick={() => startCheckout("monthly")} disabled={!!loadingPlan}>
+                  {loadingPlan === "monthly" ? "STARTING..." : "GET MONTHLY"}
+                </PixelBtn>
+              </div>
             </div>
-
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 }}>
-              {PRO_FEATURES.map(f => (
-                <li key={f} className="pixel" style={{ fontSize: 8, color: C.ink, display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ color: C.signalDeep }}>✓</span> {f}
-                </li>
-              ))}
-            </ul>
 
             {error && (
               <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginBottom: 14, padding: "10px 12px", background: `${C.hot}44`, border: `2px solid ${C.hotDeep}` }}>
@@ -133,10 +134,16 @@ export default function UpgradePage() {
               </div>
             )}
 
-            <PixelBtn color="hot" size="lg" full onClick={startCheckout} disabled={loading}>
-              {loading ? "STARTING..." : `> UPGRADE — ${p.amount}${p.suffix}`}
-            </PixelBtn>
-            <p className="vt" style={{ fontSize: 14, color: C.dim, textAlign: "center", marginTop: 14 }}>
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, margin: "4px 0 12px" }}>EVERYTHING IN PRO</div>
+            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 20px", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 }}>
+              {PRO_FEATURES.map(f => (
+                <li key={f} className="pixel" style={{ fontSize: 8, color: C.ink, display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: C.signalDeep }}>✓</span> {f}
+                </li>
+              ))}
+            </ul>
+
+            <p className="vt" style={{ fontSize: 14, color: C.dim, textAlign: "center" }}>
               Secure checkout via Lemon Squeezy. Cancel anytime.
             </p>
           </PixelCard>

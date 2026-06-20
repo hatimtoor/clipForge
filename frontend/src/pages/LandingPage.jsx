@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES } from "../lib/theme";
 import { PixelSprite, ANVIL, ANVIL_PAL, HAMMER, HAMMER_PAL, PixelBtn, PixelCard, Tag } from "../components/ui";
@@ -57,6 +58,67 @@ function HeroSection({ onSignup, isMobile }) {
             <div className="vt" style={{ fontSize: isMobile ? 16 : 18, color: C.dim2 }}>{label}</div>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function fmtStat(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000)     return (n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "K";
+  return String(n);
+}
+
+function AnimatedStat({ value, label, isMobile }) {
+  const [display, setDisplay] = useState(0);
+  const fromRef = useRef(0);
+  useEffect(() => {
+    const from = fromRef.current, to = value || 0, dur = 1200, start = performance.now();
+    let raf;
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);          // ease-out
+      setDisplay(Math.round(from + (to - from) * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = to;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return (
+    <div style={{ background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: isMobile ? "16px 10px" : "22px 14px", textAlign: "center" }}>
+      <div className="pixel" style={{ fontSize: isMobile ? 16 : 26, color: C.hotDeep, marginBottom: 6 }}>{fmtStat(display)}</div>
+      <div className="vt" style={{ fontSize: isMobile ? 14 : 17, color: C.dim2 }}>{label}</div>
+    </div>
+  );
+}
+
+function LiveStats({ isMobile }) {
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch("/api/stats/public").then(r => r.json()).then(d => { if (alive) setStats(d); }).catch(() => {});
+    load();
+    const id = setInterval(load, 30000);  // refresh every 30s for a "live" feel
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  // Don't render until there's real data to brag about.
+  if (!stats || ((stats.videos || 0) === 0 && (stats.views || 0) === 0)) return null;
+  const items = [
+    [stats.videos || 0,      "videos published"],
+    [stats.views || 0,       "views generated"],
+    [stats.likes || 0,       "likes earned"],
+    [stats.subscribers || 0, "combined subscribers"],
+  ];
+  return (
+    <section style={{ padding: isMobile ? "0 16px 44px" : "0 40px 72px", maxWidth: 1320, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: isMobile ? 16 : 22 }}>
+        <span className="pixel" style={{ fontSize: 8, color: C.signalDeep }}>
+          <span style={{ animation: "blink 1.2s steps(1) infinite" }}>●</span> LIVE — REAL CLIPS, REAL RESULTS
+        </span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? 10 : 16 }}>
+        {items.map(([val, label]) => <AnimatedStat key={label} value={val} label={label} isMobile={isMobile} />)}
       </div>
     </section>
   );
@@ -350,6 +412,7 @@ export default function LandingPage() {
       <style>{KEYFRAMES}</style>
       <LandingHeader onLogin={onLogin} onSignup={onSignup} isMobile={isMobile} />
       <HeroSection onSignup={onSignup} isMobile={isMobile} />
+      <LiveStats isMobile={isMobile} />
       <HowItWorksSection isMobile={isMobile} />
       <FeaturesSection isMobile={isMobile} />
       <ToolsSection isMobile={isMobile} />

@@ -2551,6 +2551,7 @@ async def startup_event():
     asyncio.create_task(analytics_refresher())
     asyncio.create_task(backfill_scheduler())
     asyncio.create_task(clip_cleanup_scheduler())
+    asyncio.create_task(public_stats_aggregator())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
@@ -2675,6 +2676,12 @@ async def get_profile(user=Depends(require_auth)):
 @app.get("/api/system")
 async def system_status(user=Depends(require_auth)):
     return {"reframe_available": _REFRAME_AVAILABLE}
+
+
+@app.get("/api/stats/public")
+async def get_public_stats():
+    """Public aggregate stats for the landing-page counter (cached, no auth)."""
+    return _PUBLIC_STATS
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2897,6 +2904,92 @@ async def analytics_refresher():
             except Exception as e:
                 print(f"[analytics] refresher error: {e}", flush=True)
         await asyncio.sleep(6 * 3600)  # run every 6 hours
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PUBLIC LANDING-PAGE STATS  (aggregate across all ClipForge-uploaded videos)
+# ══════════════════════════════════════════════════════════════════════════════
+# Only videos uploaded to YouTube via ClipForge are counted (we have their video
+# ids), and only those with >0 captured views. A background task recomputes the
+# totals into this cache so the public endpoint never makes per-request API calls.
+_PUBLIC_STATS = {"videos": 0, "views": 0, "likes": 0, "subscribers": 0, "updated_at": None}
+
+
+def _yt_api_json(path_qs: str) -> dict:
+    url = f"https://www.googleapis.com/youtube/v3/{path_qs}&key={YOUTUBE_API_KEY}"
+    with _urllib_req.urlopen(url, timeout=15) as resp:
+        return json.loads(resp.read())
+
+
+def _sum_channel_subscribers(channel_ids: list) -> int:
+    """Sum current subscriber counts of distinct channels (skips hidden counts)."""
+    total = 0
+    for i in range(0, len(channel_ids), 50):
+        ids = ",".join(_urllib_parse.quote(c) for c in channel_ids[i:i + 50])
+        try:
+            data = _yt_api_json(f"channels?part=statistics&id={ids}")
+            for item in data.get("items", []):
+                st = item.get("statistics", {})
+                if st.get("hiddenSubscriberCount"):
+                    continue
+                total += int(st.get("subscriberCount", 0) or 0)
+        except Exception as e:
+            print(f"[public_stats] subscriber lookup failed: {e}", flush=True)
+    return total
+
+
+def _compute_public_stats_sync() -> dict:
+    # Every video uploaded to YouTube via ClipForge (deduped).
+    video_ids: list = []
+    for job in db_get_done_jobs_with_uploads():
+        for clip in job.get("clips") or []:
+            vid = (clip.get("yt_upload") or {}).get("video_id")
+            if vid:
+                video_ids.append(vid)
+    video_ids = list(dict.fromkeys(video_ids))  # dedupe, preserve order
+
+    videos = views = likes = 0
+    channel_ids: set = set()
+    if YOUTUBE_API_KEY and video_ids:
+        # One batched call returns live stats AND the owning channel per video.
+        # Deleted/private videos simply aren't returned, so they drop out naturally.
+        for i in range(0, len(video_ids), 50):
+            ids = ",".join(_urllib_parse.quote(v) for v in video_ids[i:i + 50])
+            try:
+                data = _yt_api_json(f"videos?part=snippet,statistics&id={ids}")
+            except Exception as e:
+                print(f"[public_stats] video stats batch failed: {e}", flush=True)
+                continue
+            for item in data.get("items", []):
+                v = int(item.get("statistics", {}).get("viewCount", 0) or 0)
+                if v <= 0:                      # skip videos with no views
+                    continue
+                videos += 1
+                views += v
+                likes += int(item.get("statistics", {}).get("likeCount", 0) or 0)
+                cid = item.get("snippet", {}).get("channelId")
+                if cid:
+                    channel_ids.add(cid)
+
+    subscribers = _sum_channel_subscribers(list(channel_ids)) if channel_ids else 0
+
+    return {
+        "videos": videos, "views": views, "likes": likes, "subscribers": subscribers,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def public_stats_aggregator():
+    """Recompute the public landing-page totals periodically into _PUBLIC_STATS."""
+    global _PUBLIC_STATS
+    await asyncio.sleep(20)  # let the server settle
+    while True:
+        try:
+            _PUBLIC_STATS = await asyncio.to_thread(_compute_public_stats_sync)
+            print(f"[public_stats] {_PUBLIC_STATS}", flush=True)
+        except Exception as e:
+            print(f"[public_stats] compute failed: {e}", flush=True)
+        await asyncio.sleep(1800)  # every 30 minutes
 
 
 # ══════════════════════════════════════════════════════════════════════════════

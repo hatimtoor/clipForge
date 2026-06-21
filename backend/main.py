@@ -103,7 +103,7 @@ from db import (
     db_get_tiktok_token, db_get_user_tiktok_tokens, db_upsert_tiktok_token, db_delete_tiktok_token,
     db_update_clip_tt_upload,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used, db_claim_clips_atomic,
-    db_get_user_email, db_update_profile, db_redeem_promo,
+    db_get_user_email, db_update_profile, db_redeem_promo, parse_iso,
     FREE_MONTHLY_JOB_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
     db_create_backfill, db_get_user_backfills, db_get_active_backfills,
     db_get_backfill, db_update_backfill, db_delete_backfill,
@@ -2383,13 +2383,13 @@ async def watchdog():
                 ts_str = job.get("updated_at") or job.get("created_at", "")
                 if not ts_str:
                     continue
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                ts = parse_iso(ts_str)
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 idle_minutes = (now - ts).total_seconds() / 60
 
                 created_str = job.get("created_at", ts_str)
-                created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                created = parse_iso(created_str)
                 if created.tzinfo is None:
                     created = created.replace(tzinfo=timezone.utc)
                 age_minutes = (now - created).total_seconds() / 60
@@ -2551,7 +2551,7 @@ async def backfill_scheduler():
             for bf in backfills:
                 last_run = bf.get("last_run_at")
                 if last_run:
-                    last_run_dt = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
+                    last_run_dt = parse_iso(last_run)
                     if (datetime.now(timezone.utc) - last_run_dt).total_seconds() < 82800:
                         continue  # ran within the last 23h
                 asyncio.create_task(_process_backfill(bf))
@@ -2940,7 +2940,7 @@ async def analytics_refresher():
                 for job in db_get_done_jobs_with_uploads():
                     created_raw = job.get("created_at", "")
                     try:
-                        created = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                        created = parse_iso(created_raw)
                     except Exception:
                         continue
                     if (now - created).days < 7:
@@ -2952,7 +2952,7 @@ async def analytics_refresher():
                         existing = clip.get("yt_analytics") or {}
                         if existing.get("fetched_at"):
                             try:
-                                last = datetime.fromisoformat(existing["fetched_at"].replace("Z", "+00:00"))
+                                last = parse_iso(existing["fetched_at"])
                                 if (now - last).total_seconds() < 86400:
                                     continue  # refreshed within 24 h
                             except Exception:
@@ -3535,7 +3535,7 @@ async def get_tiktok_access_token(user_id: str, tt_open_id: Optional[str] = None
     needs_refresh = False
     if exp:
         try:
-            exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+            exp_dt = parse_iso(exp)
             # refresh a couple minutes early
             needs_refresh = (exp_dt - datetime.now(timezone.utc)).total_seconds() < 120
         except Exception:

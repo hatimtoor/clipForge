@@ -4,12 +4,32 @@ All tables: jobs, channels, youtube_tokens, profiles.
 Uses the service_role key so RLS is bypassed — the API layer enforces ownership.
 """
 import os
+import re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 import httpx
 from supabase import create_client, Client
 
 _client: Optional[Client] = None
+
+
+def parse_iso(ts: str) -> datetime:
+    """Parse an ISO-8601 timestamp tolerantly and return a tz-aware datetime.
+
+    Postgres/Supabase return variable fractional-second precision (trailing
+    zeros stripped, e.g. '...45.11825+00:00'), which datetime.fromisoformat()
+    rejects before Python 3.11 unless the fraction is exactly 3 or 6 digits.
+    Normalize the fraction to 6 digits so it parses on every Python version.
+    """
+    s = (ts or "").strip().replace("Z", "+00:00")
+    m = re.match(r'^(.*T\d{2}:\d{2}:\d{2})\.(\d+)(.*)$', s)
+    if m:
+        s = f"{m.group(1)}.{(m.group(2) + '000000')[:6]}{m.group(3)}"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 # Transient connection errors. The Supabase client uses a single shared HTTP/2
 # connection; when many pipelines write concurrently (e.g. a digest running
@@ -375,7 +395,7 @@ def db_check_and_reset_quota(user_id: str) -> dict:
 
     reset_at_str = profile.get("clips_reset_at", "")
     if reset_at_str:
-        reset_at = datetime.fromisoformat(reset_at_str.replace("Z", "+00:00"))
+        reset_at = parse_iso(reset_at_str)
         if (datetime.now(timezone.utc) - reset_at) >= timedelta(days=30):
             get_db().table("profiles").update({
                 "clips_used": 0,
@@ -389,7 +409,7 @@ def db_check_and_reset_quota(user_id: str) -> dict:
     exp_str = profile.get("pro_expires_at")
     if exp_str and profile.get("plan") == "pro" and not profile.get("ls_subscription_id"):
         try:
-            exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
+            exp = parse_iso(exp_str)
             if datetime.now(timezone.utc) >= exp:
                 get_db().table("profiles").update({
                     "plan": "free", "pro_expires_at": None,

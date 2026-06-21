@@ -19,7 +19,7 @@ export default function PrivacyPage() {
           </button>
           <div className="pixel" style={{ fontSize: 11, color: C.hotDeep, marginBottom: 10 }}>LEGAL</div>
           <h1 className="pixel" style={{ fontSize: 28, color: C.ink, marginBottom: 8 }}>Privacy Policy</h1>
-          <p className="vt" style={{ fontSize: 17, color: C.dim2 }}>Last updated: May 17, 2026</p>
+          <p className="vt" style={{ fontSize: 17, color: C.dim2 }}>Last updated: June 21, 2026</p>
         </div>
 
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
@@ -34,13 +34,16 @@ export default function PrivacyPage() {
               When you sign in with Google, we receive your name, email address, and Google account ID via Supabase Authentication. We do not receive or store your Google password.
             </SubSection>
             <SubSection title="Usage Data">
-              We store the YouTube URLs you submit for processing, job status and progress, the clips generated from your videos, and your plan and usage statistics (clips used per month).
+              We store the YouTube URLs you submit for processing, job status and progress, the clips generated from your videos, and your plan and usage statistics (jobs used per month). For clips you upload to YouTube, we also store public performance metrics (views, likes, comments) retrieved from the YouTube Data API.
             </SubSection>
-            <SubSection title="YouTube Account (Optional)">
-              If you connect your YouTube channel for direct uploads, we store your YouTube OAuth access token and refresh token in our database. This token is used solely to upload clips on your behalf. You can disconnect at any time.
+            <SubSection title="YouTube & TikTok Accounts (Optional)">
+              If you connect your YouTube channel and/or TikTok account for direct uploads, we store the corresponding OAuth access and refresh tokens in our database. These tokens are used solely to upload clips and read basic account information on your behalf. You can disconnect either account at any time.
+            </SubSection>
+            <SubSection title="Billing Information">
+              When you purchase a Pro subscription, payment is handled by Lemon Squeezy (our Merchant of Record). We do not collect or store your full card details. We store a subscription identifier, customer identifier, subscription status, and renewal date returned by Lemon Squeezy so we can manage your plan.
             </SubSection>
             <SubSection title="Video Content">
-              We do not store your original source videos. Videos are downloaded temporarily for processing and deleted immediately after clips are rendered. Rendered clips are stored in Cloudflare R2 cloud storage and are accessible only to you via time-limited secure links.
+              We do not permanently store your original source videos. Videos are downloaded temporarily to the server during processing and deleted once clips are rendered. Rendered clips are stored in Cloudflare R2 cloud storage, are accessible only to you via time-limited secure links, and are automatically deleted after a retention period (see Section 5).
             </SubSection>
           </Section>
         </PixelCard>
@@ -53,9 +56,11 @@ export default function PrivacyPage() {
                 "To process YouTube videos and generate short-form clips",
                 "To store and deliver your generated clips",
                 "To track your plan usage and enforce tier limits",
-                "To upload clips to YouTube on your behalf (if you have connected your YouTube account)",
-                "To monitor YouTube channels and auto-process new videos (Watchlist feature, Pro only)",
-                "To communicate with you about your account if necessary",
+                "To upload clips to YouTube and/or TikTok on your behalf (if you have connected those accounts)",
+                "To monitor YouTube channels and auto-process new and historical videos (Watchlist and Digest features, Pro only)",
+                "To retrieve public performance metrics for clips you have uploaded to YouTube",
+                "To process subscription payments and manage your plan via our payment processor",
+                "To send you transactional emails about your jobs and account",
               ].map((item, i) => (
                 <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
               ))}
@@ -77,10 +82,14 @@ export default function PrivacyPage() {
               </thead>
               <tbody>
                 {[
-                  ["Supabase", "Database, authentication, session management", "Email, user ID, job data, YouTube tokens"],
+                  ["Supabase", "Database, authentication, session management", "Email, user ID, job data, YouTube/TikTok tokens"],
                   ["Cloudflare R2", "Clip file storage", "Rendered MP4 clip files"],
-                  ["Groq", "AI transcription (Whisper) and analysis (Llama)", "Audio extracted from your submitted videos"],
-                  ["Google / YouTube", "OAuth sign-in, optional YouTube upload", "YouTube OAuth tokens (if connected)"],
+                  ["Groq", "AI transcription (Whisper) and analysis (Llama)", "Audio extracted from your submitted videos; transcript text"],
+                  ["OpenRouter", "AI virality analysis (when enabled)", "Transcript text derived from your videos"],
+                  ["Google / YouTube", "OAuth sign-in, optional upload, public video metrics", "YouTube OAuth tokens (if connected); uploaded video IDs"],
+                  ["TikTok", "OAuth, optional clip publishing", "TikTok OAuth tokens (if connected); clips you choose to upload"],
+                  ["Lemon Squeezy", "Payment processing (Merchant of Record)", "Name, email, billing address, and payment details you enter at checkout"],
+                  ["Resend", "Transactional email delivery", "Your email address and job notification content"],
                   ["yt-dlp", "YouTube video download", "YouTube URLs you submit"],
                 ].map(([s, p, d], i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${C.ink}22` }}>
@@ -101,16 +110,16 @@ export default function PrivacyPage() {
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
           <Section title="5. Data Storage & Retention">
             <SubSection title="Clip Files">
-              Rendered clips are stored in a private Cloudflare R2 bucket. They are not publicly accessible. Access is provided via presigned URLs that expire after 1 hour. We retain your clips indefinitely unless you delete your account.
+              Rendered clips are stored in a private Cloudflare R2 bucket. They are not publicly accessible. Access is provided via presigned URLs that expire after 1 hour. Clip files are automatically deleted approximately 7 days after the job is completed, so you should download or publish clips you wish to keep. Clip metadata may remain in your job history until you delete the job or your account.
             </SubSection>
             <SubSection title="Job Data">
-              Job records (URL submitted, status, progress, clip metadata) are stored in our Supabase database and retained indefinitely unless you delete your account.
+              Job records (URL submitted, status, progress, clip metadata) are stored in our Supabase database and retained until you delete the job or your account.
             </SubSection>
             <SubSection title="Source Videos">
-              Original source videos downloaded from YouTube are stored temporarily in server memory during processing only. They are deleted immediately after clip rendering is complete. We do not permanently store source videos.
+              Original source videos downloaded from YouTube are stored temporarily on the server during processing only. They are deleted once clip rendering is complete. We do not permanently store source videos.
             </SubSection>
-            <SubSection title="Account Data">
-              Your account data (email, usage stats, plan) is retained until you request deletion.
+            <SubSection title="Account & Billing Data">
+              Your account data (email, usage stats, plan) is retained until you request deletion. Subscription records (subscription/customer identifiers, status, renewal date) are retained while your subscription is active and for a reasonable period afterward for accounting and legal compliance.
             </SubSection>
           </Section>
         </PixelCard>
@@ -123,7 +132,7 @@ export default function PrivacyPage() {
                 "All data in transit is encrypted via HTTPS/TLS",
                 "Clip files are stored in a private R2 bucket with no public access",
                 "Database access uses service role keys never exposed to the client",
-                "YouTube OAuth tokens are stored server-side and never sent to the browser",
+                "YouTube and TikTok OAuth tokens are stored server-side and never sent to the browser",
                 "Authentication is handled entirely by Supabase — we never handle passwords",
               ].map((item, i) => (
                 <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
@@ -139,7 +148,8 @@ export default function PrivacyPage() {
               {[
                 "Access the personal data we hold about you",
                 "Request deletion of your account and all associated data",
-                "Disconnect your YouTube account at any time from within the app",
+                "Disconnect your YouTube or TikTok account at any time from within the app",
+                "Cancel your subscription at any time via the billing portal in the app",
                 "Request a copy of your data",
               ].map((item, i) => (
                 <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>

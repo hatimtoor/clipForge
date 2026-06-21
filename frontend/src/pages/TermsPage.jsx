@@ -19,7 +19,7 @@ export default function TermsPage() {
           </button>
           <div className="pixel" style={{ fontSize: 11, color: C.hotDeep, marginBottom: 10 }}>LEGAL</div>
           <h1 className="pixel" style={{ fontSize: 28, color: C.ink, marginBottom: 8 }}>Terms of Service</h1>
-          <p className="vt" style={{ fontSize: 17, color: C.dim2 }}>Last updated: May 17, 2026</p>
+          <p className="vt" style={{ fontSize: 17, color: C.dim2 }}>Last updated: June 21, 2026</p>
         </div>
 
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
@@ -34,12 +34,11 @@ export default function TermsPage() {
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
               {[
                 "Downloads publicly accessible YouTube videos you submit",
-                "Transcribes audio using AI (Groq Whisper)",
-                "Analyzes transcripts to identify viral-worthy moments",
-                "Renders short-form video clips with burned-in captions",
-                "Stores rendered clips in cloud storage for your download",
-                "Optionally uploads clips to your connected YouTube channel",
-                "Optionally monitors YouTube channels and auto-processes new videos",
+                "Transcribes audio using AI (Groq Whisper) and analyzes transcripts to identify viral-worthy moments",
+                "Renders short-form video clips with burned-in captions, with optional styling such as 9:16 reframe, blur background, background music, and silence trimming",
+                "Stores rendered clips in cloud storage for your download (clips are automatically deleted after a retention period — see Section 6 and our Privacy Policy)",
+                "Optionally uploads clips to your connected YouTube channel and/or TikTok account",
+                "Optionally monitors YouTube channels (Watchlist) and backfills a channel's past videos (Digest) to auto-process new and historical videos (Pro only)",
               ].map((item, i) => (
                 <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
               ))}
@@ -75,14 +74,15 @@ export default function TermsPage() {
         </PixelCard>
 
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
-          <Section title="5. YouTube & Third-Party Platform Compliance">
-            ClipForge uses yt-dlp to download YouTube videos for processing. You acknowledge that:
+          <Section title="5. YouTube, TikTok & Third-Party Platform Compliance">
+            ClipForge uses yt-dlp to download YouTube videos for processing, and integrates with YouTube and TikTok for optional publishing. You acknowledge that:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
               {[
                 "You are responsible for complying with YouTube's Terms of Service regarding the content you process",
-                "ClipForge is not affiliated with, endorsed by, or in any way officially connected with YouTube or Google",
+                "ClipForge is not affiliated with, endorsed by, or in any way officially connected with YouTube, Google, or TikTok",
                 "You must only submit videos for which you have permission to create derivative clips",
                 "If you use the YouTube upload feature, you are responsible for the content uploaded to your channel",
+                "If you use the TikTok upload feature, you are responsible for the content you publish and for complying with TikTok's Terms of Service and Community Guidelines",
               ].map((item, i) => (
                 <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
               ))}
@@ -96,10 +96,16 @@ export default function TermsPage() {
               Free accounts are limited to 10 jobs per month, each producing up to 3 clips (up to 30 clips per month). Limits reset every 30 days.
             </SubSection>
             <SubSection title="Pro Plan">
-              Pro accounts have access to all features including unlimited clips, 9:16 auto-reframe, YouTube upload, and Watchlist. Pro plan pricing and billing terms are displayed at the point of purchase.
+              Pro accounts have access to all features, including unlimited clips, 9:16 auto-reframe, blur background, background music, silence trimming, caption styling, YouTube and TikTok upload, Watchlist, and Digest. Pro is offered on monthly and annual subscriptions; current pricing is displayed at the point of purchase.
+            </SubSection>
+            <SubSection title="Billing & Payment Processor">
+              Payments are processed by Lemon Squeezy, which acts as the Merchant of Record (authorized reseller) for purchases made through ClipForge. Lemon Squeezy handles payment collection, applicable sales tax/VAT, and billing, and its terms and privacy policy apply to the payment transaction (lemonsqueezy.com). Subscriptions renew automatically at the end of each billing period (monthly or annually) until cancelled.
+            </SubSection>
+            <SubSection title="Cancellation">
+              You may cancel your subscription at any time from the "Manage subscription" link in the app, which opens the Lemon Squeezy customer portal. Cancellation stops future renewals; your Pro access continues until the end of the current paid period, after which your account reverts to the Free plan.
             </SubSection>
             <SubSection title="Refunds">
-              We offer refunds within 7 days of payment if the Service did not function as described. Contact hatimtoor2025@gmail.com with your request. We do not offer refunds for partial month usage beyond the 7-day window.
+              We offer refunds within 7 days of payment if the Service did not function as described. Because Lemon Squeezy is the Merchant of Record, refunds are issued through Lemon Squeezy; contact hatimtoor2025@gmail.com with your request. We do not offer refunds for partial billing periods beyond the 7-day window.
             </SubSection>
           </Section>
         </PixelCard>

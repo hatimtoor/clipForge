@@ -236,6 +236,12 @@ _running_tasks: dict[str, asyncio.Task] = {}
 # throttled into failed-stream merge errors. Other pipeline phases stay parallel.
 _download_sem = asyncio.Semaphore(2)
 
+# Cap concurrent CPU-heavy renders (FFmpeg + YOLO) so a burst of jobs can't
+# saturate the box and slow everything into the watchdog timeout. Extra jobs queue
+# for a slot (with a heartbeat). Tune via MAX_CONCURRENT_RENDERS (default 2 on a
+# 4-core box, leaving headroom for transcription threads and the web server).
+_render_sem = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_RENDERS", "2") or "2"))
+
 # Validate every user-supplied URL before it reaches yt-dlp's argv. This blocks
 # both SSRF (yt-dlp fetching arbitrary internal targets) and argument injection
 # (a value like "--exec=..." being parsed by yt-dlp as an option instead of a URL).
@@ -2219,6 +2225,30 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _acquire_render_slot(job_id: str) -> None:
+    """Acquire a global render slot. While queued, emit a heartbeat every 30s
+    (explicitly bumping updated_at) so the watchdog's 20-minute no-progress kill
+    doesn't reap a job that is merely waiting its turn. Cancellation-safe: never
+    leaks a permit if the pipeline task is cancelled while waiting."""
+    acq = asyncio.ensure_future(_render_sem.acquire())
+    try:
+        while True:
+            done, _ = await asyncio.wait({acq}, timeout=30)
+            if acq in done:
+                return  # slot acquired (caller must release)
+            await update_job(
+                job_id, status="clipping", progress=77,
+                message="Waiting for a free render slot...",
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+    except asyncio.CancelledError:
+        if acq.done() and not acq.cancelled():
+            _render_sem.release()   # we had acquired — give it back
+        else:
+            acq.cancel()            # still pending — drop the request
+        raise
+
+
 async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
@@ -2257,21 +2287,26 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                        message=f"Translating captions to {_LANGUAGE_NAMES.get(req.caption_language, req.caption_language)}...")
             caption_segs = await translate_segments(segments, req.caption_language, job_id)
 
-        # 5. Cut + subtitle
+        # 5. Cut + subtitle — gated by the render semaphore so only N jobs render
+        #    concurrently; the rest queue here (heart-beating) instead of dogpiling.
         log(job_id, "--- PHASE 4: CLIP ---")
         log(job_id, f"  caption_style={req.caption_style!r} lang={req.caption_language} font_size={req.caption_font_size} highlight={req.caption_highlight_color} reframe={req.reframe}")
-        final_clips = await create_clips(
-            video_path, clips, segments, job_dir, job_id,
-            reframe=req.reframe,
-            clip_style=req.clip_style,
-            caption_style=req.caption_style or "bold_bottom",
-            font_size=req.caption_font_size,
-            highlight_color=req.caption_highlight_color,
-            caption_segments=caption_segs,
-            bg_music_url=req.bg_music_url,
-            bg_music_volume=req.bg_music_volume,
-            trim_silence=req.trim_silence,
-        )
+        await _acquire_render_slot(job_id)
+        try:
+            final_clips = await create_clips(
+                video_path, clips, segments, job_dir, job_id,
+                reframe=req.reframe,
+                clip_style=req.clip_style,
+                caption_style=req.caption_style or "bold_bottom",
+                font_size=req.caption_font_size,
+                highlight_color=req.caption_highlight_color,
+                caption_segments=caption_segs,
+                bg_music_url=req.bg_music_url,
+                bg_music_volume=req.bg_music_volume,
+                trim_silence=req.trim_silence,
+            )
+        finally:
+            _render_sem.release()
 
         await update_job(
             job_id,

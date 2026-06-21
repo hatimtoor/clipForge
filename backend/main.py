@@ -2962,10 +2962,11 @@ def _compute_public_stats_sync() -> dict:
                 continue
             for item in data.get("items", []):
                 v = int(item.get("statistics", {}).get("viewCount", 0) or 0)
-                if v <= 0:                      # skip videos with no views
+                if v <= 0:                      # skip videos with no views entirely
                     continue
-                videos += 1
-                views += v
+                if v > 100:                     # only >100-view videos count toward the video tally
+                    videos += 1
+                views += v                      # but their views/likes still count
                 likes += int(item.get("statistics", {}).get("likeCount", 0) or 0)
                 cid = item.get("snippet", {}).get("channelId")
                 if cid:

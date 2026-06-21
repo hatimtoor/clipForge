@@ -104,7 +104,7 @@ from db import (
     db_update_clip_tt_upload,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used, db_claim_clips_atomic,
     db_get_user_email, db_update_profile,
-    FREE_MONTHLY_CLIP_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
+    FREE_MONTHLY_JOB_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
     db_create_backfill, db_get_user_backfills, db_get_active_backfills,
     db_get_backfill, db_update_backfill, db_delete_backfill,
 )
@@ -2277,8 +2277,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             message=f"Done! {len(final_clips)} clips created.",
             clips=final_clips,
         )
-        if user_id and final_clips:
-            db_increment_clips_used(user_id, len(final_clips))
+        # Free quota is counted as one job at submit time (db_claim_clips_atomic),
+        # so nothing to increment here on completion.
         if auto_upload and final_clips:
             # YouTube runs when a YT channel is chosen, or as the default when no
             # TikTok account is the sole chosen target (backward compatible).
@@ -2575,9 +2575,10 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             raise HTTPException(403, "Trim silence requires a Pro plan. Upgrade to unlock.")
     req.max_clips = min(req.max_clips, max_clips_per_job)
     if plan != "pro":
-        claimed = db_claim_clips_atomic(user.id, req.max_clips, FREE_MONTHLY_CLIP_LIMIT)
+        # Count one JOB against the monthly free quota (each job yields up to 3 clips).
+        claimed = db_claim_clips_atomic(user.id, 1, FREE_MONTHLY_JOB_LIMIT)
         if not claimed:
-            raise HTTPException(403, f"Monthly clip limit reached ({FREE_MONTHLY_CLIP_LIMIT} clips). Upgrade to Pro for unlimited clips.")
+            raise HTTPException(403, f"Monthly free limit reached ({FREE_MONTHLY_JOB_LIMIT} jobs). Upgrade to Pro for unlimited.")
     job = db_create_job({
         "user_id": user.id,
         "status": "queued",
@@ -2665,7 +2666,7 @@ async def get_profile(user=Depends(require_auth)):
     return {
         "plan": profile.get("plan", "free"),
         "clips_used": profile.get("clips_used", 0),
-        "clips_limit": FREE_MONTHLY_CLIP_LIMIT,
+        "clips_limit": FREE_MONTHLY_JOB_LIMIT,
         "subscription_status": profile.get("subscription_status"),
         "plan_renews_at": profile.get("plan_renews_at"),
         "has_subscription": bool(profile.get("ls_subscription_id")),

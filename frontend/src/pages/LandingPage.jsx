@@ -43,7 +43,7 @@ function HeroSection({ onSignup, isMobile }) {
         <PixelBtn color="hot" size="lg" onClick={onSignup}>
           &gt; FORGE MY FIRST CLIPS — FREE
         </PixelBtn>
-        <div className="vt" style={{ fontSize: 18, color: C.dim2 }}>No credit card · 10 free clips/month</div>
+        <div className="vt" style={{ fontSize: 18, color: C.dim2 }}>No credit card · up to 30 free clips/month</div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? 10 : 16, maxWidth: 780, margin: "0 auto" }}>
@@ -308,8 +308,8 @@ function WatchlistSection({ onSignup, isMobile }) {
 
 function PricingSection({ onSignup, isMobile }) {
   const free = [
-    "10 clips per month",
-    "3 clips per job",
+    "10 jobs per month",
+    "Up to 3 clips per job (≈30 clips/mo)",
     "Word-by-word captions",
     "Hook scoring",
     "Download MP4",

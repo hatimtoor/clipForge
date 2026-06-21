@@ -93,7 +93,7 @@ export default function TermsPage() {
         <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
           <Section title="6. Plans, Limits & Payment">
             <SubSection title="Free Plan">
-              Free accounts are limited to 10 clips per month and 3 clips per job. Limits reset every 30 days.
+              Free accounts are limited to 10 jobs per month, each producing up to 3 clips (up to 30 clips per month). Limits reset every 30 days.
             </SubSection>
             <SubSection title="Pro Plan">
               Pro accounts have access to all features including unlimited clips, 9:16 auto-reframe, YouTube upload, and Watchlist. Pro plan pricing and billing terms are displayed at the point of purchase.

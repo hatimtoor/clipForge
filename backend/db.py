@@ -337,7 +337,9 @@ def db_get_user_email(user_id: str) -> Optional[str]:
 
 # ── Profiles / plan ────────────────────────────────────────────────────────────
 
-FREE_MONTHLY_CLIP_LIMIT   = 10
+# Free tier: 10 jobs per month, up to 3 clips each (so up to ~30 clips/month).
+# The monthly counter (profiles.clips_used) counts JOBS, not individual clips.
+FREE_MONTHLY_JOB_LIMIT    = 10
 FREE_MAX_CLIPS_PER_JOB    = 3
 PRO_MAX_CLIPS_PER_JOB     = 10
 

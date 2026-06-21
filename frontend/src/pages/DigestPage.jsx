@@ -385,12 +385,20 @@ export default function DigestPage() {
 
   if (!isPro) {
     return (
-      <div style={{ minHeight: "100vh" }}>
+      <div style={{ minHeight: "100vh", overflowX: "clip" }}>
         <style>{KEYFRAMES}</style>
         <Header />
-        <div className="fade" style={{ padding: isMobile ? "16px 12px" : "64px 32px", maxWidth: 1320, margin: "0 auto", textAlign: "center" }}>
-          <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 16 }}>PRO ONLY</div>
-          <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Upgrade to Pro to use Channel Digest.</p>
+        <div className="fade" style={{ padding: isMobile ? "24px 16px 48px" : "64px 32px", maxWidth: 760, margin: "0 auto" }}>
+          <PixelCard color={C.amber} padding={isMobile ? 24 : 40} style={{ textAlign: "center" }}>
+            <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 12 }}>PRO FEATURE</div>
+            <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 22, color: C.ink, lineHeight: 1.4, marginBottom: 14 }}>Channel Digest</h2>
+            <p className="vt" style={{ fontSize: isMobile ? 18 : 20, color: C.ink, lineHeight: 1.5, marginBottom: 24, maxWidth: 520, margin: "0 auto 24px" }}>
+              Backfill a channel's entire history — turn every past video into clips, fully hands-free.
+            </p>
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginTop: 8 }}>
+              Upgrade to Pro to unlock this feature.
+            </div>
+          </PixelCard>
         </div>
       </div>
     );

@@ -80,6 +80,8 @@ export default function App() {
     } catch {}
   };
 
+  const [promoMsg, setPromoMsg] = useState("");
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setAuthed(!!session);
@@ -92,6 +94,36 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Capture an invite code from the landing URL (?promo=CODE) so it survives sign-up.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("promo");
+    if (code) localStorage.setItem("cf_promo", code.trim());
+  }, []);
+
+  // Once signed in, redeem any stored invite code for time-limited Pro.
+  useEffect(() => {
+    if (!authed) return;
+    const code = localStorage.getItem("cf_promo");
+    if (!code) return;
+    (async () => {
+      try {
+        const res = await authFetch("/api/promo/redeem", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) {
+          setPromoMsg(`🎉 You've unlocked ${data.pro_days} days of Pro — enjoy!`);
+          refreshProfile();
+        }
+        localStorage.removeItem("cf_promo");  // got a definitive answer — don't retry
+      } catch {
+        /* network error — keep the code so it can retry on next load */
+      }
+    })();
+  }, [authed]);  // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (authed && isPro) { refreshYtStatus(); refreshTtStatus(); }
   }, [authed, isPro]);
@@ -102,6 +134,15 @@ export default function App() {
     <BrowserRouter>
       <AppContext.Provider value={ctx}>
         <ScrollToTop />
+        {promoMsg && (
+          <div onClick={() => setPromoMsg("")}
+            style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 1000, cursor: "pointer",
+              background: "#7ee787", color: "#1a0d2e", textAlign: "center",
+              padding: "12px 16px", fontFamily: "monospace", fontWeight: 700, fontSize: 14,
+              borderBottom: "2px solid #1a0d2e" }}>
+            {promoMsg} <span style={{ opacity: 0.6, marginLeft: 8, fontWeight: 400 }}>(tap to dismiss)</span>
+          </div>
+        )}
         <ErrorBoundary>
         <Routes>
           <Route path="/"       element={authed ? <Navigate to="/hello" replace /> : <LandingPage />} />

@@ -61,6 +61,11 @@ export default function UpgradePage() {
     }
   };
 
+  const isTrial = isPro && profile.pro_expires_at && !profile.has_subscription;
+  const daysLeft = profile.pro_expires_at
+    ? Math.max(0, Math.ceil((new Date(profile.pro_expires_at) - Date.now()) / 86400000))
+    : 0;
+
   return (
     <div style={{ minHeight: "100vh" }}>
       <style>{KEYFRAMES}</style>
@@ -69,16 +74,18 @@ export default function UpgradePage() {
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>{`>`} UPGRADE</div>
           <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink }}>
-            {isPro ? "You're on Pro." : "Go Pro. Unlock everything."}
+            {isTrial ? "You're on a Pro trial." : isPro ? "You're on Pro." : "Go Pro. Unlock everything."}
           </h1>
         </div>
 
-        {!isPro && !profile.billing_enabled ? (
+        {!profile.has_subscription && !profile.billing_enabled ? (
           <PixelCard color={C.cream} padding={isMobile ? 22 : 32} style={{ textAlign: "center" }}>
             <div style={{ marginBottom: 14 }}><Tag bg={C.amber} color={C.ink}>COMING SOON</Tag></div>
-            <p className="vt" style={{ fontSize: 18, color: C.dim2 }}>Pro upgrades are launching shortly. Check back soon!</p>
+            <p className="vt" style={{ fontSize: 18, color: C.dim2 }}>
+              {isTrial ? `Your Pro trial is active — ${daysLeft} day${daysLeft === 1 ? "" : "s"} left. Paid plans are launching shortly.` : "Pro upgrades are launching shortly. Check back soon!"}
+            </p>
           </PixelCard>
-        ) : isPro ? (
+        ) : profile.has_subscription ? (
           <PixelCard color={C.cream} padding={isMobile ? 22 : 32} style={{ textAlign: "center" }}>
             <div style={{ marginBottom: 16 }}><Tag bg={C.signal} color={C.ink}>ACTIVE</Tag></div>
             <p className="vt" style={{ fontSize: 18, color: C.dim2, marginBottom: 6 }}>
@@ -96,6 +103,11 @@ export default function UpgradePage() {
           </PixelCard>
         ) : (
           <PixelCard color={C.cream} padding={isMobile ? 18 : 28}>
+            {isTrial && (
+              <div className="pixel" style={{ fontSize: 9, color: C.ink, background: C.signal, border: BORDER, padding: "10px 12px", marginBottom: 20, textAlign: "center" }}>
+                PRO TRIAL ACTIVE — {daysLeft} DAY{daysLeft === 1 ? "" : "S"} LEFT. Subscribe to keep Pro when it ends.
+              </div>
+            )}
             {/* Both plans side by side */}
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 14 : 20, marginBottom: 24 }}>
               {/* Annual */}

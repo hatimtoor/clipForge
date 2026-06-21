@@ -383,7 +383,34 @@ def db_check_and_reset_quota(user_id: str) -> dict:
             }).eq("id", user_id).execute()
             profile["clips_used"] = 0
 
+    # Promo/trial Pro expiry: a promo grants Pro via pro_expires_at (no subscription).
+    # Once it lapses, revert to Free. Paid subscribers (ls_subscription_id set) are
+    # never downgraded here — their plan is governed by the billing webhook.
+    exp_str = profile.get("pro_expires_at")
+    if exp_str and profile.get("plan") == "pro" and not profile.get("ls_subscription_id"):
+        try:
+            exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) >= exp:
+                get_db().table("profiles").update({
+                    "plan": "free", "pro_expires_at": None,
+                }).eq("id", user_id).execute()
+                profile["plan"] = "free"
+                profile["pro_expires_at"] = None
+        except Exception:
+            pass
+
     return profile
+
+
+def db_redeem_promo(code: str, user_id: str) -> dict:
+    """Atomically redeem a promo code via the redeem_promo() Postgres RPC.
+    Returns the RPC result dict, e.g. {"ok": true, "pro_days": 10, ...}."""
+    try:
+        r = get_db().rpc("redeem_promo", {"p_code": code, "p_user_id": user_id}).execute()
+        return r.data if isinstance(r.data, dict) else (r.data or {"ok": False, "reason": "error"})
+    except Exception as e:
+        print(f"[db_redeem_promo] RPC failed for {user_id}: {e}", flush=True)
+        return {"ok": False, "reason": "error"}
 
 
 def db_claim_clips_atomic(user_id: str, count: int, limit: int) -> bool:

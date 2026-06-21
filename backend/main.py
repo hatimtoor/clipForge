@@ -103,7 +103,7 @@ from db import (
     db_get_tiktok_token, db_get_user_tiktok_tokens, db_upsert_tiktok_token, db_delete_tiktok_token,
     db_update_clip_tt_upload,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used, db_claim_clips_atomic,
-    db_get_user_email, db_update_profile,
+    db_get_user_email, db_update_profile, db_redeem_promo,
     FREE_MONTHLY_JOB_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
     db_create_backfill, db_get_user_backfills, db_get_active_backfills,
     db_get_backfill, db_update_backfill, db_delete_backfill,
@@ -259,6 +259,9 @@ class ClipRequest(BaseModel):
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
     trim_silence: bool = False
+
+class PromoRedeemRequest(BaseModel):
+    code: str
 
 class JobStatus(BaseModel):
     job_id: str
@@ -2670,6 +2673,7 @@ async def get_profile(user=Depends(require_auth)):
         "subscription_status": profile.get("subscription_status"),
         "plan_renews_at": profile.get("plan_renews_at"),
         "has_subscription": bool(profile.get("ls_subscription_id")),
+        "pro_expires_at": profile.get("pro_expires_at"),
         "billing_enabled": billing.LS_ENABLED,
     }
 
@@ -2683,6 +2687,26 @@ async def system_status(user=Depends(require_auth)):
 async def get_public_stats():
     """Public aggregate stats for the landing-page counter (cached, no auth)."""
     return _PUBLIC_STATS
+
+
+@app.post("/api/promo/redeem")
+@_limiter.limit("10/minute")
+async def redeem_promo(request: Request, req: PromoRedeemRequest, user=Depends(require_auth)):
+    """Redeem an invite/promo code for time-limited Pro access."""
+    code = (req.code or "").strip()
+    if not code:
+        raise HTTPException(400, "Missing code.")
+    # Ensure the user's profile row exists (first-time sign-ups) before the RPC.
+    await asyncio.to_thread(db_check_and_reset_quota, user.id)
+    result = await asyncio.to_thread(db_redeem_promo, code, user.id)
+    if not result.get("ok"):
+        reason = result.get("reason")
+        if reason == "full":
+            raise HTTPException(409, "This invite has been fully claimed.")
+        if reason == "already_redeemed":
+            raise HTTPException(409, "You've already used this invite.")
+        raise HTTPException(400, "Invalid or expired invite code.")
+    return {"ok": True, "pro_days": result.get("pro_days"), "expires_at": result.get("expires_at")}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

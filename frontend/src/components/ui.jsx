@@ -92,9 +92,9 @@ export const Field = ({ label, children }) => (
 
 export function NumField({ label, suffix, value, setValue, min, max, step, bg }) {
   return (
-    <div>
+    <div style={{ minWidth: 0 }}>
       <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>{label}</div>
-      <div style={{ display: "flex", border: BORDER, boxShadow: SHADOW_SM, background: bg }}>
+      <div style={{ display: "flex", border: BORDER, boxShadow: SHADOW_SM, background: bg, minWidth: 0 }}>
         <button onClick={() => setValue(Math.max(min, value - step))} className="pixel" style={{ width: 32, padding: "10px 0", background: "transparent", borderRight: `2px solid ${C.ink}`, fontSize: 14, cursor: value > min ? "pointer" : "not-allowed", color: value > min ? C.ink : C.dim }}>-</button>
         <div className="pixel" style={{ flex: 1, textAlign: "center", padding: "10px 0", fontSize: 16, color: C.ink }}>{value}{suffix || ""}</div>
         <button onClick={() => setValue(Math.min(max, value + step))} className="pixel" style={{ width: 32, padding: "10px 0", background: "transparent", borderLeft: `2px solid ${C.ink}`, fontSize: 14, cursor: value < max ? "pointer" : "not-allowed", color: value < max ? C.ink : C.dim }}>+</button>
@@ -107,7 +107,7 @@ export function NumField({ label, suffix, value, setValue, min, max, step, bg })
 export function Toggle({ on, setOn, label, hint }) {
   return (
     <button onClick={() => setOn(!on)} className="pixel" style={{
-      textAlign: "left", padding: 14,
+      textAlign: "left", padding: 14, minWidth: 0,
       background: on ? C.signal : C.paper,
       color: C.ink, border: BORDER,
       boxShadow: on ? `2px 2px 0 ${C.ink}` : SHADOW_SM,

@@ -121,7 +121,7 @@ export default function HelloPage() {
   const ProToggle = ({ label, hint }) => (
     <button onClick={() => navigate("/upgrade")} className="pixel" style={{
       textAlign: "left", padding: 14, background: C.cream2, color: C.dim,
-      border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer",
+      border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer", minWidth: 0,
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <span style={{ fontSize: 10 }}>{label}</span>
@@ -172,13 +172,13 @@ export default function HelloPage() {
               {stylePrompt && <button onClick={() => setStylePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr 1fr" : "1fr 1fr 1fr", gap: isMobile ? 8 : 14, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 14, marginBottom: 24 }}>
               <NumField label="MAX CLIPS" value={maxClips} setValue={setMaxClips} min={1} max={10} step={1} bg={C.lavender} />
               <NumField label="MIN DUR" suffix="s" value={minDur} setValue={setMinDur} min={15} max={90} step={5} bg={C.peach} />
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 8 : 10, marginBottom: 28 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 10, marginBottom: 28 }}>
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro

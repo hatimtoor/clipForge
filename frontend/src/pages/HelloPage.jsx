@@ -123,9 +123,9 @@ export default function HelloPage() {
       textAlign: "left", padding: 14, background: C.cream2, color: C.dim,
       border: BORDER, boxShadow: SHADOW_SM, cursor: "pointer", minWidth: 0,
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: 10 }}>{label}</span>
-        <Tag bg={C.amber} color={C.ink}>PRO</Tag>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 10, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ flexShrink: 0 }}><Tag bg={C.amber} color={C.ink}>PRO</Tag></span>
       </div>
       <div className="vt" style={{ fontSize: 14, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
     </button>
@@ -182,16 +182,16 @@ export default function HelloPage() {
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
-                ? <Toggle on={reframe && clipStyle !== "blur_bg"} setOn={v => { setReframe(v); if (v) setClipStyle("reframe"); }} label="REFRAME" hint="YOLO speaker tracking → 9:16 portrait" />
-                : <ProToggle label="REFRAME" hint="upgrade to unlock reframe" />
+                ? <Toggle on={reframe && clipStyle !== "blur_bg"} setOn={v => { setReframe(v); if (v) setClipStyle("reframe"); }} label={isMobile ? "RF" : "REFRAME"} hint="YOLO speaker tracking → 9:16 portrait" />
+                : <ProToggle label={isMobile ? "RF" : "REFRAME"} hint="upgrade to unlock reframe" />
               }
               {isPro
                 ? <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
                 : <ProToggle label="TRIM" hint="upgrade to cut pauses & dead air" />
               }
               {isPro
-                ? <Toggle on={clipStyle === "blur_bg"} setOn={v => { setClipStyle(v ? "blur_bg" : "reframe"); if (v) setReframe(false); }} label="BLUR BG" hint="landscape clip on blurred background" />
-                : <ProToggle label="BLUR BG" hint="upgrade for blurred-background clips" />
+                ? <Toggle on={clipStyle === "blur_bg"} setOn={v => { setClipStyle(v ? "blur_bg" : "reframe"); if (v) setReframe(false); }} label={isMobile ? "BLUR" : "BLUR BG"} hint="landscape clip on blurred background" />
+                : <ProToggle label={isMobile ? "BLUR" : "BLUR BG"} hint="upgrade for blurred-background clips" />
               }
             </div>
 

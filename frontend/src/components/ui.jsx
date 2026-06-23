@@ -113,9 +113,9 @@ export function Toggle({ on, setOn, label, hint }) {
       boxShadow: on ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
       cursor: "pointer", transform: on ? "translate(2px,2px)" : "none",
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: 10 }}>{label}</span>
-        <div style={{ width: 18, height: 10, background: on ? C.ink : C.cream2, border: `2px solid ${C.ink}`, position: "relative" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 10, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <div style={{ width: 18, height: 10, background: on ? C.ink : C.cream2, border: `2px solid ${C.ink}`, position: "relative", flexShrink: 0 }}>
           <div style={{ position: "absolute", top: -2, left: on ? 6 : -2, width: 8, height: 10, background: on ? C.signal : C.dim, border: `2px solid ${C.ink}`, transition: "left .1s" }} />
         </div>
       </div>

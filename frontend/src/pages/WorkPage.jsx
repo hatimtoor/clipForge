@@ -572,9 +572,13 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                   {uploadingAll ? `^ UPLOADING...` : isMobile ? `^ ALL TO YT` : `^ UPLOAD ALL TO YT`}
                 </PixelBtn>
                 {uploadAllPickerOpen && (
+                  <>
+                  {isMobile && <div onClick={() => setUploadAllPickerOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(26,13,46,.6)", zIndex: 199 }} />}
                   <div className="pixel" style={{
-                    position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 200,
-                    background: C.cream, border: BORDER, boxShadow: SHADOW_SM, minWidth: 210, padding: 12,
+                    background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: 12, zIndex: 200,
+                    ...(isMobile
+                      ? { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: "min(330px,92vw)", maxHeight: "80vh", overflowY: "auto" }
+                      : { position: "absolute", top: "calc(100% + 8px)", right: 0, minWidth: 210 }),
                   }}>
                     <div style={{ fontSize: 8, color: C.dim2, marginBottom: 10 }}>SELECT CHANNEL</div>
                     {ytChannels.map(ch => (
@@ -591,6 +595,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                       <PixelBtn color="cream" size="sm" onClick={() => setUploadAllPickerOpen(false)}>CANCEL</PixelBtn>
                     </div>
                   </div>
+                  </>
                 )}
               </div>
             )}
@@ -600,9 +605,13 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                   {isMobile ? "♪ ALL TO TT" : "♪ ALL TO TIKTOK"}
                 </PixelBtn>
                 {ttPickerOpen && (
+                  <>
+                  {isMobile && <div onClick={() => setTtPickerOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(26,13,46,.6)", zIndex: 199 }} />}
                   <div className="pixel" style={{
-                    position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 200,
-                    background: C.cream, border: BORDER, boxShadow: SHADOW_SM, minWidth: 210, padding: 12,
+                    background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: 12, zIndex: 200,
+                    ...(isMobile
+                      ? { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: "min(330px,92vw)", maxHeight: "80vh", overflowY: "auto" }
+                      : { position: "absolute", top: "calc(100% + 8px)", right: 0, minWidth: 210 }),
                   }}>
                     <div style={{ fontSize: 8, color: C.dim2, marginBottom: 10 }}>SELECT TIKTOK ACCOUNT</div>
                     {ttAccounts.map(a => (
@@ -622,6 +631,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                       <PixelBtn color="cream" size="sm" onClick={() => setTtPickerOpen(false)}>CANCEL</PixelBtn>
                     </div>
                   </div>
+                  </>
                 )}
               </div>
             )}

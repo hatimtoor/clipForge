@@ -123,6 +123,9 @@ jobs:
             echo ">>> Installing backend dependencies..."
             pip install -r backend/requirements.txt -q
 
+            echo ">>> Keeping yt-dlp + PO-token plugin current (YouTube breaks old versions)..."
+            pip install -U -q yt-dlp bgutil-ytdlp-pot-provider
+
             echo ">>> Restarting backend..."
             sudo systemctl restart clipforge
 

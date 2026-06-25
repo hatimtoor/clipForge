@@ -442,7 +442,10 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
     video_path = job_dir / "video.mp4"
     cmd = [
         YTDLP,
-        "-f", "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        # Prefer direct-https (DASH) formats, never HLS: YouTube 403s HLS segments
+        # from datacenter IPs even with a valid PO token. Try H.264+m4a first (clean
+        # mp4, no AV1 decode quirks), then any https video+audio, then best https.
+        "-f", "bv*[height<=1080][vcodec^=avc1][protocol^=http]+ba[ext=m4a][protocol^=http]/bv*[height<=1080][protocol^=http]+ba[ext=m4a][protocol^=http]/bv*[height<=1080][protocol^=http]+ba[protocol^=http]/b[protocol^=http]/b",
         "--merge-output-format", "mp4",
         "-o", str(video_path),
         "--no-playlist",
@@ -458,6 +461,9 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
     elif COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
+    # Force tv/mweb player clients (which serve direct https/DASH URLs); the
+    # default clients fall back to HLS, whose segments 403 from datacenter IPs.
+    cmd += ["--extractor-args", "youtube:player_client=tv,mweb,web"]
     if POTTOKEN_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
     # Tell yt-dlp exactly where ffmpeg is so it can merge streams reliably

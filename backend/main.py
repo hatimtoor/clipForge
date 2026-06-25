@@ -232,6 +232,14 @@ def _clip_token_verify(token: str, job_id: str, filename: str) -> bool:
 
 # Running asyncio tasks — keyed by job_id so they can be cancelled
 _running_tasks: dict[str, asyncio.Task] = {}
+
+# Watchlist retry state: advance a channel's last_video_id only after its clip job
+# SUCCEEDS, so a transient failure (e.g. a download outage) doesn't silently drop
+# the upload. A new upload is retried up to WATCHLIST_MAX_ATTEMPTS across polls,
+# then we give up (mark it seen) so a permanently-broken video can't loop forever.
+WATCHLIST_MAX_ATTEMPTS = 3
+_watchlist_inflight: set = set()   # (channel_id, video_id) currently processing — no duplicates
+_watchlist_attempts: dict = {}     # (channel_id, video_id) -> failed-attempt count
 # Limit concurrent YouTube downloads so the digest's parallel videos don't get
 # throttled into failed-stream merge errors. Other pipeline phases stay parallel.
 _download_sem = asyncio.Semaphore(2)
@@ -2029,15 +2037,23 @@ async def channel_poller():
                 video_id = video.get("id")
                 db_update_channel(channel_id, {"status": "watching"})
                 if video_id and video_id != ch.get("last_video_id"):
+                    key = (channel_id, video_id)
+                    if key in _watchlist_inflight:
+                        continue  # this upload is already being processed — don't queue a duplicate
+                    if _watchlist_attempts.get(key, 0) >= WATCHLIST_MAX_ATTEMPTS:
+                        # Give up after repeated failures: mark it seen so we stop
+                        # retrying and can still detect newer uploads.
+                        print(f"[watchlist] giving up on {video_id} after {WATCHLIST_MAX_ATTEMPTS} attempts", flush=True)
+                        db_update_channel(channel_id, {"last_video_id": video_id, "last_video_title": video.get("title", "")})
+                        _watchlist_attempts.pop(key, None)
+                        continue
                     print(f"[watchlist] New video: {video.get('title')} ({video_id})", flush=True)
-                    db_update_channel(channel_id, {
-                        "last_video_id": video_id,
-                        "last_video_title": video.get("title", ""),
-                    })
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
                     user_id = ch.get("user_id", "")
                     profile = db_check_and_reset_quota(user_id)
                     if profile.get("plan") != "pro":
+                        # Non-Pro: mark seen so we don't re-detect it every poll.
+                        db_update_channel(channel_id, {"last_video_id": video_id, "last_video_title": video.get("title", "")})
                         print(f"[watchlist] Skipping channel {channel_id}: user {user_id} is not Pro", flush=True)
                         continue
                     job = db_create_job({
@@ -2064,7 +2080,8 @@ async def channel_poller():
                         bg_music_volume=ch.get("bg_music_volume") or 0.15,
                         trim_silence=ch.get("trim_silence", False),
                     )
-                    _running_tasks[job_id] = asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id")))
+                    _watchlist_inflight.add(key)
+                    _running_tasks[job_id] = asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id"), watchlist_channel_id=channel_id, watchlist_video_id=video_id, watchlist_video_title=video.get("title", "")))
             except Exception as e:
                 print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
                 db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
@@ -2255,7 +2272,7 @@ async def _acquire_render_slot(job_id: str) -> None:
         raise
 
 
-async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None):
+async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None, watchlist_channel_id: Optional[str] = None, watchlist_video_id: Optional[str] = None, watchlist_video_title: str = ""):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
@@ -2354,6 +2371,13 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 current = set(bf.get("processed_video_ids") or [])
                 current.add(backfill_video_id)
                 await asyncio.to_thread(db_update_backfill, backfill_id, {"processed_video_ids": list(current)})
+        if watchlist_channel_id and watchlist_video_id:
+            # Mark the upload seen only now that it succeeded; clear its retry state.
+            await asyncio.to_thread(db_update_channel, watchlist_channel_id, {
+                "last_video_id": watchlist_video_id,
+                "last_video_title": watchlist_video_title,
+            })
+            _watchlist_attempts.pop((watchlist_channel_id, watchlist_video_id), None)
         if user_id:
             asyncio.create_task(send_job_notification(user_id, len(final_clips), req.url))
 
@@ -2366,11 +2390,18 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         log(job_id, f"!!! PIPELINE ERROR (full): {_tb.format_exc()}")
         await update_job(job_id, status="error", progress=0, message="Pipeline failed",
                    error="An error occurred while processing your video. Please try again.")
+        if watchlist_channel_id and watchlist_video_id:
+            # Count the failure so the poller retries (up to WATCHLIST_MAX_ATTEMPTS)
+            # rather than dropping the upload. last_video_id is NOT advanced here.
+            _k = (watchlist_channel_id, watchlist_video_id)
+            _watchlist_attempts[_k] = _watchlist_attempts.get(_k, 0) + 1
         if user_id:
             asyncio.create_task(send_job_notification(user_id, 0, req.url, error="Pipeline failed"))
         raise
     finally:
         _running_tasks.pop(job_id, None)
+        if watchlist_channel_id and watchlist_video_id:
+            _watchlist_inflight.discard((watchlist_channel_id, watchlist_video_id))
         if job_dir.exists():
             shutil.rmtree(job_dir, ignore_errors=True)
 

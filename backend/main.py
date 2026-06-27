@@ -891,6 +891,16 @@ Return valid JSON array only, no markdown, no explanation."""
             c["end"] = c["start"] + target_dur
         elif dur > max_dur:
             c["end"] = c["start"] + max_dur
+        # Censor profanity in the title, hook, reason, and tags — these propagate to
+        # the UI, thumbnails, and the burned-in YouTube/TikTok upload descriptions.
+        if c.get("title"):
+            c["title"] = _censor_text(c["title"])
+        if c.get("hook"):
+            c["hook"] = _censor_text(c["hook"])
+        if c.get("reason"):
+            c["reason"] = _censor_text(c["reason"])
+        if isinstance(c.get("tags"), list):
+            c["tags"] = [_censor_text(t) if isinstance(t, str) else t for t in c["tags"]]
         valid.append(c)
 
     return valid
@@ -1099,6 +1109,58 @@ def _inline_color(style_color: str) -> str:
     return f"&H{h}&"
 
 
+# ── profanity censoring (captions + titles) ───────────────────────────────────
+# Whole-word match only (avoids the "Scunthorpe problem" — 'class', 'pass' etc.
+# are never touched). Add variants explicitly rather than matching substrings.
+_PROFANITY = {
+    "fuck", "fucks", "fucked", "fucking", "fuckin", "fucker", "fuckers", "fuckface",
+    "motherfucker", "motherfuckers", "motherfucking", "clusterfuck", "fuckboy",
+    "shit", "shits", "shitty", "shitting", "shithead", "bullshit", "dipshit",
+    "bitch", "bitches", "bitching", "bitchy",
+    "ass", "asses", "asshole", "assholes", "asshat", "dumbass", "jackass",
+    "dick", "dicks", "dickhead", "cock", "cocks", "cocksucker",
+    "pussy", "pussies", "cunt", "cunts", "twat",
+    "semen", "cum", "cums", "cumming", "jizz", "boner", "horny", "orgasm",
+    "penis", "vagina", "dildo", "tits", "titties", "tittie",
+    "whore", "whores", "slut", "sluts", "skank",
+    "bastard", "bastards", "prick", "wanker", "bollocks",
+    "nigger", "niggers", "nigga", "niggas", "faggot", "faggots", "fag", "fags",
+    "retard", "retarded",
+}
+
+
+def _censor_word(w: str) -> str:
+    """Mask the inner letters of a word: keep first + last, star the middle."""
+    if len(w) <= 1:
+        return w
+    if len(w) == 2:
+        return w[0] + "*"
+    return w[0] + "*" * (len(w) - 2) + w[-1]
+
+
+# Roots safe to prefix-match (any word starting with these is profane), so
+# compounds like 'shitshow', 'fuckwit', 'bitchin' are caught without listing each.
+# Only roots that virtually never start innocent words (NOT 'ass', 'cock', 'dick',
+# 'cum' — those hit 'assassin', 'cockpit', 'dickens', 'cucumber').
+_PROFANITY_PREFIXES = ("fuck", "motherfuck", "shit", "bitch", "cunt", "nigg", "faggot")
+
+
+def _is_profane(token: str) -> bool:
+    t = token.lower().strip("'")
+    return t in _PROFANITY or any(t.startswith(p) for p in _PROFANITY_PREFIXES)
+
+
+def _censor_text(text: str) -> str:
+    """Censor profane whole words in text, preserving punctuation/case/length."""
+    if not text:
+        return text
+    return re.sub(
+        r"[A-Za-z']+",
+        lambda m: _censor_word(m.group(0)) if _is_profane(m.group(0)) else m.group(0),
+        text,
+    )
+
+
 # ── build ASS subtitle file (word-by-word TikTok style) ───────────────────────
 def build_ass_subtitles(
     segments: list,
@@ -1208,7 +1270,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # \t, and because each word has its own \pos, scaling it doesn't move
             # the others (no reflow).
             base_i, hl_i, outl_i = _inline_color(base_c), _inline_color(hl_c), _inline_color(outl_c)
-            sized   = [(_ass_escape(w["word"].strip().upper()), w) for w in group]
+            sized   = [(_ass_escape(_censor_text(w["word"]).strip().upper()), w) for w in group]
             widths  = [_measure_caption(t, fs_px) for t, _ in sized]
             space_w = max(fs_px * 0.18, _measure_caption("x x", fs_px) - 2 * _measure_caption("x", fs_px))
             total_w = sum(widths) + space_w * (len(sized) - 1)
@@ -1230,7 +1292,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             karaoke_text = ""
             for w in group:
                 dur_cs = max(1, int((w["end"] - w["start"]) * 100))
-                safe_word = _ass_escape(w["word"].strip().upper())
+                safe_word = _ass_escape(_censor_text(w["word"]).strip().upper())
                 karaoke_text += f"{{\\k{dur_cs}}}{safe_word} "
             events.append(
                 f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{karaoke_text.strip()}"

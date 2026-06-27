@@ -126,6 +126,9 @@ jobs:
             echo ">>> Keeping yt-dlp + PO-token plugin current (YouTube breaks old versions)..."
             pip install -U -q yt-dlp bgutil-ytdlp-pot-provider
 
+            echo ">>> Installing caption font so libass/fontconfig can find it (fontsdir alone is unreliable)..."
+            mkdir -p ~/.fonts && cp -f backend/assets/fonts/*.ttf ~/.fonts/ && fc-cache -f ~/.fonts >/dev/null 2>&1 || true
+
             echo ">>> Restarting backend..."
             sudo systemctl restart clipforge
 

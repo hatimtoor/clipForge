@@ -1506,10 +1506,15 @@ def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int) -> tuple:
             cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
             clusters[(int(cx / gx), int(cy / gy))].append(b)
         best = max(clusters.values(), key=len)
-        if len(best) >= max(3, int(0.4 * len(per_frame))):
+        if len(best) >= max(2, int(0.25 * len(per_frame))):
             arr = _np.array(best)
             fx1, fy1 = int(_np.median(arr[:, 0])), int(_np.median(arr[:, 1]))
             fx2, fy2 = int(_np.median(arr[:, 2])), int(_np.median(arr[:, 3]))
+            # Pad ~10% so the cam's border is fully covered — cleanly shown on top
+            # and cleanly excluded from the bottom (no leftover sliver).
+            pad = int(max(fx2 - fx1, fy2 - fy1) * 0.10)
+            fx1, fy1 = max(0, fx1 - pad), max(0, fy1 - pad)
+            fx2, fy2 = min(src_w, fx2 + pad), min(src_h, fy2 + pad)
             facecam = (fx1, fy1, fx2 - fx1, fy2 - fy1)
 
     def _in_facecam(b) -> bool:
@@ -2120,8 +2125,15 @@ async def create_clips(
                     gp_crop = f"sendcmd=f={_gp_cmd.name},crop={gp_w}:{gp_h}:0:0"
                 else:
                     gp_crop = f"crop={gp_w}:{gp_h}:{gp_traj[0][1]}:0"
+                # Top strip: show the WHOLE cam (fit, don't crop — a square cam
+                # force-cropped to a wide strip slices off the face). Fit it by
+                # height, centre it, and fill the side gaps with a blurred copy
+                # of the same cam (Blur-BG style) so nothing is cut.
                 facecam_fc = (
-                    f"[0:v]crop={fw}:{fh}:{fx}:{fy},scale={out_w}:{top_h}:force_original_aspect_ratio=increase,crop={out_w}:{top_h}[top];"
+                    f"[0:v]crop={fw}:{fh}:{fx}:{fy},split[fcm][fcb];"
+                    f"[fcb]scale={out_w}:{top_h}:force_original_aspect_ratio=increase,crop={out_w}:{top_h},boxblur=20:2[fcbg];"
+                    f"[fcm]scale={out_w}:{top_h}:force_original_aspect_ratio=decrease[fcfg];"
+                    f"[fcbg][fcfg]overlay=(W-w)/2:(H-h)/2[top];"
                     f"[0:v]{gp_crop},scale={out_w}:{bot_h}[bot];"
                     f"[top][bot]vstack[stacked];"
                     f"[stacked]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"

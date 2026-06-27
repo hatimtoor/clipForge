@@ -940,12 +940,12 @@ _CAPTION_STYLES: dict[str, tuple[str, str]] = {
     # PrimaryColour  = colour of words AFTER being spoken (white)
     # SecondaryColour = karaoke sweep colour — words show in this colour BEFORE being spoken
     "bold_bottom": (
-        "Montserrat,72,&H00FFFFFF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
-        "Montserrat,72,&H0000D4FF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+        "ClipForgeCaps,72,&H00FFFFFF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+        "ClipForgeCaps,72,&H0000D4FF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
     ),
     "center_pop": (
-        "Montserrat,88,&H00FFFFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
-        "Montserrat,88,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
+        "ClipForgeCaps,88,&H00FFFFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
+        "ClipForgeCaps,88,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
     ),
     "minimal": (
         # Smaller, not bold, thin outline, no per-word colour change
@@ -1068,7 +1068,7 @@ def _hex_to_ass(hex_color: str) -> Optional[str]:
 from functools import lru_cache as _lru_cache
 
 FONTS_DIR     = Path(__file__).parent / "assets" / "fonts"
-_CAPTION_FONT = FONTS_DIR / "Montserrat-Bold.ttf"
+_CAPTION_FONT = FONTS_DIR / "ClipForgeCaps-Bold.ttf"
 # fontsdir for the libass filter — escape ':' (Windows drive) for the filtergraph.
 _FONTSDIR_ESC = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
 
@@ -1210,7 +1210,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             base_i, hl_i, outl_i = _inline_color(base_c), _inline_color(hl_c), _inline_color(outl_c)
             sized   = [(_ass_escape(w["word"].strip().upper()), w) for w in group]
             widths  = [_measure_caption(t, fs_px) for t, _ in sized]
-            space_w = fs_px * 0.32
+            space_w = max(fs_px * 0.18, _measure_caption("x x", fs_px) - 2 * _measure_caption("x", fs_px))
             total_w = sum(widths) + space_w * (len(sized) - 1)
             cx      = (video_width - total_w) / 2.0
             for (txt, w), wd in zip(sized, widths):

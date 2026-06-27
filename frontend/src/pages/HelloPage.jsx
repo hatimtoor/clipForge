@@ -89,7 +89,7 @@ export default function HelloPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur,
-          reframe: clipStyle !== "blur_bg" && reframe,
+          reframe: clipStyle === "reframe" && reframe,
           clip_style: clipStyle,
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
@@ -182,7 +182,7 @@ export default function HelloPage() {
               <Toggle on={true} setOn={() => {}} label="HOOKS" hint="find the line that travels" />
               <Toggle on={true} setOn={() => {}} label="CAPS" hint="burn word-by-word subs" />
               {isPro
-                ? <Toggle on={reframe && clipStyle !== "blur_bg"} setOn={v => { setReframe(v); if (v) setClipStyle("reframe"); }} label={isMobile ? "RF" : "REFRAME"} hint="YOLO speaker tracking → 9:16 portrait" />
+                ? <Toggle on={reframe && clipStyle === "reframe"} setOn={v => { setReframe(v); if (v) setClipStyle("reframe"); }} label={isMobile ? "RF" : "REFRAME"} hint="YOLO speaker tracking → 9:16 portrait" />
                 : <ProToggle label={isMobile ? "RF" : "REFRAME"} hint="upgrade to unlock reframe" />
               }
               {isPro
@@ -192,6 +192,10 @@ export default function HelloPage() {
               {isPro
                 ? <Toggle on={clipStyle === "blur_bg"} setOn={v => { setClipStyle(v ? "blur_bg" : "reframe"); if (v) setReframe(false); }} label={isMobile ? "BLUR" : "BLUR BG"} hint="landscape clip on blurred background" />
                 : <ProToggle label={isMobile ? "BLUR" : "BLUR BG"} hint="upgrade for blurred-background clips" />
+              }
+              {isPro
+                ? <Toggle on={clipStyle === "facecam"} setOn={v => { setClipStyle(v ? "facecam" : "reframe"); if (v) setReframe(false); }} label={isMobile ? "CAM" : "FACECAM"} hint="gaming: facecam on top, gameplay below" />
+                : <ProToggle label={isMobile ? "CAM" : "FACECAM"} hint="upgrade for gaming facecam layout" />
               }
             </div>
 

@@ -1385,6 +1385,93 @@ def smooth_crop_trajectory(
     return smoothed
 
 
+def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int) -> tuple:
+    """For the 'facecam' gaming layout: find a fixed corner facecam (the streamer)
+    and build a gameplay crop trajectory that EXCLUDES it.
+
+    Returns (facecam_box | None, gameplay_samples) where facecam_box = (x, y, w, h)
+    and gameplay_samples = [(rel_time, cx), ...] for smooth_crop_trajectory.
+
+    Heuristic: a facecam is a YOLO 'person' detection that is small, hugs a frame
+    corner, and stays in roughly the same spot across the clip. The gameplay subject
+    is the largest person NOT inside the facecam box.
+    """
+    if not _REFRAME_AVAILABLE:
+        return None, []
+    try:
+        import cv2 as _cv2
+    except ImportError:
+        return None, []
+    import numpy as _np
+    from collections import defaultdict
+
+    model = _get_yolo()
+    cap   = _cv2.VideoCapture(str(clip_path))
+    fps   = cap.get(_cv2.CAP_PROP_FPS) or 30.0
+    sample_every = max(1, int(fps / 2))
+    frame_area   = src_w * src_h
+
+    per_frame    = []   # (frame_idx, xyxy array of person boxes)
+    corner_boxes = []   # candidate facecam boxes (small + corner-hugging)
+    fidx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if fidx % sample_every == 0:
+            res   = model(frame, classes=[0], verbose=False, conf=0.25)
+            boxes = res[0].boxes
+            xyxy  = (boxes.xyxy.cpu().numpy().astype(int)
+                     if boxes is not None and len(boxes) else _np.empty((0, 4), int))
+            per_frame.append((fidx, xyxy))
+            for x1, y1, x2, y2 in xyxy:
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                small     = (x2 - x1) * (y2 - y1) < frame_area * 0.18
+                near_edge = ((x1 < src_w * 0.06 or x2 > src_w * 0.94) and
+                             (y1 < src_h * 0.06 or y2 > src_h * 0.94))
+                if small and near_edge:
+                    corner_boxes.append((x1, y1, x2, y2))
+        fidx += 1
+    cap.release()
+
+    # Facecam = the most frequent persistent corner cluster.
+    facecam = None
+    if corner_boxes and per_frame:
+        gx, gy = src_w * 0.05, src_h * 0.05
+        clusters = defaultdict(list)
+        for b in corner_boxes:
+            cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+            clusters[(int(cx / gx), int(cy / gy))].append(b)
+        best = max(clusters.values(), key=len)
+        if len(best) >= max(3, int(0.4 * len(per_frame))):
+            arr = _np.array(best)
+            fx1, fy1 = int(_np.median(arr[:, 0])), int(_np.median(arr[:, 1]))
+            fx2, fy2 = int(_np.median(arr[:, 2])), int(_np.median(arr[:, 3]))
+            facecam = (fx1, fy1, fx2 - fx1, fy2 - fy1)
+
+    def _in_facecam(b) -> bool:
+        if not facecam:
+            return False
+        fx, fy, fw, fh = facecam
+        ix1, iy1 = max(b[0], fx), max(b[1], fy)
+        ix2, iy2 = min(b[2], fx + fw), min(b[3], fy + fh)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        ba    = (b[2] - b[0]) * (b[3] - b[1])
+        return ba > 0 and inter / ba > 0.5
+
+    # Gameplay subject = largest person that isn't the facecam.
+    game = []
+    for fr, xyxy in per_frame:
+        cands = [b for b in xyxy if not _in_facecam(b)]
+        if not cands:
+            continue
+        b = cands[int(_np.argmax([(c[2] - c[0]) * (c[3] - c[1]) for c in cands]))]
+        game.append((round(fr / fps, 3), float((b[0] + b[2]) / 2)))
+
+    return facecam, game
+
+
 def write_sendcmd_file(trajectory: list, output_path: Path, fps: float = 30.0) -> None:
     """
     Write FFmpeg sendcmd with per-frame crop x values, linearly interpolated
@@ -1940,7 +2027,68 @@ async def create_clips(
                 f"ass={ass_filename}:fontsdir={_FONTSDIR_ESC}"
             )
 
-        if clip_style == "blur_bg":
+        # Facecam (gaming) layout: streamer's corner cam on top 40%, reframe-tracked
+        # gameplay on the bottom 60% (with the facecam excluded from the gameplay crop).
+        facecam_fc = None
+        if clip_style == "facecam" and _REFRAME_AVAILABLE:
+            _fc_tmp = job_dir / f"clip_{idx}_fc.mp4"
+            await run_cmd_async([FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
+                                 "-t", str(render_dur), "-c:v", "libx264", "-preset", "ultrafast",
+                                 "-crf", "28", "-an", str(_fc_tmp)])
+            facecam_box, game = await asyncio.to_thread(_detect_facecam_and_track, _fc_tmp, src_w, src_h)
+            _fc_tmp.unlink(missing_ok=True)
+            if facecam_box:
+                fx, fy, fw, fh = facecam_box
+                top_h = (out_h * 2 // 5);  top_h -= top_h % 2     # 40% (768)
+                bot_h = out_h - top_h                              # 60% (1152)
+                gp_h  = crop_h
+                gp_w  = min(int(gp_h * out_w / bot_h), src_w); gp_w -= gp_w % 2
+                gp_min_x, gp_max_x = 0, src_w - gp_w
+                if fx + fw <= src_w / 2:                            # facecam on the left
+                    gp_min_x = min(fx + fw, gp_max_x)
+                elif fx >= src_w / 2:                              # facecam on the right
+                    gp_max_x = max(fx - gp_w, gp_min_x)
+                gp_dets  = [(t, max(gp_min_x, min(int(cx - gp_w / 2), gp_max_x))) for t, cx in game]
+                gp_fb    = max(gp_min_x, min((src_w - gp_w) // 2, gp_max_x))
+                gp_traj  = smooth_crop_trajectory(gp_dets, render_dur, fallback_crop_x=gp_fb, crop_w=gp_w, src_w=src_w)
+                gp_traj  = [(t, max(gp_min_x, min(x, gp_max_x))) for t, x in gp_traj]
+                if len(set(x for _, x in gp_traj)) > 1:
+                    _gp_cmd = job_dir / f"clip_{idx}_gp.txt"
+                    write_sendcmd_file(gp_traj, _gp_cmd, fps=clip_fps)
+                    gp_crop = f"sendcmd=f={_gp_cmd.name},crop={gp_w}:{gp_h}:0:0"
+                else:
+                    gp_crop = f"crop={gp_w}:{gp_h}:{gp_traj[0][1]}:0"
+                facecam_fc = (
+                    f"[0:v]crop={fw}:{fh}:{fx}:{fy},scale={out_w}:{top_h}:force_original_aspect_ratio=increase,crop={out_w}:{top_h}[top];"
+                    f"[0:v]{gp_crop},scale={out_w}:{bot_h}[bot];"
+                    f"[top][bot]vstack[stacked];"
+                    f"[stacked]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
+                )
+                log(job_id, f"  Facecam {facecam_box}, gameplay {gp_w}x{gp_h} x∈[{gp_min_x},{gp_max_x}]")
+            else:
+                log(job_id, "  No facecam detected — using center crop instead")
+
+        if clip_style == "facecam" and facecam_fc:
+            if music_path:
+                facecam_fc += (
+                    f";[0:a]volume=1.0[speech];[1:a]volume={bg_music_volume}[bgm];"
+                    f"[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0.5[aout]"
+                )
+                ffmpeg_cmd = [
+                    FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
+                    "-stream_loop", "-1", "-i", str(music_path), "-t", str(render_dur),
+                    "-filter_complex", facecam_fc, "-map", "[vout]", "-map", "[aout]",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(clip_path),
+                ]
+            else:
+                ffmpeg_cmd = [
+                    FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src), "-t", str(render_dur),
+                    "-filter_complex", facecam_fc, "-map", "[vout]", "-map", "0:a?",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(clip_path),
+                ]
+        elif clip_style == "blur_bg":
             # Blur-background style: landscape clip centred in 9:16 with a
             # blurred+scaled copy filling the bars.
             # Perf trick: blur at half-res (540x960) then upscale — blurring a
@@ -2722,6 +2870,8 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
     if plan != "pro":
         if req.clip_style == "blur_bg":
             raise HTTPException(403, "Blur background style requires a Pro plan. Upgrade to unlock.")
+        if req.clip_style == "facecam":
+            raise HTTPException(403, "Facecam (gaming split) style requires a Pro plan. Upgrade to unlock.")
         if req.trim_silence:
             raise HTTPException(403, "Trim silence requires a Pro plan. Upgrade to unlock.")
     req.max_clips = min(req.max_clips, max_clips_per_job)

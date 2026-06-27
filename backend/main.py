@@ -1062,6 +1062,43 @@ def _hex_to_ass(hex_color: str) -> Optional[str]:
     return f"&H00{b:02X}{g:02X}{r:02X}"
 
 
+# ── word-by-word "pop" captions ──────────────────────────────────────────────
+# Active word grows + recolours while spoken; neighbours stay fixed (each word is
+# positioned individually with \pos, so scaling one doesn't reflow the others).
+from functools import lru_cache as _lru_cache
+
+FONTS_DIR     = Path(__file__).parent / "assets" / "fonts"
+_CAPTION_FONT = FONTS_DIR / "Montserrat-Bold.ttf"
+# fontsdir for the libass filter — escape ':' (Windows drive) for the filtergraph.
+_FONTSDIR_ESC = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
+
+POP_CAPTION_STYLES = {"bold_bottom", "center_pop"}  # styles that get the pop animation
+_POP_SCALE = 118    # how big the active word grows (%)
+_POP_MS    = 90     # pop-in / settle duration (ms)
+
+
+@_lru_cache(maxsize=16)
+def _caption_pil_font(size: int):
+    from PIL import ImageFont
+    return ImageFont.truetype(str(_CAPTION_FONT), size)
+
+
+def _measure_caption(text: str, size: int) -> float:
+    """Pixel width of text at the caption font size (for per-word layout)."""
+    try:
+        return float(_caption_pil_font(size).getlength(text))
+    except Exception:
+        return len(text) * size * 0.6  # rough fallback if the font can't be loaded
+
+
+def _inline_color(style_color: str) -> str:
+    """Convert a V4+ style colour (&HAABBGGRR) to an inline \\c override (&HBBGGRR&)."""
+    h = style_color.replace("&H", "").replace("&", "")
+    if len(h) >= 6:
+        h = h[-6:]  # drop the alpha byte → BBGGRR
+    return f"&H{h}&"
+
+
 # ── build ASS subtitle file (word-by-word TikTok style) ───────────────────────
 def build_ass_subtitles(
     segments: list,
@@ -1138,27 +1175,66 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if w["start"] >= clip_start - 0.05 and w["start"] < clip_end + 0.05:
                 words_in_clip.append(w)
 
-    # Group into lines of ~5 words
+    # Parse the (override-applied) style so pop captions reuse its size/colours.
+    _p = default_line.split(",")
+    fs_px  = int(_p[1])
+    base_c = _p[2]      # PrimaryColour — base/white text
+    hl_c   = _p[3]      # SecondaryColour — the active-word highlight colour
+    outl_c = _p[4]      # OutlineColour
+    bord_w = _p[15]
+    shad_w = _p[16]
+    align  = int(_p[17])
+    mv     = int(_p[20])
+    pop_on = caption_style in POP_CAPTION_STYLES
+    # Vertical centre for \an5 word positioning, from the style's alignment/margin.
+    if align in (4, 5, 6):      # middle row
+        y_center = video_height // 2
+    elif align in (7, 8, 9):    # top row
+        y_center = mv + fs_px // 2
+    else:                       # bottom row (1, 2, 3)
+        y_center = video_height - mv - fs_px // 2
+
+    # Group into lines of ~3 words
     LINE_SIZE = 3
     for i in range(0, len(words_in_clip), LINE_SIZE):
         group = words_in_clip[i:i + LINE_SIZE]
         if not group:
             continue
-
         line_start = group[0]["start"]
         line_end   = group[-1]["end"]
 
-        # Build karaoke line: each word highlighted when spoken
-        karaoke_text = ""
-        for w in group:
-            dur_cs = max(1, int((w["end"] - w["start"]) * 100))
-            safe_word = _ass_escape(w["word"].strip().upper())
-            karaoke_text += f"{{\\k{dur_cs}}}{safe_word} "
-
-        karaoke_text = karaoke_text.strip()
-        events.append(
-            f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{karaoke_text}"
-        )
+        if pop_on:
+            # One positioned event per word: the active word grows + recolours via
+            # \t, and because each word has its own \pos, scaling it doesn't move
+            # the others (no reflow).
+            base_i, hl_i, outl_i = _inline_color(base_c), _inline_color(hl_c), _inline_color(outl_c)
+            sized   = [(_ass_escape(w["word"].strip().upper()), w) for w in group]
+            widths  = [_measure_caption(t, fs_px) for t, _ in sized]
+            space_w = fs_px * 0.32
+            total_w = sum(widths) + space_w * (len(sized) - 1)
+            cx      = (video_width - total_w) / 2.0
+            for (txt, w), wd in zip(sized, widths):
+                word_cx = int(cx + wd / 2.0)
+                cx += wd + space_w
+                s_ms = max(0, int((w["start"] - line_start) * 1000))
+                e_ms = max(s_ms + 1, int((w["end"] - line_start) * 1000))
+                ov = (
+                    f"\\an5\\pos({word_cx},{y_center})\\fs{fs_px}\\bord{bord_w}\\shad{shad_w}"
+                    f"\\1c{base_i}\\3c{outl_i}\\fscx100\\fscy100"
+                    f"\\t({s_ms},{s_ms + _POP_MS},\\fscx{_POP_SCALE}\\fscy{_POP_SCALE}\\1c{hl_i})"
+                    f"\\t({e_ms},{e_ms + _POP_MS},\\fscx100\\fscy100\\1c{base_i})"
+                )
+                events.append(f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{{{ov}}}{txt}")
+        else:
+            # Classic karaoke colour sweep (e.g. the minimal style).
+            karaoke_text = ""
+            for w in group:
+                dur_cs = max(1, int((w["end"] - w["start"]) * 100))
+                safe_word = _ass_escape(w["word"].strip().upper())
+                karaoke_text += f"{{\\k{dur_cs}}}{safe_word} "
+            events.append(
+                f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{karaoke_text.strip()}"
+            )
 
     ass_content = ass_header + "\n".join(events) + "\n"
     output_path.write_text(ass_content, encoding="utf-8")
@@ -1854,14 +1930,14 @@ async def create_clips(
                 f"sendcmd=f={sendcmd_filename},"
                 f"crop={crop_w}:{crop_h}:0:0,"
                 f"scale={out_w}:{out_h},"
-                f"ass={ass_filename}"
+                f"ass={ass_filename}:fontsdir={_FONTSDIR_ESC}"
             )
         else:
             static_x = trajectory[0][1]
             vf_string = (
                 f"crop={crop_w}:{crop_h}:{static_x}:0,"
                 f"scale={out_w}:{out_h},"
-                f"ass={ass_filename}"
+                f"ass={ass_filename}:fontsdir={_FONTSDIR_ESC}"
             )
 
         if clip_style == "blur_bg":
@@ -1878,7 +1954,7 @@ async def create_clips(
                 f"crop={half_w}:{half_h},boxblur=10:2,scale={out_w}:{out_h}[bg];"
                 f"[0:v]scale={out_w}:-2:force_original_aspect_ratio=decrease[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2[overlaid];"
-                f"[overlaid]ass={ass_filename}[vout]"
+                f"[overlaid]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
             )
             if music_path:
                 blur_bg_fc += (

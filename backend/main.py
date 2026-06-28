@@ -950,8 +950,9 @@ _CAPTION_STYLES: dict[str, tuple[str, str]] = {
     # PrimaryColour  = colour of words AFTER being spoken (white)
     # SecondaryColour = karaoke sweep colour — words show in this colour BEFORE being spoken
     "bold_bottom": (
-        "ClipForgeCaps,72,&H00FFFFFF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
-        "ClipForgeCaps,72,&H0000D4FF,&H0000D4FF,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+        # Active word highlights bright green (&H0000FF2B = #2BFF00), like the reference.
+        "ClipForgeCaps,72,&H00FFFFFF,&H0000FF2B,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
+        "ClipForgeCaps,72,&H0000FF2B,&H0000FF2B,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
     ),
     "center_pop": (
         "ClipForgeCaps,88,&H00FFFFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
@@ -1279,45 +1280,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     align  = int(_p[17])
     mv     = int(_p[20])
     pop_on = caption_style in POP_CAPTION_STYLES
-    # Vertical centre for \an5 word positioning, from the style's alignment/margin.
-    if align in (4, 5, 6):      # middle row
-        y_center = video_height // 2
-    elif align in (7, 8, 9):    # top row
-        y_center = mv + fs_px // 2
-    else:                       # bottom row (1, 2, 3)
-        y_center = video_height - mv - fs_px // 2
-
-    # Group into lines of ~3 words
+    # Group into lines of ~3 words; merge a lonely 1-word tail into the line
+    # before it (so "... YOUR" + "WHEELS" reads as one "... YOUR WHEELS" line).
     LINE_SIZE = 3
-    for i in range(0, len(words_in_clip), LINE_SIZE):
-        group = words_in_clip[i:i + LINE_SIZE]
+    groups = [words_in_clip[i:i + LINE_SIZE] for i in range(0, len(words_in_clip), LINE_SIZE)]
+    if len(groups) >= 2 and len(groups[-1]) == 1:
+        tail = groups.pop()
+        groups[-1] += tail
+    for group in groups:
         if not group:
             continue
         line_start = group[0]["start"]
         line_end   = group[-1]["end"]
 
         if pop_on:
-            # One positioned event per word: the active word grows + recolours via
-            # \t, and because each word has its own \pos, scaling it doesn't move
-            # the others (no reflow).
-            base_i, hl_i, outl_i = _inline_color(base_c), _inline_color(hl_c), _inline_color(outl_c)
-            sized   = [(_ass_escape(_censor_text(w["word"]).strip().upper()), w) for w in group]
-            widths  = [_measure_caption(t, fs_px) for t, _ in sized]
-            space_w = max(fs_px * 0.18, _measure_caption("x x", fs_px) - 2 * _measure_caption("x", fs_px))
-            total_w = sum(widths) + space_w * (len(sized) - 1)
-            cx      = (video_width - total_w) / 2.0
-            for (txt, w), wd in zip(sized, widths):
-                word_cx = int(cx + wd / 2.0)
-                cx += wd + space_w
-                s_ms = max(0, int((w["start"] - line_start) * 1000))
-                e_ms = max(s_ms + 1, int((w["end"] - line_start) * 1000))
-                ov = (
-                    f"\\an5\\pos({word_cx},{y_center})\\fs{fs_px}\\bord{bord_w}\\shad{shad_w}"
-                    f"\\1c{base_i}\\3c{outl_i}\\fscx100\\fscy100"
-                    f"\\t({s_ms},{s_ms + _POP_MS},\\fscx{_POP_SCALE}\\fscy{_POP_SCALE}\\1c{hl_i})"
-                    f"\\t({e_ms},{e_ms + _POP_MS},\\fscx100\\fscy100\\1c{base_i})"
+            # Full-line redraw with a moving single-word highlight (the reference
+            # look). libass lays out and centres the WHOLE line itself — using the
+            # style's alignment/MarginV — so word spacing is always natural and we
+            # never position words by hand (this is what killed the spacing bug).
+            # One event per word window; only the active word is recoloured, and
+            # the full line stays on screen throughout. base_c/hl_c come from the
+            # style's Primary/Secondary colours.
+            base_i, hl_i = _inline_color(base_c), _inline_color(hl_c)
+            tokens = [_ass_escape(_censor_text(w["word"]).strip().upper()) for w in group]
+            for k, w in enumerate(group):
+                k_start = w["start"]
+                k_end   = group[k + 1]["start"] if k + 1 < len(group) else line_end
+                if k_end <= k_start:
+                    continue
+                parts = [
+                    f"{{\\1c{hl_i}}}{tok}{{\\1c{base_i}}}" if j == k else tok
+                    for j, tok in enumerate(tokens)
+                ]
+                events.append(
+                    f"Dialogue: 0,{ts(k_start)},{ts(k_end)},Default,,0,0,0,,{' '.join(parts)}"
                 )
-                events.append(f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{{{ov}}}{txt}")
         else:
             # Classic karaoke colour sweep (e.g. the minimal style).
             karaoke_text = ""

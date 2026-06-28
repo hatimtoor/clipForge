@@ -1475,34 +1475,53 @@ def smooth_crop_trajectory(
     return smoothed
 
 
+_YUNET_PATH = Path(__file__).parent / "assets" / "models" / "face_detection_yunet.onnx"
+
+
 def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int) -> tuple:
-    """For the 'facecam' gaming layout: find a fixed corner facecam (the streamer)
-    and build a gameplay crop trajectory that EXCLUDES it.
+    """For the 'facecam' gaming layout: find the streamer's corner webcam and
+    track both the streamer's FACE (to frame the top) and the gameplay (bottom).
 
-    Returns (facecam_box | None, gameplay_samples) where facecam_box = (x, y, w, h)
-    and gameplay_samples = [(rel_time, cx), ...] for smooth_crop_trajectory.
+    Returns (facecam_box | None, face_info | None, gameplay_samples) where
+      facecam_box      = (x, y, w, h)  region to EXCLUDE from the gameplay crop
+      face_info        = {"traj": [(t, cx, cy)], "fw": int, "fh": int} | None
+                         the streamer's face centres over time, used to frame the
+                         top on the face and gently follow it. None -> plain crop.
+      gameplay_samples = [(rel_time, cx), ...] for smooth_crop_trajectory
 
-    Heuristic: a facecam is a YOLO 'person' detection that is small, hugs a frame
-    corner, and stays in roughly the same spot across the clip. The gameplay subject
-    is the largest person NOT inside the facecam box.
+    Detection: a YuNet face detector (robust to a hand on the face) finds the
+    persistent small corner face = the webcam; a YOLO 'person' pass finds the
+    cam box for exclusion and the gameplay subject. The face drives the top
+    framing; if no face is found we fall back to fitting the whole cam box.
     """
     if not _REFRAME_AVAILABLE:
-        return None, []
+        return None, None, []
     try:
         import cv2 as _cv2
     except ImportError:
-        return None, []
+        return None, None, []
     import numpy as _np
     from collections import defaultdict
 
     model = _get_yolo()
+    face_det = None
+    try:
+        if _YUNET_PATH.exists():
+            face_det = _cv2.FaceDetectorYN_create(
+                str(_YUNET_PATH), "", (320, 320),
+                score_threshold=0.6, nms_threshold=0.3, top_k=50)
+    except Exception as e:
+        print(f"[facecam] YuNet unavailable: {e}", flush=True)
+        face_det = None
+
     cap   = _cv2.VideoCapture(str(clip_path))
     fps   = cap.get(_cv2.CAP_PROP_FPS) or 30.0
     sample_every = max(1, int(fps / 2))
     frame_area   = src_w * src_h
 
     per_frame    = []   # (frame_idx, xyxy array of person boxes)
-    corner_boxes = []   # candidate facecam boxes (small + corner-hugging)
+    corner_boxes = []   # candidate facecam person boxes (small + corner-hugging)
+    face_hits    = []   # (t, cx, cy, fw, fh) small corner face detections
     fidx = 0
     while True:
         ret, frame = cap.read()
@@ -1522,10 +1541,27 @@ def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int) -> tuple:
                              (y1 < src_h * 0.06 or y2 > src_h * 0.94))
                 if small and near_edge:
                     corner_boxes.append((x1, y1, x2, y2))
+            if face_det is not None:
+                try:
+                    face_det.setInputSize((frame.shape[1], frame.shape[0]))
+                    _n, faces = face_det.detect(frame)
+                except Exception:
+                    faces = None
+                if faces is not None:
+                    for f in faces:
+                        fx, fy, fw, fh = (int(f[0]), int(f[1]), int(f[2]), int(f[3]))
+                        if fw <= 0 or fh <= 0:
+                            continue
+                        cx, cy = fx + fw / 2.0, fy + fh / 2.0
+                        small_face  = fw * fh < frame_area * 0.10
+                        near_corner = ((cx < src_w * 0.40 or cx > src_w * 0.60) and
+                                       (cy < src_h * 0.45 or cy > src_h * 0.55))
+                        if small_face and near_corner:
+                            face_hits.append((round(fidx / fps, 3), cx, cy, fw, fh))
         fidx += 1
     cap.release()
 
-    # Facecam = the most frequent persistent corner cluster.
+    # ── Facecam person box (exclusion region): persistent corner cluster ──
     facecam = None
     if corner_boxes and per_frame:
         gx, gy = src_w * 0.05, src_h * 0.05
@@ -1538,12 +1574,33 @@ def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int) -> tuple:
             arr = _np.array(best)
             fx1, fy1 = int(_np.median(arr[:, 0])), int(_np.median(arr[:, 1]))
             fx2, fy2 = int(_np.median(arr[:, 2])), int(_np.median(arr[:, 3]))
-            # Pad ~10% so the cam's border is fully covered — cleanly shown on top
-            # and cleanly excluded from the bottom (no leftover sliver).
             pad = int(max(fx2 - fx1, fy2 - fy1) * 0.10)
             fx1, fy1 = max(0, fx1 - pad), max(0, fy1 - pad)
             fx2, fy2 = min(src_w, fx2 + pad), min(src_h, fy2 + pad)
             facecam = (fx1, fy1, fx2 - fx1, fy2 - fy1)
+
+    # ── Facecam FACE (top framing + follow): persistent corner face cluster ──
+    face_info = None
+    if face_hits and per_frame:
+        gx, gy = src_w * 0.08, src_h * 0.08
+        fclusters = defaultdict(list)
+        for hit in face_hits:
+            fclusters[(int(hit[1] / gx), int(hit[2] / gy))].append(hit)
+        fbest = max(fclusters.values(), key=len)
+        if len(fbest) >= max(2, int(0.20 * len(per_frame))):
+            mfw = int(_np.median([h[3] for h in fbest]))
+            mfh = int(_np.median([h[4] for h in fbest]))
+            traj = sorted((h[0], h[1], h[2]) for h in fbest)
+            face_info = {"traj": traj, "fw": mfw, "fh": mfh}
+            # If the person pass missed the cam, derive the exclusion box from the
+            # face (expanded to head + shoulders) so the bottom still drops it.
+            if facecam is None:
+                mcx = float(_np.median([h[1] for h in fbest]))
+                mcy = float(_np.median([h[2] for h in fbest]))
+                bw, bh = int(mfw * 2.2), int(mfh * 2.8)
+                bx = int(max(0, min(mcx - bw / 2, src_w - bw)))
+                by = int(max(0, min(mcy - bh * 0.40, src_h - bh)))
+                facecam = (bx, by, min(bw, src_w), min(bh, src_h))
 
     def _in_facecam(b) -> bool:
         if not facecam:
@@ -1564,7 +1621,7 @@ def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int) -> tuple:
         b = cands[int(_np.argmax([(c[2] - c[0]) * (c[3] - c[1]) for c in cands]))]
         game.append((round(fr / fps, 3), float((b[0] + b[2]) / 2)))
 
-    return facecam, game
+    return facecam, face_info, game
 
 
 def write_sendcmd_file(trajectory: list, output_path: Path, fps: float = 30.0) -> None:
@@ -2125,12 +2182,14 @@ async def create_clips(
         # Facecam (gaming) layout: streamer's corner cam on top 40%, reframe-tracked
         # gameplay on the bottom 60% (with the facecam excluded from the gameplay crop).
         facecam_fc = None
+        facecam_extra_inputs = []
         if clip_style == "facecam" and _REFRAME_AVAILABLE:
             _fc_tmp = job_dir / f"clip_{idx}_fc.mp4"
             await run_cmd_async([FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
                                  "-t", str(render_dur), "-c:v", "libx264", "-preset", "ultrafast",
                                  "-crf", "28", "-an", str(_fc_tmp)])
-            facecam_box, game = await asyncio.to_thread(_detect_facecam_and_track, _fc_tmp, src_w, src_h)
+            facecam_box, face_info, game = await asyncio.to_thread(
+                _detect_facecam_and_track, _fc_tmp, src_w, src_h)
             _fc_tmp.unlink(missing_ok=True)
             if facecam_box:
                 fx, fy, fw, fh = facecam_box
@@ -2153,39 +2212,79 @@ async def create_clips(
                     gp_crop = f"sendcmd=f={_gp_cmd.name},crop={gp_w}:{gp_h}:0:0"
                 else:
                     gp_crop = f"crop={gp_w}:{gp_h}:{gp_traj[0][1]}:0"
-                # Top strip: show the WHOLE cam (fit, don't crop — a square cam
-                # force-cropped to a wide strip slices off the face). Fit it by
-                # height, centre it, and fill the side gaps with a blurred copy
-                # of the same cam (Blur-BG style) so nothing is cut.
+
+                if face_info:
+                    # TOP (Opus-style): frame the streamer's FACE (head + shoulders)
+                    # and gently follow it. The follow needs its own sendcmd-driven
+                    # crop, so render the top strip in a separate pass (one crop per
+                    # graph) and vstack it in the main pass — no sendcmd cross-talk.
+                    import statistics as _stats
+                    fw_med, fh_med = face_info["fw"], face_info["fh"]
+                    win_w = int(min(fh_med * 2.6 * out_w / top_h, src_w)); win_w -= win_w % 2
+                    win_h = int(win_w * top_h / out_w); win_h -= win_h % 2
+                    win_h = min(win_h, src_h - (src_h % 2))
+                    win_w = int(win_h * out_w / top_h); win_w -= win_w % 2
+                    cxs = [c for _, c, _ in face_info["traj"]]
+                    cys = [c for _, _, c in face_info["traj"]]
+                    win_y = int(max(0, min(_stats.median(cys) - win_h * 0.42, src_h - win_h)))
+                    f_dets = [(t, int(max(0, min(cx - win_w / 2, src_w - win_w)))) for t, cx, _ in face_info["traj"]]
+                    f_fb   = int(max(0, min(_stats.median(cxs) - win_w / 2, src_w - win_w)))
+                    f_traj = smooth_crop_trajectory(f_dets, render_dur, fallback_crop_x=f_fb, crop_w=win_w, src_w=src_w)
+                    if len(set(x for _, x in f_traj)) > 1:
+                        _f_cmd = job_dir / f"clip_{idx}_face.txt"
+                        write_sendcmd_file(f_traj, _f_cmd, fps=clip_fps)
+                        top_crop = f"sendcmd=f={_f_cmd.name},crop={win_w}:{win_h}:0:{win_y}"
+                    else:
+                        top_crop = f"crop={win_w}:{win_h}:{f_traj[0][1]}:{win_y}"
+                    _top_tmp = job_dir / f"clip_{idx}_top.mp4"
+                    await run_cmd_async([
+                        FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src), "-t", str(render_dur),
+                        "-filter_complex", f"[0:v]{top_crop},scale={out_w}:{top_h}[v]",
+                        "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                        str(_top_tmp),
+                    ], str(job_dir))
+                    facecam_extra_inputs.append(["-i", str(_top_tmp)])
+                    top_chain = f"[{len(facecam_extra_inputs)}:v]null[top];"
+                else:
+                    # No face found — fit the WHOLE detected cam with a blurred
+                    # side-fill so nothing gets sliced (fallback path).
+                    top_chain = (
+                        f"[0:v]crop={fw}:{fh}:{fx}:{fy},split[fcm][fcb];"
+                        f"[fcb]scale={out_w}:{top_h}:force_original_aspect_ratio=increase,crop={out_w}:{top_h},boxblur=20:2[fcbg];"
+                        f"[fcm]scale={out_w}:{top_h}:force_original_aspect_ratio=decrease[fcfg];"
+                        f"[fcbg][fcfg]overlay=(W-w)/2:(H-h)/2[top];"
+                    )
+
                 facecam_fc = (
-                    f"[0:v]crop={fw}:{fh}:{fx}:{fy},split[fcm][fcb];"
-                    f"[fcb]scale={out_w}:{top_h}:force_original_aspect_ratio=increase,crop={out_w}:{top_h},boxblur=20:2[fcbg];"
-                    f"[fcm]scale={out_w}:{top_h}:force_original_aspect_ratio=decrease[fcfg];"
-                    f"[fcbg][fcfg]overlay=(W-w)/2:(H-h)/2[top];"
+                    top_chain +
                     f"[0:v]{gp_crop},scale={out_w}:{bot_h}[bot];"
                     f"[top][bot]vstack[stacked];"
                     f"[stacked]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
                 )
-                log(job_id, f"  Facecam {facecam_box}, gameplay {gp_w}x{gp_h} x∈[{gp_min_x},{gp_max_x}]")
+                log(job_id, f"  Facecam {facecam_box}, face={'tracked' if face_info else 'none'}, "
+                            f"gameplay {gp_w}x{gp_h} x∈[{gp_min_x},{gp_max_x}]")
             else:
                 log(job_id, "  No facecam detected — using center crop instead")
 
         if clip_style == "facecam" and facecam_fc:
+            ffmpeg_cmd = [FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src)]
+            for _inp in facecam_extra_inputs:
+                ffmpeg_cmd += _inp
             if music_path:
+                music_idx = 1 + len(facecam_extra_inputs)
                 facecam_fc += (
-                    f";[0:a]volume=1.0[speech];[1:a]volume={bg_music_volume}[bgm];"
+                    f";[0:a]volume=1.0[speech];[{music_idx}:a]volume={bg_music_volume}[bgm];"
                     f"[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0.5[aout]"
                 )
-                ffmpeg_cmd = [
-                    FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
+                ffmpeg_cmd += [
                     "-stream_loop", "-1", "-i", str(music_path), "-t", str(render_dur),
                     "-filter_complex", facecam_fc, "-map", "[vout]", "-map", "[aout]",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                     "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(clip_path),
                 ]
             else:
-                ffmpeg_cmd = [
-                    FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src), "-t", str(render_dur),
+                ffmpeg_cmd += [
+                    "-t", str(render_dur),
                     "-filter_complex", facecam_fc, "-map", "[vout]", "-map", "0:a?",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                     "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(clip_path),

@@ -1082,6 +1082,33 @@ _CAPTION_FONT = FONTS_DIR / "ClipForgeCaps-Bold.ttf"
 # fontsdir for the libass filter — escape ':' (Windows drive) for the filtergraph.
 _FONTSDIR_ESC = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
 
+
+def _ssa_uuencode(data: bytes) -> str:
+    """Encode bytes in the SSA/ASS embedded-font format (UU-style, 6-bit + 33,
+    wrapped at 80 chars). libass reads this from the [Fonts] section."""
+    out = []
+    for i in range(0, len(data), 3):
+        chunk = data[i:i + 3]
+        n = len(chunk)
+        val = (chunk[0] << 16) | ((chunk[1] << 8) if n > 1 else 0) | (chunk[2] if n > 2 else 0)
+        nchars = n + 1  # 3 bytes -> 4 chars, 2 -> 3, 1 -> 2
+        for j in range(nchars):
+            out.append(chr(((val >> (6 * (3 - j))) & 0x3F) + 33))
+    s = "".join(out)
+    return "\n".join(s[i:i + 80] for i in range(0, len(s), 80))
+
+
+@_lru_cache(maxsize=1)
+def _embedded_caption_font() -> str:
+    """The [Fonts] section embedding the caption font, so libass renders with the
+    exact font we measure word widths against (no dependency on server fontconfig,
+    which the systemd service doesn't share — the real cause of caption spacing)."""
+    try:
+        data = _CAPTION_FONT.read_bytes()
+    except Exception:
+        return ""
+    return "\n[Fonts]\nfontname: ClipForgeCaps-Bold_0.ttf\n" + _ssa_uuencode(data) + "\n"
+
 POP_CAPTION_STYLES = {"bold_bottom", "center_pop"}  # styles that get the pop animation
 _POP_SCALE = 118    # how big the active word grows (%)
 _POP_MS    = 90     # pop-in / settle duration (ms)
@@ -1201,12 +1228,16 @@ def build_ass_subtitles(
         default_line = _apply(default_line, is_default=True)
         highlight_line = _apply(highlight_line, is_default=False)
 
+    # Pop styles position each word by PIL-measured width, so libass MUST render
+    # with the same font — embed it directly rather than trusting server fonts.
+    _fonts_section = _embedded_caption_font() if caption_style in POP_CAPTION_STYLES else ""
+
     ass_header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {video_width}
 PlayResY: {video_height}
 ScaledBorderAndShadow: yes
-
+{_fonts_section}
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{default_line}

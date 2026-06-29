@@ -2517,7 +2517,7 @@ async def channel_poller():
 # EMAIL NOTIFICATIONS
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def send_job_notification(user_id: str, clip_count: int, video_url: str, error: str = "") -> None:
+async def send_job_notification(user_id: str, clip_count: int, video_url: str, error: str = "", job_id: str = "") -> None:
     """Send a Resend email when a job finishes. No-ops silently if RESEND_API_KEY is unset."""
     api_key = os.getenv("RESEND_API_KEY", "")
     if not api_key or not user_id:
@@ -2530,6 +2530,9 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
         app_url = os.getenv("APP_URL", "https://clipforging.com")
         from html import escape as _he
         safe_url = _he(video_url)
+        # Deep-link straight to this job's clips on the Work page (falls back to
+        # the Archive if we somehow don't have a job id).
+        work_link = f"{app_url}/work?job={_he(job_id)}" if job_id else f"{app_url}/archive"
         if error:
             subject = "ClipForge — your job hit an error"
             body = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -2633,7 +2636,7 @@ async def send_job_notification(user_id: str, clip_count: int, video_url: str, e
             </tr>
           </table>
 
-          <a href="{app_url}/archive" style="display:inline-block;font-family:monospace;font-size:11px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;text-decoration:none;color:#1a0d2e;background:#7ddca0;border:3px solid #1a0d2e;box-shadow:4px 4px 0 #1a0d2e;padding:13px 22px">OPEN IN CLIPFORGE &gt;</a>
+          <a href="{work_link}" style="display:inline-block;font-family:monospace;font-size:11px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;text-decoration:none;color:#1a0d2e;background:#7ddca0;border:3px solid #1a0d2e;box-shadow:4px 4px 0 #1a0d2e;padding:13px 22px">OPEN YOUR CLIPS &gt;</a>
 
         </td>
       </tr>
@@ -2804,7 +2807,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             })
             _watchlist_attempts.pop((watchlist_channel_id, watchlist_video_id), None)
         if user_id:
-            asyncio.create_task(send_job_notification(user_id, len(final_clips), req.url))
+            asyncio.create_task(send_job_notification(user_id, len(final_clips), req.url, job_id=job_id))
 
     except asyncio.CancelledError:
         log(job_id, "=== PIPELINE CANCELLED ===")
@@ -2821,7 +2824,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             _k = (watchlist_channel_id, watchlist_video_id)
             _watchlist_attempts[_k] = _watchlist_attempts.get(_k, 0) + 1
         if user_id:
-            asyncio.create_task(send_job_notification(user_id, 0, req.url, error="Pipeline failed"))
+            asyncio.create_task(send_job_notification(user_id, 0, req.url, error="Pipeline failed", job_id=job_id))
         raise
     finally:
         _running_tasks.pop(job_id, None)

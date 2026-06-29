@@ -244,6 +244,11 @@ _watchlist_attempts: dict = {}     # (channel_id, video_id) -> failed-attempt co
 # throttled into failed-stream merge errors. Other pipeline phases stay parallel.
 _download_sem = asyncio.Semaphore(2)
 
+# Hard cap on a single download so a throttled/hung yt-dlp can't hold a download
+# slot until the 20-minute watchdog kills the whole job — fail fast and free the
+# slot for everyone else. Tune via DOWNLOAD_TIMEOUT (seconds).
+_DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "900") or "900")
+
 # Cap concurrent CPU-heavy renders (FFmpeg + YOLO) so a burst of jobs can't
 # saturate the box and slow everything into the watchdog timeout. Extra jobs queue
 # for a slot (with a heartbeat). Tune via MAX_CONCURRENT_RENDERS (default 2 on a
@@ -464,6 +469,13 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         "--fragment-retries", "10",
         "--file-access-retries", "5",
         "--retry-sleep", "3",
+        # Speed + anti-throttle: pull DASH fragments in parallel, abandon a dead
+        # socket in 30s instead of hanging, and re-extract fresh stream URLs if the
+        # rate drops below 100K (YouTube throttles datacenter IPs, which otherwise
+        # stalls the download with no progress until the 20-min watchdog kills it).
+        "--concurrent-fragments", "4",
+        "--socket-timeout", "30",
+        "--throttled-rate", "100K",
     ]
     if COOKIES_FROM_BROWSER:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
@@ -491,6 +503,12 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
         )
+        # Backstop: kill a hung/throttled yt-dlp so it can't stall a slot until the
+        # watchdog. A stalled download emits no stdout, so the read loop below would
+        # block forever — an external timer is the only thing that can interrupt it.
+        _killer = threading.Timer(_DOWNLOAD_TIMEOUT, p.kill)
+        _killer.daemon = True
+        _killer.start()
         tail = []
         for line in p.stdout:
             tail.append(line)
@@ -525,6 +543,7 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
                 log(job_id, "Merge finalizing...")
                 _progress_q.put({"status": "merging", "progress": 39, "message": "Finalizing download..."})
         p.wait()
+        _killer.cancel()
         _progress_q.put(None)  # sentinel — signals drainer to stop
         return p.returncode, "".join(tail)
 
@@ -557,6 +576,11 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
 
         returncode, tail = await download_future
     if returncode != 0:
+        if returncode < 0:  # killed by the timeout backstop (negative = signal)
+            log(job_id, f"yt-dlp killed — download exceeded {_DOWNLOAD_TIMEOUT}s")
+            raise RuntimeError(
+                f"Download timed out after {_DOWNLOAD_TIMEOUT // 60} min — YouTube is "
+                f"likely throttling this server's IP. Last output: {tail[-300:]}")
         log(job_id, f"yt-dlp failed (exit {returncode})")
         raise RuntimeError(f"yt-dlp failed: {tail[-500:]}")
     if not video_path.exists():

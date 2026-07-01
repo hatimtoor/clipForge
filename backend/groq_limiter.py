@@ -3,7 +3,8 @@ Sliding-window rate limiter for Groq API calls.
 
 Groq free-tier limits (conservative baseline):
   whisper-large-v3        : 20 requests / minute
-  llama-3.3-70b-versatile : 30 requests / minute
+  chat analysis model     : 30 requests / minute
+    (openai/gpt-oss-120b — replaced llama-3.3-70b, decommissioned 2026-08-16)
 
 Each limiter pre-emptively blocks before a request is sent, so we never
 hit a 429 under normal single-job operation. If a 429 arrives anyway

@@ -29,6 +29,11 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "openrouter/owl-alpha")
 OPENROUTER_ENABLED = bool(OPENROUTER_API_KEY)
 
+# Groq chat model for virality analysis + caption translation. llama-3.3-70b was
+# deprecated (decommissioned 2026-08-16); default to its recommended replacement,
+# GPT-OSS-120B. Override with GROQ_ANALYSIS_MODEL in .env (no code change needed).
+GROQ_ANALYSIS_MODEL = os.getenv("GROQ_ANALYSIS_MODEL", "openai/gpt-oss-120b")
+
 # Google's OAuth server always returns extra scopes (openid, userinfo.*).
 # This tells oauthlib to accept a superset of the requested scopes without raising.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
@@ -799,7 +804,7 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
     clips_per_chunk = max(2, max_clips // len(chunks) + 1)
     all_clips = []
 
-    _analysis_provider = f"OpenRouter ({OPENROUTER_MODEL})" if OPENROUTER_ENABLED else "Groq Llama"
+    _analysis_provider = f"OpenRouter ({OPENROUTER_MODEL})" if OPENROUTER_ENABLED else f"Groq ({GROQ_ANALYSIS_MODEL})"
     log(job_id, f"Transcript split into {len(chunks)} chunk(s) for {_analysis_provider} analysis")
     for chunk_idx, transcript_text in enumerate(chunks):
         # analyzing: 66-77 spread across chunks
@@ -838,7 +843,7 @@ Return valid JSON array only, no markdown, no explanation."""
             def _sync(t=temp):
                 client = Groq(api_key=get_groq_key())
                 r = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model=GROQ_ANALYSIS_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=t,
                     max_tokens=2000,
@@ -1017,7 +1022,7 @@ async def translate_segments(segments: list, target_lang: str, job_id: str) -> l
         def _sync(p=prompt):
             client = Groq(api_key=get_groq_key())
             r = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=GROQ_ANALYSIS_MODEL,
                 messages=[{"role": "user", "content": p}],
                 temperature=0.1,
                 max_tokens=4000,

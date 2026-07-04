@@ -154,7 +154,7 @@ export default function HelloPage() {
           url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur,
           reframe: clipStyle === "reframe" && reframe,
           clip_style: clipStyle,
-          aspect_ratio: ["facecam", "split", "screenshare"].includes(clipStyle) ? "9:16" : aspectRatio,
+          aspect_ratio: ["facecam", "split", "screenshare", "auto"].includes(clipStyle) ? "9:16" : aspectRatio,
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
           exclude_prompt: excludePrompt.trim() || undefined,
@@ -301,6 +301,7 @@ export default function HelloPage() {
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>LAYOUT {!isPro && <Tag bg={C.amber} color={C.ink}>PRO</Tag>}</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
               {[
+                { id: "auto",    label: "AUTO ✨",  hint: "AI picks the best layout per video", pro: true },
                 { id: "reframe", label: "FILL",     hint: "9:16 crop (tracked with REFRAME)", pro: false },
                 { id: "fit",     label: "FIT",      hint: "whole frame, letterboxed",          pro: true },
                 { id: "blur_bg", label: "BLUR BG",  hint: "centered on blurred fill",          pro: true },
@@ -333,7 +334,7 @@ export default function HelloPage() {
               ].map(({ id, label }) => {
                 const active = aspectRatio === id;
                 const locked = id !== "9:16" && !isPro;
-                const unavailable = ["facecam", "split", "screenshare"].includes(clipStyle) && id !== "9:16";
+                const unavailable = ["facecam", "split", "screenshare", "auto"].includes(clipStyle) && id !== "9:16";
                 return (
                   <button key={id} disabled={unavailable}
                     onClick={() => { if (locked) { navigate("/upgrade"); return; } setAspectRatio(id); }}

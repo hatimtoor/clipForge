@@ -1896,20 +1896,13 @@ def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list
     return None
 
 
-def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
-                           duration: float, n_samples: int = 48) -> Optional[dict]:
-    """Find the streamer's webcam ONCE for the whole video by sampling frames
-    spread across it, so every clip uses the same cam and splits consistently
-    (per-clip detection was firing on some clips and not others).
-
-    Returns {"box": (x,y,w,h), "fw": int, "fh": int, "fcx": float, "fcy": float}
-    or None. Face-primary: the persistent small face across the video = the cam.
-    """
-    clusters, n_ok = _detect_face_clusters(video_path, src_w, src_h, duration, n_samples)
+def _facecam_region_from_clusters(clusters: list, n_ok: int,
+                                  src_w: int, src_h: int) -> Optional[dict]:
+    """Pick the webcam from pre-computed face clusters: the persistent SMALL
+    face (a large face is the main subject, not a cam)."""
     if n_ok == 0:
         return None
     frame_area = src_w * src_h
-    # Small persistent face only = a cam, not the main subject.
     small = [c for c in clusters
              if c["fw"] * c["fh"] < frame_area * 0.08
              and c["hits"] >= max(3, int(0.20 * n_ok))]
@@ -1922,6 +1915,59 @@ def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
     by = int(max(0, min(fcy - bh * 0.40, src_h - bh)))
     return {"box": (bx, by, min(bw, src_w), min(bh, src_h)),
             "fw": mfw, "fh": mfh, "fcx": float(fcx), "fcy": float(fcy)}
+
+
+def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
+                           duration: float, n_samples: int = 48) -> Optional[dict]:
+    """Find the streamer's webcam ONCE for the whole video by sampling frames
+    spread across it, so every clip uses the same cam and splits consistently.
+
+    Returns {"box": (x,y,w,h), "fw": int, "fh": int, "fcx": float, "fcy": float}
+    or None. Face-primary: the persistent small face across the video = the cam.
+    """
+    clusters, n_ok = _detect_face_clusters(video_path, src_w, src_h, duration, n_samples)
+    return _facecam_region_from_clusters(clusters, n_ok, src_w, src_h)
+
+
+def _probe_motion_edges(video_path: Path, duration: float,
+                        exclude_box: Optional[tuple] = None,
+                        n_samples: int = 24) -> tuple:
+    """Motion + edge statistics of the non-cam region, for the auto-layout
+    discriminator. Samples are ~seconds apart, computed on ~320px grayscale:
+    slides/code barely change between samples and are edge-dense; gameplay and
+    camera footage change a lot. Returns (motion, edge_density) on a 0-255-ish
+    scale, or (None, None) if unreadable."""
+    try:
+        import cv2 as _cv2
+        import numpy as _np
+    except ImportError:
+        return None, None
+    cap = _cv2.VideoCapture(str(video_path))
+    fps = cap.get(_cv2.CAP_PROP_FPS) or 30.0
+    if duration <= 0:
+        cnt = cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0
+        duration = cnt / fps if fps else 0.0
+    frames = []
+    for i in range(max(8, n_samples)):
+        t = duration * (i + 0.5) / max(8, n_samples) if duration > 0 else 0.0
+        cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        h, w = frame.shape[:2]
+        if exclude_box:
+            bx, by, bw, bh = exclude_box
+            frame = frame.copy()
+            frame[max(0, by):by + bh, max(0, bx):bx + bw] = 0
+        small = _cv2.resize(frame, (320, max(2, int(320 * h / w))))
+        frames.append(_cv2.cvtColor(small, _cv2.COLOR_BGR2GRAY).astype(_np.float32))
+    cap.release()
+    if len(frames) < 2:
+        return None, None
+    diffs = [float(_np.mean(_np.abs(frames[i + 1] - frames[i]))) for i in range(len(frames) - 1)]
+    motion = float(_np.median(diffs))
+    edges = float(_np.median([_np.mean(_np.abs(_cv2.Laplacian(f, _cv2.CV_32F))) for f in frames]))
+    return motion, edges
 
 
 def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int,
@@ -2886,8 +2932,9 @@ async def create_clips(
     # splits the same way (per-clip detection was inconsistent across clips).
     facecam_region = None
     split_speakers = None
+    layout_resolved = None
     _probe_layout = _LAYOUT_ALIASES.get(clip_style, clip_style)
-    if _probe_layout in ("gameplay", "split", "screenshare") and _REFRAME_AVAILABLE:
+    if _probe_layout in ("gameplay", "split", "screenshare", "auto") and _REFRAME_AVAILABLE:
         try:
             _fc_probe = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
             _, _fo, _ = await asyncio.to_thread(run_cmd, _fc_probe)
@@ -2898,13 +2945,48 @@ async def create_clips(
                 if _probe_layout in ("gameplay", "screenshare"):
                     facecam_region = await asyncio.to_thread(_detect_facecam_region, video_path, _fw, _fh, _fd)
                     log(job_id, f"  Facecam region (video-level): {facecam_region['box'] if facecam_region else 'none'}")
-                else:
+                elif _probe_layout == "split":
                     _clusters, _n_ok = await asyncio.to_thread(_detect_face_clusters, video_path, _fw, _fh, _fd)
                     split_speakers = _pick_split_speakers(_clusters, _n_ok, _fw)
                     log(job_id, f"  Split speakers (video-level): "
                                 f"{[int(s['fcx']) for s in split_speakers] if split_speakers else 'none — will fall back to Fill'}")
+                else:
+                    # AUTO: one cluster pass feeds every decision; a motion/edge
+                    # probe of the non-cam region separates screenshare (static,
+                    # edge-dense) from gameplay (high motion). Ambiguity always
+                    # resolves to fill — a wrong fill is watchable, a wrong split
+                    # is not.
+                    _clusters, _n_ok = await asyncio.to_thread(_detect_face_clusters, video_path, _fw, _fh, _fd)
+                    split_speakers = _pick_split_speakers(_clusters, _n_ok, _fw)
+                    if split_speakers:
+                        layout_resolved = "split"
+                    else:
+                        facecam_region = _facecam_region_from_clusters(_clusters, _n_ok, _fw, _fh)
+                        if facecam_region:
+                            _motion, _edges = await asyncio.to_thread(
+                                _probe_motion_edges, video_path, _fd, facecam_region["box"])
+                            _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
+                            _e_high = float(os.getenv("AUTO_EDGE_HIGH", "8.0"))
+                            _m_high = float(os.getenv("AUTO_MOTION_HIGH", "10.0"))
+                            _corner = (facecam_region["fcx"] < _fw * 0.33 or facecam_region["fcx"] > _fw * 0.67)
+                            log(job_id, f"  Auto probe: motion={_motion if _motion is None else round(_motion, 1)} "
+                                        f"edges={_edges if _edges is None else round(_edges, 1)} corner_cam={_corner}")
+                            if _motion is not None and _motion < _m_low and _edges > _e_high:
+                                layout_resolved = "screenshare"
+                            elif _motion is not None and _motion >= _m_high and _corner:
+                                layout_resolved = "gameplay"
+                            else:
+                                layout_resolved = "fill"
+                        else:
+                            layout_resolved = "fill"
+                    log(job_id, f"  Auto layout → {layout_resolved}")
         except Exception as _fe:
             log(job_id, f"  Layout probe skipped: {_fe}")
+    if _probe_layout == "auto":
+        clip_style = layout_resolved or "fill"
+        if clip_style == "fill":
+            # A tracked fill is the better default for auto (auto is Pro-only).
+            reframe = True if _REFRAME_AVAILABLE else reframe
 
     results = []
     for idx, clip in enumerate(clip_defs):
@@ -3110,6 +3192,9 @@ async def create_clips(
             "path": f"/clips/{job_id}/{clip_filename}",
             "thumbnail": thumb_filename if thumb_ok else None,
             "duration": round(render_dur, 1),
+            # What auto-layout actually chose (equals the requested layout when
+            # the user picked one explicitly).
+            "layout": _LAYOUT_ALIASES.get(clip_style, clip_style),
         })
 
     return results
@@ -3842,7 +3927,7 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
         raise HTTPException(403, "Auto-reframe (9:16) requires a Pro plan. Upgrade to unlock.")
     _effective_layout = _LAYOUT_ALIASES.get(req.layout or req.clip_style, req.layout or req.clip_style)
     if plan != "pro":
-        if _effective_layout in ("blur_bg", "gameplay", "fit", "split", "screenshare"):
+        if _effective_layout in ("blur_bg", "gameplay", "fit", "split", "screenshare", "auto"):
             raise HTTPException(403, "This layout requires a Pro plan. Upgrade to unlock.")
         if req.aspect_ratio and req.aspect_ratio != "9:16":
             raise HTTPException(403, "1:1 and 16:9 output formats require a Pro plan. Upgrade to unlock.")

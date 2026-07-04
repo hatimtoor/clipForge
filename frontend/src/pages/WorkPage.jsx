@@ -522,6 +522,33 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
   const clips = job.clips || [];
   const palette = [C.hot, C.signal, C.amber, C.lavender, C.peach];
   const [active, setActive] = useState(null);
+  const navigate = useNavigate();
+  const [repromptOpen, setRepromptOpen] = useState(false);
+  const [repromptFind, setRepromptFind] = useState("");
+  const [repromptExclude, setRepromptExclude] = useState("");
+  const [reprompting, setReprompting] = useState(false);
+  const [repromptError, setRepromptError] = useState("");
+
+  const handleReprompt = async () => {
+    setReprompting(true); setRepromptError("");
+    try {
+      const res = await authFetch(`/api/jobs/${job.job_id}/reprompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          find: repromptFind.trim() || undefined,
+          exclude: repromptExclude.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setRepromptError(data.detail || "Reprompt failed"); setReprompting(false); return; }
+      navigate(`/work?job=${data.job_id}`);
+      window.location.reload();
+    } catch {
+      setRepromptError("Reprompt failed. Is the server running?");
+      setReprompting(false);
+    }
+  };
   const [activeToken, setActiveToken] = useState(null);
   const previewRef = useRef(null);
   const isMobile = useMobile();
@@ -652,6 +679,37 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                 )}
               </div>
             )}
+            <div style={{ position: "relative" }}>
+              <PixelBtn color="lavender" size={isMobile ? "sm" : "md"} onClick={() => setRepromptOpen(o => !o)}>
+                {isMobile ? "? MORE" : "? FIND MORE CLIPS"}
+              </PixelBtn>
+              {repromptOpen && (
+                <>
+                {isMobile && <div onClick={() => setRepromptOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(26,13,46,.6)", zIndex: 199 }} />}
+                <div className="pixel" style={{
+                  background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: 14, zIndex: 200,
+                  ...(isMobile
+                    ? { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: "min(340px,92vw)" }
+                    : { position: "absolute", top: "calc(100% + 8px)", right: 0, width: 300 }),
+                }}>
+                  <div style={{ fontSize: 8, color: C.dim2, marginBottom: 8 }}>RE-CLIP THIS VIDEO — NO REPROCESSING</div>
+                  <input value={repromptFind} onChange={e => setRepromptFind(e.target.value)}
+                    placeholder="find: e.g. moments about money"
+                    className="mono" style={{ width: "100%", padding: "9px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12, marginBottom: 8 }} />
+                  <input value={repromptExclude} onChange={e => setRepromptExclude(e.target.value)}
+                    placeholder="exclude: e.g. intros, sponsors"
+                    className="mono" style={{ width: "100%", padding: "9px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12, marginBottom: 10 }} />
+                  {repromptError && <div className="vt" style={{ fontSize: 13, color: C.hotDeep, marginBottom: 8 }}>{repromptError}</div>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <PixelBtn color="signal" size="sm" onClick={handleReprompt} disabled={reprompting}>
+                      {reprompting ? "..." : "> GO"}
+                    </PixelBtn>
+                    <PixelBtn color="cream" size="sm" onClick={() => setRepromptOpen(false)}>CANCEL</PixelBtn>
+                  </div>
+                </div>
+                </>
+              )}
+            </div>
             <PixelBtn color="hot" size="md" onClick={onNew}>+ NEW CLIP</PixelBtn>
           </div>
         </div>

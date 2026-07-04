@@ -102,3 +102,24 @@ def test_youtube_upload_unknown_job_returns_404(client, auth):
         json={"title": "Test", "description": "", "tags": [], "privacy_status": "public"},
     )
     assert r.status_code == 404
+
+
+# ── Reprompt ─────────────────────────────────────────────────────────────────
+
+def test_reprompt_no_auth_returns_401(client):
+    r = client.post("/api/jobs/some-job/reprompt", json={})
+    assert r.status_code == 401
+
+def test_reprompt_unknown_job_returns_404(client, auth):
+    r = client.post("/api/jobs/nonexistent-job/reprompt", headers=auth, json={"find": "money"})
+    assert r.status_code == 404
+
+def test_reprompt_requires_done_job(client, auth):
+    r = client.post(
+        "/api/clip", headers=auth,
+        json={"url": "https://youtube.com/watch?v=dQw4w9WgXcQ"},
+    )
+    job_id = r.json()["job_id"]
+    # Job is queued, not done → reprompt must refuse
+    r2 = client.post(f"/api/jobs/{job_id}/reprompt", headers=auth, json={"find": "money"})
+    assert r2.status_code == 400

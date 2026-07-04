@@ -193,9 +193,15 @@ BASE_DIR   = Path(__file__).parent.parent
 OUTPUT_DIR    = BASE_DIR / "output"
 TEMP_DIR      = BASE_DIR / "temp"
 MUSIC_CACHE_DIR = BASE_DIR / "music_cache"
+# Finished sources are kept here briefly so "reprompt" (find more clips in the
+# same video) can skip the re-download. Bounded by the sweeper (hours + GB).
+SOURCE_CACHE_DIR = BASE_DIR / "source_cache"
+SOURCE_RETENTION_HOURS = int(os.getenv("SOURCE_RETENTION_HOURS", "48") or "48")
+SOURCE_CACHE_MAX_GB = float(os.getenv("SOURCE_CACHE_MAX_GB", "100") or "100")
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 MUSIC_CACHE_DIR.mkdir(exist_ok=True)
+SOURCE_CACHE_DIR.mkdir(exist_ok=True)
 _oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ..., "_ts": monotonic()}
 _OAUTH_STATE_TTL = 600   # 10 minutes
 
@@ -292,6 +298,15 @@ class ClipRequest(BaseModel):
 
 class PromoRedeemRequest(BaseModel):
     code: str
+
+class RepromptRequest(BaseModel):
+    find: Optional[str] = None          # new find prompt (defaults to parent's)
+    exclude: Optional[str] = None
+    max_clips: Optional[int] = None
+    min_duration: Optional[int] = None
+    max_duration: Optional[int] = None
+    timeframe_start_min: Optional[float] = None
+    timeframe_end_min: Optional[float] = None
 
 class JobStatus(BaseModel):
     job_id: str
@@ -3133,21 +3148,44 @@ async def _acquire_render_slot(job_id: str) -> None:
         raise
 
 
-async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None, watchlist_channel_id: Optional[str] = None, watchlist_video_id: Optional[str] = None, watchlist_video_title: str = ""):
+async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None, watchlist_channel_id: Optional[str] = None, watchlist_video_id: Optional[str] = None, watchlist_video_title: str = "", reprompt_parent_id: Optional[str] = None):
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
 
     try:
+        # Reprompt: reuse the parent job's cached source + transcript so we skip
+        # the download and transcription entirely. Cache-miss on either falls
+        # back to the normal phase (the cache is an optimization, never a
+        # dependency).
+        video_path: Optional[Path] = None
+        segments: Optional[list] = None
+        if reprompt_parent_id:
+            cached_src = SOURCE_CACHE_DIR / f"{reprompt_parent_id}.mp4"
+            if cached_src.exists() and cached_src.stat().st_size > 0:
+                video_path = job_dir / "video.mp4"
+                await asyncio.to_thread(shutil.copy2, cached_src, video_path)
+                log(job_id, f"Reprompt: reusing cached source from {reprompt_parent_id}")
+            tr = OUTPUT_DIR / reprompt_parent_id / "transcript.json"
+            if tr.exists():
+                try:
+                    segments = json.loads(tr.read_text(encoding="utf-8"))
+                    log(job_id, f"Reprompt: reusing cached transcript ({len(segments)} segments)")
+                except Exception as _te:
+                    log(job_id, f"Reprompt: transcript cache unreadable ({_te}) — re-transcribing")
+                    segments = None
+
         # 1. Download
-        log(job_id, "--- PHASE 1: DOWNLOAD ---")
-        video_path = await download_video(req.url, job_dir, job_id)
-        log(job_id, f"Download done → {video_path} ({video_path.stat().st_size / 1_048_576:.1f} MB)")
+        if video_path is None:
+            log(job_id, "--- PHASE 1: DOWNLOAD ---")
+            video_path = await download_video(req.url, job_dir, job_id)
+            log(job_id, f"Download done → {video_path} ({video_path.stat().st_size / 1_048_576:.1f} MB)")
 
         # 2. Transcribe
-        log(job_id, "--- PHASE 2: TRANSCRIBE ---")
-        segments = await transcribe(video_path, job_id)
-        log(job_id, f"Transcription done → {len(segments)} segments")
+        if segments is None:
+            log(job_id, "--- PHASE 2: TRANSCRIBE ---")
+            segments = await transcribe(video_path, job_id)
+            log(job_id, f"Transcription done → {len(segments)} segments")
 
         # Save transcript alongside output clips so it survives temp cleanup
         out_dir = OUTPUT_DIR / job_id
@@ -3205,6 +3243,13 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             message=f"Done! {len(final_clips)} clips created.",
             clips=final_clips,
         )
+        # Keep the source briefly so a reprompt can skip the re-download (moved,
+        # not copied — the temp dir is deleted in finally anyway). Best-effort.
+        try:
+            if video_path.exists():
+                await asyncio.to_thread(shutil.move, str(video_path), str(SOURCE_CACHE_DIR / f"{job_id}.mp4"))
+        except Exception as _sce:
+            log(job_id, f"source cache skipped: {_sce}")
         # Free quota is counted as one job at submit time (db_claim_clips_atomic),
         # so nothing to increment here on completion.
         if auto_upload and final_clips:
@@ -3486,6 +3531,43 @@ async def clip_cleanup_scheduler():
         await asyncio.sleep(86400)  # once per day
 
 
+async def source_cache_sweeper():
+    """Bound the reprompt source cache: delete sources older than
+    SOURCE_RETENTION_HOURS, then oldest-first if the dir exceeds
+    SOURCE_CACHE_MAX_GB. Runs hourly; the cache is only an optimization, so
+    aggressive deletion is always safe (reprompt falls back to re-download)."""
+    await asyncio.sleep(180)  # let startup settle
+    while True:
+        try:
+            def _sweep():
+                import time as _t
+                files = sorted(SOURCE_CACHE_DIR.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
+                now = _t.time()
+                removed = 0
+                for p in list(files):
+                    if now - p.stat().st_mtime > SOURCE_RETENTION_HOURS * 3600:
+                        p.unlink(missing_ok=True)
+                        files.remove(p)
+                        removed += 1
+                total = sum(p.stat().st_size for p in files if p.exists())
+                budget = SOURCE_CACHE_MAX_GB * 1024 ** 3
+                while files and total > budget:
+                    p = files.pop(0)
+                    try:
+                        total -= p.stat().st_size
+                        p.unlink(missing_ok=True)
+                        removed += 1
+                    except OSError:
+                        pass
+                return removed, total
+            removed, total = await asyncio.to_thread(_sweep)
+            if removed:
+                print(f"[source_cache] swept {removed} sources, {total / 1024**3:.1f} GB kept", flush=True)
+        except Exception as e:
+            print(f"[source_cache] sweeper error: {e}", flush=True)
+        await asyncio.sleep(3600)
+
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(watchdog())
@@ -3494,6 +3576,7 @@ async def startup_event():
     asyncio.create_task(backfill_scheduler())
     asyncio.create_task(clip_cleanup_scheduler())
     asyncio.create_task(public_stats_aggregator())
+    asyncio.create_task(source_cache_sweeper())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
@@ -3551,6 +3634,8 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             "exclude_prompt": req.exclude_prompt,
             "timeframe_start_min": req.timeframe_start_min,
             "timeframe_end_min": req.timeframe_end_min,
+            "clip_style": req.clip_style,
+            "trim_silence": req.trim_silence,
         },
     })
     job_id = job["id"]
@@ -3574,6 +3659,89 @@ async def cancel_job(job_id: str, user=Depends(require_auth)):
     if task and not task.done():
         task.cancel()
     return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/reprompt")
+@_limiter.limit("10/minute")
+async def reprompt_job(request: Request, job_id: str, req: RepromptRequest, user=Depends(require_auth)):
+    """Find more/different clips in an already-processed video. Creates a child
+    job that reuses the parent's cached source + transcript (skipping download
+    and transcription when the cache is warm) with a new find/exclude prompt."""
+    parent = db_get_job(job_id)
+    if not parent:
+        raise HTTPException(404, "Job not found")
+    if parent.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    if parent.get("status") != "done":
+        raise HTTPException(400, "Reprompt is only available for finished jobs")
+
+    profile = db_check_and_reset_quota(user.id)
+    plan = profile.get("plan", "free")
+    max_clips_per_job = PRO_MAX_CLIPS_PER_JOB if plan == "pro" else FREE_MAX_CLIPS_PER_JOB
+    if plan != "pro":
+        claimed = db_claim_clips_atomic(user.id, 1, FREE_MONTHLY_JOB_LIMIT)
+        if not claimed:
+            raise HTTPException(403, f"Monthly free limit reached ({FREE_MONTHLY_JOB_LIMIT} jobs). Upgrade to Pro for unlimited.")
+
+    popt = parent.get("options") or {}
+    child_req = ClipRequest(
+        url=parent.get("url", ""),
+        max_clips=min(req.max_clips or parent.get("max_clips") or 3, max_clips_per_job),
+        min_duration=req.min_duration or parent.get("min_duration") or 30,
+        max_duration=req.max_duration or parent.get("max_duration") or 90,
+        # Visual settings carry over from the parent; Pro features are stripped
+        # (not errored) if the plan no longer allows them.
+        reframe=bool(parent.get("reframe")) and plan == "pro",
+        clip_style=(popt.get("clip_style") or "reframe") if plan == "pro" else "reframe",
+        trim_silence=bool(popt.get("trim_silence")) and plan == "pro",
+        style_prompt=(req.find if req.find is not None else parent.get("style_prompt")) or None,
+        exclude_prompt=(req.exclude if req.exclude is not None else popt.get("exclude_prompt")) or None,
+        timeframe_start_min=req.timeframe_start_min if req.timeframe_start_min is not None else popt.get("timeframe_start_min"),
+        timeframe_end_min=req.timeframe_end_min if req.timeframe_end_min is not None else popt.get("timeframe_end_min"),
+        caption_style=parent.get("caption_style") or "bold_bottom",
+        caption_font_size=parent.get("caption_font_size"),
+        caption_highlight_color=parent.get("caption_highlight_color"),
+        caption_position=popt.get("caption_position"),
+        caption_keywords=popt.get("caption_keywords", True) is not False,
+        caption_emoji=popt.get("caption_emoji", True) is not False,
+        caption_language=parent.get("caption_language") or "source",
+        bg_music_url=parent.get("bg_music_url"),
+        bg_music_volume=parent.get("bg_music_volume") or 0.15,
+    )
+
+    child = db_create_job({
+        "user_id": user.id,
+        "status": "queued",
+        "progress": 0,
+        "message": "Queued (reprompt)...",
+        "clips": [],
+        "error": None,
+        "url": child_req.url,
+        "reframe": child_req.reframe,
+        "max_clips": child_req.max_clips,
+        "min_duration": child_req.min_duration,
+        "max_duration": child_req.max_duration,
+        "style_prompt": child_req.style_prompt or "",
+        "caption_style": child_req.caption_style,
+        "caption_font_size": child_req.caption_font_size,
+        "caption_highlight_color": child_req.caption_highlight_color,
+        "caption_language": child_req.caption_language,
+        "bg_music_url": child_req.bg_music_url,
+        "bg_music_volume": child_req.bg_music_volume,
+        "parent_job_id": job_id,
+        "options": {
+            "caption_position": child_req.caption_position,
+            "caption_keywords": child_req.caption_keywords,
+            "caption_emoji": child_req.caption_emoji,
+            "exclude_prompt": child_req.exclude_prompt,
+            "timeframe_start_min": child_req.timeframe_start_min,
+            "timeframe_end_min": child_req.timeframe_end_min,
+        },
+    })
+    child_id = child["id"]
+    task = asyncio.create_task(run_pipeline(child_id, child_req, user_id=user.id, reprompt_parent_id=job_id))
+    _running_tasks[child_id] = task
+    return {"job_id": child_id}
 
 
 @app.delete("/api/jobs/{job_id}")

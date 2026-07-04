@@ -836,7 +836,10 @@ Return ONLY a JSON array. Each item must have:
 - "end": end time in seconds (float) — (end - start) must be between {min_dur} and {max_dur}
 - "title": catchy short title for the clip (max 8 words)
 - "hook": the opening line / hook text for this clip
-- "virality_score": integer 1-10
+- "scores": object {{"hook": 0-99, "flow": 0-99, "value": 0-99, "trend": 0-99}} where
+  hook = how hard the first 3 seconds grab attention; flow = does it hold attention
+  start to finish with a resolution; value = payoff/insight/emotion delivered;
+  trend = shareability and topicality
 - "reason": 1-sentence explanation of why this will perform well
 - "tags": array of 3 relevant hashtag strings (without #)
 - "keywords": array of 3-6 single words copied VERBATIM from the transcript inside
@@ -912,10 +915,35 @@ Return valid JSON array only, no markdown, no explanation."""
             log(job_id, f"  !!! Analysis API error on chunk {chunk_idx+1}: {e} — skipping chunk")
             continue
 
-    # Sort by virality score and take top max_clips
-    all_clips.sort(key=lambda x: x.get("virality_score", 0), reverse=True)
+    # Normalize scoring: the LLM returns 4 subscores 0-99 (hook/flow/value/trend);
+    # the weighted total is computed HERE, never trusted from the model. The
+    # legacy 1-10 virality_score is shadow-written so every old consumer (UI
+    # badges, upload descriptions, saved jobs) keeps working; if a fallback
+    # model ignored the new schema, subscores are synthesized from the legacy
+    # field so the UI always has something coherent to show.
+    for c in all_clips:
+        s = c.get("scores")
+        if isinstance(s, dict):
+            def _g(k):
+                try:
+                    return max(0, min(99, int(float(s.get(k, 0)))))
+                except Exception:
+                    return 0
+            hook, flow, value, trend = _g("hook"), _g("flow"), _g("value"), _g("trend")
+        else:
+            try:
+                legacy = max(1, min(10, int(float(c.get("virality_score", 5)))))
+            except Exception:
+                legacy = 5
+            hook = flow = value = trend = legacy * 10 - 5
+        c["scores"] = {"hook": hook, "flow": flow, "value": value, "trend": trend}
+        c["score"] = round(0.40 * hook + 0.20 * flow + 0.25 * value + 0.15 * trend)
+        c["virality_score"] = max(1, min(10, round(c["score"] / 10)))
+
+    # Sort by the 0-99 score and take top max_clips
+    all_clips.sort(key=lambda x: x.get("score", 0), reverse=True)
     clips = all_clips[:max_clips]
-    log(job_id, f"Top {len(clips)} clips selected (scores: {[c.get('virality_score') for c in clips]})")
+    log(job_id, f"Top {len(clips)} clips selected (scores: {[c.get('score') for c in clips]})")
 
     # Validate & clamp durations
     # When LLM returns a clip shorter than min_dur, extend to the midpoint of the

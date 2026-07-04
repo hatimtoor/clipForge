@@ -387,6 +387,10 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
   const ytUp = clip.yt_upload;
   const score = clip.virality_score || 0;
   const fillBlocks = Math.round(score / 2);
+  // 0-99 score with hook/flow/value/trend breakdown (new jobs); old jobs only
+  // have the legacy 1-10 score, which scales up for a consistent display.
+  const score99 = clip.score ?? (clip.virality_score ? Math.round(clip.virality_score * 10) : 0);
+  const subs = clip.scores || null;
 
   if (isMobile) {
     return (
@@ -395,7 +399,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <Tag bg={C.cream}>CLIP {String(idx + 1).padStart(2, "0")}</Tag>
             <Tag bg={C.cream}>{clip.duration}S</Tag>
-            <span className="pixel" style={{ fontSize: 8, color: C.dim2, marginLeft: "auto" }}>{score.toFixed(1)}/10</span>
+            <span className="pixel" style={{ fontSize: 8, color: C.dim2, marginLeft: "auto" }}>{score99}/99</span>
           </div>
           <h3 className="pixel" style={{ fontSize: 10, color: C.ink, lineHeight: 1.5, marginBottom: 12 }}>{clip.title || `Clip ${idx + 1}`}</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -440,13 +444,26 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
     <div style={{ background: cardColor, border: BORDER, boxShadow: isActive ? `8px 8px 0 ${C.ink}` : SHADOW, transform: isActive ? "translate(-3px,-3px)" : "none", transition: "transform .1s, box-shadow .1s" }}>
       <div style={{ display: "grid", gridTemplateColumns: "140px minmax(0,1fr) auto", alignItems: "stretch" }}>
         <div style={{ padding: "22px 16px", borderRight: BORDER, background: `${C.cream}66`, textAlign: "center" }}>
-          <div className="pixel" style={{ fontSize: 32, color: C.ink, lineHeight: 1 }}>{score.toFixed(1)}</div>
-          <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginTop: 8 }}>VIRALITY / 10</div>
-          <div style={{ display: "flex", gap: 2, justifyContent: "center", marginTop: 10 }}>
-            {Array.from({ length: 5 }).map((_, k) => (
-              <div key={k} style={{ width: 10, height: 10, background: k < fillBlocks ? C.ink : `${C.ink}22`, border: `1px solid ${C.ink}` }} />
-            ))}
-          </div>
+          <div className="pixel" style={{ fontSize: 32, color: C.ink, lineHeight: 1 }}>{score99}</div>
+          <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginTop: 8 }}>VIRALITY / 99</div>
+          {subs ? (
+            <div style={{ marginTop: 10, display: "grid", gap: 3 }}>
+              {[["HOOK", subs.hook], ["FLOW", subs.flow], ["VALUE", subs.value], ["TREND", subs.trend]].map(([lbl, v]) => (
+                <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span className="pixel" style={{ fontSize: 6, color: C.dim2, width: 30, textAlign: "left" }}>{lbl}</span>
+                  <div style={{ flex: 1, height: 6, background: `${C.ink}22`, border: `1px solid ${C.ink}` }}>
+                    <div style={{ width: `${Math.min(100, (v || 0) / 0.99)}%`, height: "100%", background: C.ink }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 2, justifyContent: "center", marginTop: 10 }}>
+              {Array.from({ length: 5 }).map((_, k) => (
+                <div key={k} style={{ width: 10, height: 10, background: k < fillBlocks ? C.ink : `${C.ink}22`, border: `1px solid ${C.ink}` }} />
+              ))}
+            </div>
+          )}
         </div>
         <div style={{ padding: "22px 22px", minWidth: 0 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>

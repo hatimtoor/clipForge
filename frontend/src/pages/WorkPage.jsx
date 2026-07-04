@@ -528,17 +528,57 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
   const [repromptExclude, setRepromptExclude] = useState("");
   const [reprompting, setReprompting] = useState(false);
   const [repromptError, setRepromptError] = useState("");
+  // Manual cam-box picker: draw a rectangle on a source frame; sent normalized.
+  const [camOpen, setCamOpen] = useState(false);
+  const [camFrameUrl, setCamFrameUrl] = useState(null);
+  const [camBox, setCamBox] = useState(null);        // {x,y,w,h} normalized
+  const [camDrag, setCamDrag] = useState(null);
+  const camImgRef = useRef(null);
+
+  const openCamPicker = async () => {
+    setCamOpen(o => !o);
+    if (camFrameUrl || camOpen) return;
+    try {
+      const res = await authFetch(`/api/jobs/${job.job_id}/frame?t=3`);
+      if (!res.ok) { setRepromptError("Source expired — cam box unavailable for this job"); setCamOpen(false); return; }
+      const blob = await res.blob();
+      setCamFrameUrl(URL.createObjectURL(blob));
+    } catch { setCamOpen(false); }
+  };
+
+  const camPoint = (e) => {
+    const r = camImgRef.current.getBoundingClientRect();
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    const cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+    return { x: Math.max(0, Math.min(1, cx / r.width)), y: Math.max(0, Math.min(1, cy / r.height)) };
+  };
+  const camDown = (e) => { e.preventDefault(); const p = camPoint(e); setCamDrag(p); setCamBox({ x: p.x, y: p.y, w: 0, h: 0 }); };
+  const camMove = (e) => {
+    if (!camDrag) return;
+    const p = camPoint(e);
+    setCamBox({ x: Math.min(camDrag.x, p.x), y: Math.min(camDrag.y, p.y),
+                w: Math.abs(p.x - camDrag.x), h: Math.abs(p.y - camDrag.y) });
+  };
+  const camUp = () => setCamDrag(null);
 
   const handleReprompt = async () => {
     setReprompting(true); setRepromptError("");
     try {
+      const body = {
+        find: repromptFind.trim() || undefined,
+        exclude: repromptExclude.trim() || undefined,
+      };
+      if (camBox && camBox.w > 0.02 && camBox.h > 0.02) {
+        body.facecam_box = [camBox.x, camBox.y, camBox.w, camBox.h];
+        // A manual cam box implies a cam layout — keep the parent's if it was
+        // already gameplay/screenshare, else default to gameplay.
+        body.layout = ["facecam", "gameplay", "screenshare"].includes(job.options?.clip_style || job.options?.layout)
+          ? undefined : "gameplay";
+      }
       const res = await authFetch(`/api/jobs/${job.job_id}/reprompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          find: repromptFind.trim() || undefined,
-          exclude: repromptExclude.trim() || undefined,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) { setRepromptError(data.detail || "Reprompt failed"); setReprompting(false); return; }
@@ -699,6 +739,34 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                   <input value={repromptExclude} onChange={e => setRepromptExclude(e.target.value)}
                     placeholder="exclude: e.g. intros, sponsors"
                     className="mono" style={{ width: "100%", padding: "9px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12, marginBottom: 10 }} />
+                  <button onClick={openCamPicker} className="pixel"
+                    style={{ width: "100%", textAlign: "left", padding: "8px 10px", fontSize: 8, cursor: "pointer",
+                      background: camBox ? C.signal : C.cream2, color: C.ink,
+                      border: `2px solid ${C.ink}${camOpen ? "" : "33"}`, marginBottom: 8 }}>
+                    {camBox ? "✓ CAM BOX SET (click to adjust)" : "▦ FIX CAM BOX (wrong facecam? draw it)"}
+                  </button>
+                  {camOpen && camFrameUrl && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div ref={camImgRef}
+                        onMouseDown={camDown} onMouseMove={camMove} onMouseUp={camUp} onMouseLeave={camUp}
+                        onTouchStart={camDown} onTouchMove={camMove} onTouchEnd={camUp}
+                        style={{ position: "relative", cursor: "crosshair", userSelect: "none", touchAction: "none",
+                          backgroundImage: `url(${camFrameUrl})`, backgroundSize: "cover",
+                          width: "100%", aspectRatio: "16/9", border: BORDER }}>
+                        {camBox && camBox.w > 0 && (
+                          <div style={{ position: "absolute",
+                            left: `${camBox.x * 100}%`, top: `${camBox.y * 100}%`,
+                            width: `${camBox.w * 100}%`, height: `${camBox.h * 100}%`,
+                            border: "2px solid #2BFF00", background: "#2BFF0022", pointerEvents: "none" }} />
+                        )}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                        <span className="vt" style={{ fontSize: 12, color: C.dim2 }}>drag a box around the facecam</span>
+                        {camBox && <button onClick={() => setCamBox(null)} className="pixel"
+                          style={{ background: "transparent", color: C.dim, fontSize: 8, cursor: "pointer" }}>CLEAR</button>}
+                      </div>
+                    </div>
+                  )}
                   {repromptError && <div className="vt" style={{ fontSize: 13, color: C.hotDeep, marginBottom: 8 }}>{repromptError}</div>}
                   <div style={{ display: "flex", gap: 8 }}>
                     <PixelBtn color="signal" size="sm" onClick={handleReprompt} disabled={reprompting}>

@@ -93,7 +93,7 @@ from supabase import create_client as _sb_create_client
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 from r2 import upload_clip, upload_thumbnail, presigned_url, stream_clip, download_clip_to_temp, delete_job_clips, R2_ENABLED
@@ -281,8 +281,9 @@ class ClipRequest(BaseModel):
     max_duration: int = 90
     reframe: bool = False
     clip_style: str = "reframe"  # legacy name; aliased into layout (reframe→fill, facecam→gameplay)
-    layout: Optional[str] = None  # fill | fit | blur_bg | gameplay | split | screenshare (wins over clip_style)
+    layout: Optional[str] = None  # auto | fill | fit | blur_bg | gameplay | split | screenshare (wins over clip_style)
     aspect_ratio: str = "9:16"    # 9:16 | 1:1 | 16:9 (multi-region layouts are 9:16-only)
+    facecam_box: Optional[list] = None  # manual cam region [x, y, w, h], normalized 0-1
     style_prompt: Optional[str] = None       # "find" prompt (kept name for compat)
     exclude_prompt: Optional[str] = None     # topics the AI must never clip
     timeframe_start_min: Optional[float] = None  # only clip this window (minutes)
@@ -309,6 +310,8 @@ class RepromptRequest(BaseModel):
     max_duration: Optional[int] = None
     timeframe_start_min: Optional[float] = None
     timeframe_end_min: Optional[float] = None
+    facecam_box: Optional[list] = None  # manual cam region [x, y, w, h], normalized 0-1
+    layout: Optional[str] = None        # override the parent's layout
 
 class JobStatus(BaseModel):
     job_id: str
@@ -2878,6 +2881,7 @@ async def create_clips(
     reframe: bool = False,
     clip_style: str = "reframe",
     aspect_ratio: str = "9:16",
+    manual_facecam_box: Optional[list] = None,
     caption_style: str = "bold_bottom",
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
@@ -2934,7 +2938,35 @@ async def create_clips(
     split_speakers = None
     layout_resolved = None
     _probe_layout = _LAYOUT_ALIASES.get(clip_style, clip_style)
-    if _probe_layout in ("gameplay", "split", "screenshare", "auto") and _REFRAME_AVAILABLE:
+
+    # A user-drawn cam box (normalized 0-1) beats detection entirely — this is
+    # the escape hatch Opus doesn't have for misdetected facecams.
+    if manual_facecam_box and len(manual_facecam_box) == 4 and _probe_layout in ("gameplay", "screenshare"):
+        try:
+            _mb_probe = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
+            _, _mo, _ = await asyncio.to_thread(run_cmd, _mb_probe)
+            _mvs = next((s for s in json.loads(_mo)["streams"] if s["codec_type"] == "video"), None)
+            if _mvs:
+                _mw, _mh = int(_mvs["width"]), int(_mvs["height"])
+                nx, ny, nw, nh = [max(0.0, min(1.0, float(v))) for v in manual_facecam_box]
+                bx, by = int(nx * _mw), int(ny * _mh)
+                bw = max(2, min(int(nw * _mw), _mw - bx)); bw -= bw % 2
+                bh = max(2, min(int(nh * _mh), _mh - by)); bh -= bh % 2
+                if bw >= 40 and bh >= 40:
+                    facecam_region = {
+                        "box": (bx, by, bw, bh),
+                        # Approximate face geometry from the box (inverse of the
+                        # detector's box construction: bw≈fw*2.4, bh≈fh*3.0).
+                        "fw": max(20, int(bw / 2.4)),
+                        "fh": max(20, int(bh / 3.0)),
+                        "fcx": bx + bw / 2.0,
+                        "fcy": by + bh * 0.40,
+                    }
+                    log(job_id, f"  Manual facecam box: {facecam_region['box']}")
+        except Exception as _me:
+            log(job_id, f"  Manual facecam box ignored: {_me}")
+
+    if facecam_region is None and _probe_layout in ("gameplay", "split", "screenshare", "auto") and _REFRAME_AVAILABLE:
         try:
             _fc_probe = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
             _, _fo, _ = await asyncio.to_thread(run_cmd, _fc_probe)
@@ -3554,6 +3586,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 reframe=req.reframe,
                 clip_style=req.layout or req.clip_style,
                 aspect_ratio=req.aspect_ratio or "9:16",
+                manual_facecam_box=req.facecam_box,
                 caption_style=req.caption_style or "bold_bottom",
                 font_size=req.caption_font_size,
                 highlight_color=req.caption_highlight_color,
@@ -3970,6 +4003,7 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             "clip_style": req.clip_style,
             "layout": req.layout,
             "aspect_ratio": req.aspect_ratio,
+            "facecam_box": req.facecam_box,
             "trim_silence": req.trim_silence,
         },
     })
@@ -3994,6 +4028,30 @@ async def cancel_job(job_id: str, user=Depends(require_auth)):
     if task and not task.done():
         task.cancel()
     return {"ok": True}
+
+
+@app.get("/api/jobs/{job_id}/frame")
+async def job_frame(job_id: str, t: float = 2.0, user=Depends(require_auth)):
+    """A single JPEG frame from the job's cached source video, for the manual
+    facecam-box picker. 404s once the source cache has expired."""
+    job = db_get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    src = SOURCE_CACHE_DIR / f"{job_id}.mp4"
+    if not src.exists():
+        raise HTTPException(404, "Source video no longer cached — run the job again first")
+    out = TEMP_DIR / f"frame_{job_id}_{int(max(0.0, t) * 1000)}.jpg"
+    code, _, err = await run_cmd_async([
+        FFMPEG, "-y", "-ss", str(max(0.0, t)), "-i", str(src),
+        "-frames:v", "1", "-vf", "scale=960:-2", "-q:v", "5", str(out)])
+    if code != 0 or not out.exists():
+        raise HTTPException(500, "Could not extract a frame")
+    data = out.read_bytes()
+    out.unlink(missing_ok=True)
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.post("/api/jobs/{job_id}/reprompt")
@@ -4027,7 +4085,10 @@ async def reprompt_job(request: Request, job_id: str, req: RepromptRequest, user
         # Visual settings carry over from the parent; Pro features are stripped
         # (not errored) if the plan no longer allows them.
         reframe=bool(parent.get("reframe")) and plan == "pro",
-        clip_style=(popt.get("clip_style") or "reframe") if plan == "pro" else "reframe",
+        clip_style=((req.layout or popt.get("layout") or popt.get("clip_style") or "reframe")
+                    if plan == "pro" else "reframe"),
+        aspect_ratio=(popt.get("aspect_ratio") or "9:16") if plan == "pro" else "9:16",
+        facecam_box=req.facecam_box if req.facecam_box is not None else popt.get("facecam_box"),
         trim_silence=bool(popt.get("trim_silence")) and plan == "pro",
         style_prompt=(req.find if req.find is not None else parent.get("style_prompt")) or None,
         exclude_prompt=(req.exclude if req.exclude is not None else popt.get("exclude_prompt")) or None,
@@ -4071,6 +4132,10 @@ async def reprompt_job(request: Request, job_id: str, req: RepromptRequest, user
             "exclude_prompt": child_req.exclude_prompt,
             "timeframe_start_min": child_req.timeframe_start_min,
             "timeframe_end_min": child_req.timeframe_end_min,
+            "clip_style": child_req.clip_style,
+            "aspect_ratio": child_req.aspect_ratio,
+            "facecam_box": child_req.facecam_box,
+            "trim_silence": child_req.trim_silence,
         },
     })
     child_id = child["id"]

@@ -7,6 +7,52 @@ import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
 
+// ── caption template previews ─────────────────────────────────────────────────
+// Mirrors backend CAPTION_TEMPLATES (fonts, colors, case, mode) so the picker
+// shows what actually gets burned in. Colors are the RGB twins of the ASS BGR
+// values; the active word follows the user's highlight-color pick.
+const CAPTION_TEMPLATE_PREVIEWS = [
+  { id: "bold_bottom",    label: "BOLD",      bg: "#F5C24B", font: "ClipForgeCaps", px: 14, weight: 800, upper: true,  active: "#2BFF00", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2.5 },
+  { id: "center_pop",     label: "POP",       bg: "#C9B8F0", font: "ClipForgeCaps", px: 17, weight: 800, upper: true,  active: "#FFFF00", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 3 },
+  { id: "karaoke",        label: "KARAOKE",   bg: "#F5C24B", font: "ClipForgeCaps", px: 15, weight: 800, upper: true,  active: "#FFFF00", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2.5 },
+  { id: "hormozi",        label: "HORMOZI",   bg: "#7FD8A4", font: "ClipForgeCaps", px: 17, weight: 800, upper: true,  active: "#2BFF00", keyword: "#FFFF00", words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 3.2 },
+  { id: "beasty",         label: "BEASTY",    bg: "#C9B8F0", font: "Bangers",       px: 19, weight: 400, upper: true,  active: "#FFFF00", keyword: "#FF3131", words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2.8 },
+  { id: "bold_statement", label: "STATEMENT", bg: "#7FD8A4", font: "ClipForgeCaps", px: 13, weight: 800, upper: true,  active: null,      keyword: null,      words: ["BIG", "BOLD", "TAKES"],    activeIdx: -1, stroke: 2.5 },
+  { id: "simple",         label: "SIMPLE",    bg: "#C9B8F0", font: "Montserrat",    px: 12, weight: 400, upper: false, active: "#FFFF00", keyword: null,      words: ["clean", "and", "simple"],  activeIdx: 1, stroke: 1 },
+  { id: "minimal",        label: "MINIMAL",   bg: "#7FD8A4", font: "Montserrat",    px: 12, weight: 400, upper: true,  active: null,      keyword: null,      words: ["SMALL", "AND", "CLEAN"],   activeIdx: -1, stroke: 1 },
+  { id: "pod_p",          label: "POD",       bg: "#F5C24B", font: "ClipForgeCaps", px: 12, weight: 800, upper: true,  active: "#00FFFF", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2 },
+  { id: "none",           label: "NONE",      bg: "#EDE4CE", font: "ClipForgeCaps", px: 12, weight: 800, upper: true,  active: null,      keyword: null,      words: [],                          activeIdx: -1, stroke: 0 },
+];
+
+function TplPreview({ id, highlightColor }) {
+  const t = CAPTION_TEMPLATE_PREVIEWS.find(p => p.id === id);
+  if (!t) return null;
+  const activeColor = highlightColor || t.active;
+  return (
+    <div style={{
+      background: "#1c1c22", padding: "10px 6px", minHeight: 40,
+      display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3em",
+      overflow: "hidden", whiteSpace: "nowrap",
+    }}>
+      {t.words.length === 0 ? (
+        <span style={{ color: "#555", fontSize: 11, fontFamily: "monospace" }}>NO CAPTIONS</span>
+      ) : t.words.map((w, i) => (
+        <span key={i} style={{
+          fontFamily: `${t.font}, Arial, sans-serif`,
+          fontWeight: t.weight,
+          fontSize: t.px,
+          lineHeight: 1,
+          color: i === t.activeIdx && activeColor ? activeColor
+               : (i === 2 && t.keyword ? t.keyword : "#fff"),
+          WebkitTextStroke: t.stroke ? `${Math.min(t.stroke, 1.4)}px #000` : undefined,
+          paintOrder: "stroke fill",
+          textShadow: t.stroke >= 2 ? "2px 2px 0 #000" : "1px 1px 0 #000",
+        }}>{w}</span>
+      ))}
+    </div>
+  );
+}
+
 export default function HelloPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -292,25 +338,14 @@ export default function HelloPage() {
             <PixelCard color={C.cream} padding={isMobile ? 16 : 20} style={{ order: isMobile ? 0 : 1, ...(isMobile ? { boxShadow: "none" } : {}) }}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>CAPTION STYLE</div>
 
-              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, minmax(0,1fr))" : "1fr 1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 20 }}>
-                {[
-                  { id: "bold_bottom",    label: "BOLD",      hint: "white + green, bottom",   bg: C.amber    },
-                  { id: "center_pop",     label: "POP",       hint: "large, centered",          bg: C.lavender },
-                  { id: "minimal",        label: "MINIMAL",   hint: "small, clean",             bg: C.signal   },
-                  { id: "karaoke",        label: "KARAOKE",   hint: "yellow active word",       bg: C.amber    },
-                  { id: "hormozi",        label: "HORMOZI",   hint: "huge, heavy outline",      bg: C.signal   },
-                  { id: "beasty",         label: "BEASTY",    hint: "playful display font",     bg: C.lavender },
-                  { id: "bold_statement", label: "STATEMENT", hint: "full phrase, no reveal",   bg: C.signal   },
-                  { id: "simple",         label: "SIMPLE",    hint: "sentence case sweep",      bg: C.lavender },
-                  { id: "pod_p",          label: "POD",       hint: "podcast, mid-screen",      bg: C.amber    },
-                  { id: "none",           label: "NONE",      hint: "no captions",              bg: C.cream2   },
-                ].map(({ id, label, hint, bg }) => (
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 20 }}>
+                {CAPTION_TEMPLATE_PREVIEWS.map(({ id, label, bg }) => (
                   <button key={id} onClick={() => handleStyleChange(id)} className="pixel"
-                    style={{ textAlign: "left", padding: isMobile ? 8 : 12, background: captionStyle === id ? bg : C.paper,
+                    style={{ textAlign: "left", padding: isMobile ? 6 : 8, background: captionStyle === id ? bg : C.paper,
                       border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
                       boxShadow: captionStyle === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
-                    <div style={{ fontSize: isMobile ? 8 : 10, color: C.ink, marginBottom: 3 }}>{label}</div>
-                    <div className="vt" style={{ fontSize: 12, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
+                    <div style={{ fontSize: isMobile ? 7 : 8, color: C.ink, marginBottom: 5 }}>{label}</div>
+                    <TplPreview id={id} highlightColor={highlightColor} />
                   </button>
                 ))}
               </div>

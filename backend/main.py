@@ -2528,6 +2528,42 @@ def _plan_blur_bg(ctx: ClipRenderCtx) -> LayoutPlan:
     return LayoutPlan(filter_complex=fc, encode_crf=26)
 
 
+async def _render_face_strip(ctx: ClipRenderCtx, fh_med: int, face_pts: list,
+                             strip_h: int) -> tuple:
+    """Pre-render a face-framed strip (head + shoulders, gently following the
+    face) as its own pass — the follow needs its own sendcmd-driven crop, and
+    only one sendcmd fits per graph. Returns (path, mode) where mode is
+    'tracked' or 'framed'. Shared by the gameplay and screenshare layouts."""
+    import statistics as _stats
+    src_w, src_h, out_w = ctx.src_w, ctx.src_h, ctx.out_w
+    win_w = int(min(fh_med * 2.6 * out_w / strip_h, src_w)); win_w -= win_w % 2
+    win_h = int(win_w * strip_h / out_w); win_h -= win_h % 2
+    win_h = min(win_h, src_h - (src_h % 2))
+    win_w = int(win_h * out_w / strip_h); win_w -= win_w % 2
+    cxs = [c for _, c, _ in face_pts]
+    cys = [c for _, _, c in face_pts]
+    win_y = int(max(0, min(_stats.median(cys) - win_h * 0.42, src_h - win_h)))
+    f_dets = [(t, int(max(0, min(cx - win_w / 2, src_w - win_w)))) for t, cx, _ in face_pts]
+    f_fb   = int(max(0, min(_stats.median(cxs) - win_w / 2, src_w - win_w)))
+    f_traj = smooth_crop_trajectory(f_dets, ctx.render_dur, fallback_crop_x=f_fb, crop_w=win_w, src_w=src_w)
+    if len(set(x for _, x in f_traj)) > 1:
+        _f_cmd = ctx.job_dir / f"clip_{ctx.idx}_face.txt"
+        write_sendcmd_file(f_traj, _f_cmd, fps=ctx.clip_fps)
+        strip_crop = f"sendcmd=f={_f_cmd.name},crop={win_w}:{win_h}:0:{win_y}"
+        mode = "tracked"
+    else:
+        strip_crop = f"crop={win_w}:{win_h}:{f_traj[0][1]}:{win_y}"
+        mode = "framed"
+    strip_tmp = ctx.job_dir / f"clip_{ctx.idx}_top.mp4"
+    await run_cmd_async([
+        FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src), "-t", str(ctx.render_dur),
+        "-filter_complex", f"[0:v]{strip_crop},scale={out_w}:{strip_h}[v]",
+        "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+        str(strip_tmp),
+    ], str(ctx.job_dir))
+    return strip_tmp, mode
+
+
 async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
     """Gameplay layout: streamer's cam (face-framed/tracked) on top, tracked
     gameplay on the bottom with the cam region excluded. Returns None when no
@@ -2578,36 +2614,8 @@ async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
 
     extra_inputs = []
     if face_pts:
-        # Frame the face (head + shoulders) at the top-strip aspect and FILL
-        # it (no blur). The follow needs its own sendcmd-driven crop, so the
-        # top strip renders in a separate pass — no sendcmd cross-talk.
-        import statistics as _stats
-        win_w = int(min(fh_med * 2.6 * out_w / top_h, src_w)); win_w -= win_w % 2
-        win_h = int(win_w * top_h / out_w); win_h -= win_h % 2
-        win_h = min(win_h, src_h - (src_h % 2))
-        win_w = int(win_h * out_w / top_h); win_w -= win_w % 2
-        cxs = [c for _, c, _ in face_pts]
-        cys = [c for _, _, c in face_pts]
-        win_y = int(max(0, min(_stats.median(cys) - win_h * 0.42, src_h - win_h)))
-        f_dets = [(t, int(max(0, min(cx - win_w / 2, src_w - win_w)))) for t, cx, _ in face_pts]
-        f_fb   = int(max(0, min(_stats.median(cxs) - win_w / 2, src_w - win_w)))
-        f_traj = smooth_crop_trajectory(f_dets, ctx.render_dur, fallback_crop_x=f_fb, crop_w=win_w, src_w=src_w)
-        if len(set(x for _, x in f_traj)) > 1:
-            _f_cmd = ctx.job_dir / f"clip_{ctx.idx}_face.txt"
-            write_sendcmd_file(f_traj, _f_cmd, fps=ctx.clip_fps)
-            top_crop = f"sendcmd=f={_f_cmd.name},crop={win_w}:{win_h}:0:{win_y}"
-            _top_mode = "tracked"
-        else:
-            top_crop = f"crop={win_w}:{win_h}:{f_traj[0][1]}:{win_y}"
-            _top_mode = "framed"
-        _top_tmp = ctx.job_dir / f"clip_{ctx.idx}_top.mp4"
-        await run_cmd_async([
-            FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src), "-t", str(ctx.render_dur),
-            "-filter_complex", f"[0:v]{top_crop},scale={out_w}:{top_h}[v]",
-            "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-            str(_top_tmp),
-        ], str(ctx.job_dir))
-        extra_inputs.append(_top_tmp)
+        strip_path, _top_mode = await _render_face_strip(ctx, fh_med, face_pts, top_h)
+        extra_inputs.append(strip_path)
         top_chain = f"[{len(extra_inputs)}:v]null[top];"
     else:
         # Last resort (no face anywhere) — fit the whole cam with blur.
@@ -2711,6 +2719,61 @@ async def _plan_split(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
     return LayoutPlan(filter_complex=fc)
 
 
+async def _plan_screenshare(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
+    """Screenshare layout (Opus's 50/50): screen content on top — letterboxed,
+    NEVER cropped (readability beats fill for slides/code) — and the speaker's
+    face strip on the bottom. The cam region is excluded from the screen crop.
+    Returns None when no cam/face is found (caller falls back)."""
+    _fc_tmp = ctx.job_dir / f"clip_{ctx.idx}_fc.mp4"
+    await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
+                         "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
+                         "-crf", "28", "-an", str(_fc_tmp)])
+    _known_box = ctx.facecam_region["box"] if ctx.facecam_region else None
+    facecam_box, face_info, _game = await asyncio.to_thread(
+        _detect_facecam_and_track, _fc_tmp, ctx.src_w, ctx.src_h, _known_box)
+    _fc_tmp.unlink(missing_ok=True)
+    if not facecam_box:
+        return None
+
+    src_w, src_h, out_w, out_h = ctx.src_w, ctx.src_h, ctx.out_w, ctx.out_h
+    fx, fy, fw, fh = facecam_box
+    tile_h = out_h // 2; tile_h -= tile_h % 2
+
+    # Screen region = the larger side of the frame next to the cam; if the cam
+    # sits near the middle, keep the full frame (excluding would cut content).
+    left_w, right_w = fx, src_w - (fx + fw)
+    if max(left_w, right_w) >= src_w * 0.5:
+        if right_w >= left_w:
+            sx, sw = fx + fw, right_w
+        else:
+            sx, sw = 0, left_w
+    else:
+        sx, sw = 0, src_w
+    sw -= sw % 2
+    top_chain = (
+        f"[0:v]crop={sw}:{src_h - (src_h % 2)}:{sx}:0,"
+        f"scale={out_w}:{tile_h}:force_original_aspect_ratio=decrease,"
+        f"pad={out_w}:{tile_h}:(ow-iw)/2:(oh-ih)/2:black[top];"
+    )
+
+    # Bottom: the speaker's face strip (shared with the gameplay layout).
+    if face_info:
+        fh_med, face_pts = face_info["fh"], face_info["traj"]
+    elif ctx.facecam_region:
+        fh_med = ctx.facecam_region["fh"]
+        face_pts = [(0.0, ctx.facecam_region["fcx"], ctx.facecam_region["fcy"])]
+    else:
+        return None
+    strip_path, _mode = await _render_face_strip(ctx, fh_med, face_pts, tile_h)
+    fc = (
+        top_chain +
+        f"[1:v]null[bot];"
+        f"[top][bot]vstack[vmain]"
+    )
+    log(ctx.job_id, f"  Screenshare: cam {facecam_box}, screen x={sx} w={sw}, face={_mode}")
+    return LayoutPlan(filter_complex=fc, extra_inputs=[strip_path])
+
+
 def _plan_fit(ctx: ClipRenderCtx) -> LayoutPlan:
     """Fit layout (Opus-style): source cropped to 4:3 centred, fitted to the
     output width, letterboxed with opaque bars. Nothing is ever cut off the
@@ -2747,6 +2810,11 @@ async def _build_layout_plan(ctx: ClipRenderCtx, clip_style: str) -> LayoutPlan:
             return plan
         # Fill's active-speaker tracking handles two-person scenes gracefully.
         ctx = _dc_replace(ctx, reframe=True) if not ctx.reframe else ctx
+    if layout == "screenshare" and _REFRAME_AVAILABLE:
+        plan = await _plan_screenshare(ctx)
+        if plan is not None:
+            return plan
+        log(ctx.job_id, "  No speaker cam found for screenshare — using center crop instead")
     if layout == "blur_bg":
         return _plan_blur_bg(ctx)
     if layout == "fit":
@@ -2819,7 +2887,7 @@ async def create_clips(
     facecam_region = None
     split_speakers = None
     _probe_layout = _LAYOUT_ALIASES.get(clip_style, clip_style)
-    if _probe_layout in ("gameplay", "split") and _REFRAME_AVAILABLE:
+    if _probe_layout in ("gameplay", "split", "screenshare") and _REFRAME_AVAILABLE:
         try:
             _fc_probe = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
             _, _fo, _ = await asyncio.to_thread(run_cmd, _fc_probe)
@@ -2827,7 +2895,7 @@ async def create_clips(
             if _fvs:
                 _fw, _fh = int(_fvs["width"]), int(_fvs["height"])
                 _fd = float(_fvs.get("duration") or 0)
-                if _probe_layout == "gameplay":
+                if _probe_layout in ("gameplay", "screenshare"):
                     facecam_region = await asyncio.to_thread(_detect_facecam_region, video_path, _fw, _fh, _fd)
                     log(job_id, f"  Facecam region (video-level): {facecam_region['box'] if facecam_region else 'none'}")
                 else:

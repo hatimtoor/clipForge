@@ -304,8 +304,9 @@ export default function HelloPage() {
                 { id: "reframe", label: "FILL",     hint: "9:16 crop (tracked with REFRAME)", pro: false },
                 { id: "fit",     label: "FIT",      hint: "whole frame, letterboxed",          pro: true },
                 { id: "blur_bg", label: "BLUR BG",  hint: "centered on blurred fill",          pro: true },
-                { id: "split",   label: "SPLIT",    hint: "2 speakers stacked 50/50",          pro: true },
-                { id: "facecam", label: "GAMEPLAY", hint: "cam top 30%, gameplay 70%",         pro: true },
+                { id: "split",      label: "SPLIT",    hint: "2 speakers stacked 50/50",       pro: true },
+                { id: "screenshare", label: "SCREEN",  hint: "screen top, speaker bottom",     pro: true },
+                { id: "facecam",    label: "GAMEPLAY", hint: "cam top 30%, gameplay 70%",      pro: true },
               ].map(({ id, label, hint, pro }) => {
                 const active = clipStyle === id;
                 const locked = pro && !isPro;

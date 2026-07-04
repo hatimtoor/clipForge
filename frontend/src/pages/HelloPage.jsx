@@ -30,25 +30,32 @@ function TplPreview({ id, highlightColor }) {
   const activeColor = highlightColor || t.active;
   return (
     <div style={{
-      background: "#1c1c22", padding: "10px 6px", minHeight: 40,
+      padding: "10px 6px", minHeight: 40,
       display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3em",
       overflow: "hidden", whiteSpace: "nowrap",
     }}>
       {t.words.length === 0 ? (
-        <span style={{ color: "#555", fontSize: 11, fontFamily: "monospace" }}>NO CAPTIONS</span>
-      ) : t.words.map((w, i) => (
-        <span key={i} style={{
-          fontFamily: `${t.font}, Arial, sans-serif`,
-          fontWeight: t.weight,
-          fontSize: t.px,
-          lineHeight: 1,
-          color: i === t.activeIdx && activeColor ? activeColor
-               : (i === 2 && t.keyword ? t.keyword : "#fff"),
-          WebkitTextStroke: t.stroke ? `${Math.min(t.stroke, 1.4)}px #000` : undefined,
-          paintOrder: "stroke fill",
-          textShadow: t.stroke >= 2 ? "2px 2px 0 #000" : "1px 1px 0 #000",
-        }}>{w}</span>
-      ))}
+        <span style={{ color: "#999", fontSize: 11, fontFamily: "monospace" }}>NO CAPTIONS</span>
+      ) : t.words.map((w, i) => {
+        // Sticker-style outline so white caption text stays legible directly on
+        // the light button background (no dark canvas behind the preview).
+        const s = t.stroke >= 2 ? 1.6 : 1.0;
+        return (
+          <span key={i} style={{
+            fontFamily: `${t.font}, Arial, sans-serif`,
+            fontWeight: t.weight,
+            fontSize: t.px,
+            lineHeight: 1,
+            color: i === t.activeIdx && activeColor ? activeColor
+                 : (i === 2 && t.keyword ? t.keyword : "#fff"),
+            WebkitTextStroke: t.stroke ? `${s}px #000` : undefined,
+            paintOrder: "stroke fill",
+            textShadow: t.stroke
+              ? `${s}px ${s}px 0 #000, -${s}px ${s}px 0 #000, ${s}px -${s}px 0 #000, -${s}px -${s}px 0 #000, 0 ${s * 1.5}px 0 #000`
+              : undefined,
+          }}>{w}</span>
+        );
+      })}
     </div>
   );
 }

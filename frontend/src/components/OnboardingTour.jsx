@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { C, SHADOW } from "../lib/theme";
 import { PixelBtn } from "./ui";
 
@@ -84,7 +85,11 @@ export default function OnboardingTour({ steps, storageKey = "cf_tour_v1" }) {
   tipTop = Math.max(12, Math.min(tipTop, vh - TIP_H - 12));
   const tipLeft = Math.max(12, Math.min(rect.left, vw - TIP_W - 20));
 
-  return (
+  // Portal to <body>: pages animate their containers with persistent
+  // transforms (.fade), which hijack position:fixed descendants — rendering
+  // at the body level keeps the overlay viewport-anchored no matter where
+  // the tour is mounted.
+  return createPortal(
     <>
       {/* spotlight: dims everything except the target */}
       <div style={{
@@ -126,6 +131,7 @@ export default function OnboardingTour({ steps, storageKey = "cf_tour_v1" }) {
           <PixelBtn color="cream" size="sm" onClick={finish}>SKIP TOUR</PixelBtn>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }

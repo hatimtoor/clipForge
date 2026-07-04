@@ -1111,28 +1111,46 @@ Return valid JSON array only, no markdown, no explanation."""
     # the top non-overlapping excitement peaks instead of returning nothing.
     if excitement and len(valid) < max_clips:
         dur_total = excitement.get("duration") or 0
+        # Coverage and peaks are evaluated WITHIN the analyzed window: with a
+        # user timeframe, `segments` is already filtered, so dividing by the
+        # whole video length would make any talky video look low-dialogue and
+        # spuriously trigger this fallback (with peaks outside the timeframe).
+        win_start = timeframe_start or 0.0
+        win_end = min(timeframe_end, dur_total) if timeframe_end is not None else dur_total
+        win_dur = max(0.0, win_end - win_start)
         speech = sum(s["end"] - s["start"] for s in segments)
-        coverage = speech / dur_total if dur_total > 0 else 1.0
-        if dur_total > 120 and coverage < 0.4:
+        coverage = speech / win_dur if win_dur > 0 else 1.0
+        if win_dur > 120 and coverage < 0.4:
             added = 0
             for peak_start, peak_score in excitement.get("peaks") or []:
                 if len(valid) >= max_clips:
                     break
-                start = max(0.0, peak_start - (target_dur - 5) / 2)
-                end = min(dur_total, start + target_dur)
+                if not (win_start <= peak_start < win_end):
+                    continue
+                start = max(win_start, peak_start - (target_dur - 5) / 2)
+                end = min(win_end, start + target_dur)
                 if end - start < min_dur:
                     continue
                 if any(c["start"] < end and start < c["end"] for c in valid):
                     continue
+                # Title from whatever was said inside the window, if anything —
+                # a generic label only as the last resort.
+                spoken = " ".join(s["text"].strip() for s in segments
+                                  if s["start"] < end and s["end"] > start).strip()
+                if spoken:
+                    title_words = spoken.split()[:7]
+                    title = " ".join(title_words) + ("…" if len(spoken.split()) > 7 else "")
+                else:
+                    title = f"High-Energy Moment #{added + 1}"
                 base = max(40, min(75, int(55 + peak_score * 10)))
                 valid.append({
                     "start": round(start, 1), "end": round(end, 1),
-                    "title": "High-Energy Moment",
+                    "title": title,
                     "hook": "",
                     "scores": {"hook": base, "flow": base - 5, "value": base - 5, "trend": base},
                     "score": base - 3,
                     "virality_score": max(1, min(10, round(base / 10))),
-                    "reason": "Low-dialogue video — selected by audio/visual energy.",
+                    "reason": "Low-dialogue section — selected by audio/visual energy.",
                     "tags": ["shorts", "clips", "viral"],
                     "keywords": [], "emojis": [],
                 })

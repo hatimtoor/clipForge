@@ -809,7 +809,8 @@ async def _call_openrouter(prompt: str, temp: float = 0.3, max_tokens: int = 200
 async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int,
                            style_prompt: str = "", exclude_prompt: str = "",
                            timeframe_start: Optional[float] = None,
-                           timeframe_end: Optional[float] = None) -> list:
+                           timeframe_end: Optional[float] = None,
+                           excitement: Optional[dict] = None) -> list:
     log(job_id, f"Analyzing virality: {len(segments)} segments, max_clips={max_clips}, dur={min_dur}-{max_dur}s")
     await update_job(job_id, status="analyzing", progress=66, message="AI is identifying viral moments...")
 
@@ -825,10 +826,17 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
             log(job_id, "  Timeframe excluded every segment — falling back to full transcript")
             return []
 
-    # Build transcript lines
+    # Build transcript lines, marking segments inside high-energy windows so
+    # the LLM weighs audible/visual excitement it can't hear from text alone.
+    _hot = (excitement or {}).get("hot") or []
+
+    def _is_hot(mid: float) -> bool:
+        return any(a <= mid < b for a, b in _hot)
+
     transcript_lines = []
     for seg in segments:
-        transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
+        _tag = "[HIGH ENERGY] " if _hot and _is_hot((seg["start"] + seg["end"]) / 2) else ""
+        transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {_tag}{seg['text']}")
 
     # Split into chunks of ~3000 chars to avoid Ollama timeout
     CHUNK_SIZE = 3000
@@ -1030,6 +1038,40 @@ Return valid JSON array only, no markdown, no explanation."""
                     cleaned.append({"word": str(item["word"]).strip(), "emoji": str(item["emoji"]).strip()})
         c["emojis"] = cleaned[:4]
         valid.append(c)
+
+    # Low-dialogue fallback: when there's barely any speech (gameplay, sports,
+    # vlogs) the transcript can't fill the quota — synthesize candidates from
+    # the top non-overlapping excitement peaks instead of returning nothing.
+    if excitement and len(valid) < max_clips:
+        dur_total = excitement.get("duration") or 0
+        speech = sum(s["end"] - s["start"] for s in segments)
+        coverage = speech / dur_total if dur_total > 0 else 1.0
+        if dur_total > 120 and coverage < 0.4:
+            added = 0
+            for peak_start, peak_score in excitement.get("peaks") or []:
+                if len(valid) >= max_clips:
+                    break
+                start = max(0.0, peak_start - (target_dur - 5) / 2)
+                end = min(dur_total, start + target_dur)
+                if end - start < min_dur:
+                    continue
+                if any(c["start"] < end and start < c["end"] for c in valid):
+                    continue
+                base = max(40, min(75, int(55 + peak_score * 10)))
+                valid.append({
+                    "start": round(start, 1), "end": round(end, 1),
+                    "title": "High-Energy Moment",
+                    "hook": "",
+                    "scores": {"hook": base, "flow": base - 5, "value": base - 5, "trend": base},
+                    "score": base - 3,
+                    "virality_score": max(1, min(10, round(base / 10))),
+                    "reason": "Low-dialogue video — selected by audio/visual energy.",
+                    "tags": ["shorts", "clips", "viral"],
+                    "keywords": [], "emojis": [],
+                })
+                added += 1
+            if added:
+                log(job_id, f"  Low-dialogue fallback: added {added} energy-based clips (speech coverage {coverage:.0%})")
 
     return valid
 
@@ -2476,6 +2518,67 @@ async def _build_trimmed_clip(video_path: Path, start: float, dur: float, keep: 
         return False
 
 
+# ── excitement signals (for low-dialogue clip selection) ─────────────────────
+
+def _compute_excitement_signals(video_path: Path) -> dict:
+    """Per-second audio RMS envelope for the whole video — an audio-only
+    decode, takes seconds even for hour-long sources."""
+    import numpy as _np
+    sr = 8000
+    r = subprocess.run([FFMPEG, "-i", str(video_path), "-f", "s16le", "-ac", "1",
+                        "-ar", str(sr), "pipe:1"],
+                       capture_output=True)
+    rms = []
+    if r.stdout:
+        audio = _np.frombuffer(r.stdout, dtype=_np.int16).astype(_np.float32) / 32768.0
+        n = len(audio) // sr
+        for i in range(n):
+            chunk = audio[i * sr:(i + 1) * sr]
+            rms.append(round(float(_np.sqrt(_np.mean(chunk ** 2))), 5))
+    return {"rms": rms, "cuts": []}
+
+
+def _compute_scene_cuts(video_path: Path) -> list:
+    """Scene-cut timestamps across the whole video (decoded at 320px for
+    speed). Only run for low-dialogue videos, where visual energy has to
+    stand in for speech."""
+    r = subprocess.run([FFMPEG, "-i", str(video_path),
+                        "-vf", "scale=320:-2,select='gt(scene,0.35)',showinfo",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    return [round(float(m), 3) for m in re.findall(r"pts_time:([0-9.]+)", r.stderr or "")]
+
+
+def _excitement_windows(signals: dict, win: int = 5) -> Optional[dict]:
+    """Score 5s windows by audio-energy spikes + scene-cut density. Returns
+    {"hot": [(start, end)...], "peaks": [(start, score) best-first],
+    "duration": float} or None if the video is too short/quiet to score."""
+    import numpy as _np
+    rms = signals.get("rms") or []
+    if len(rms) < win * 4:
+        return None
+    duration = float(len(rms))
+    arr = _np.array(rms, dtype=_np.float32)
+    n_win = len(arr) // win
+    w_rms = arr[:n_win * win].reshape(n_win, win).mean(axis=1)
+    cuts = signals.get("cuts") or []
+    w_cuts = _np.zeros(n_win, dtype=_np.float32)
+    for c in cuts:
+        wi = int(c // win)
+        if 0 <= wi < n_win:
+            w_cuts[wi] += 1.0
+
+    def _z(v):
+        s = float(v.std())
+        return (v - float(v.mean())) / s if s > 1e-6 else _np.zeros_like(v)
+
+    score = _z(w_rms) + (_z(w_cuts) if w_cuts.any() else 0)
+    thresh = max(0.5, float(_np.percentile(score, 90)))
+    hot = [(float(i * win), float((i + 1) * win)) for i in range(n_win) if score[i] >= thresh]
+    order = _np.argsort(score)[::-1]
+    peaks = [(float(int(i) * win), round(float(score[int(i)]), 3)) for i in order[:20] if score[int(i)] >= 0.5]
+    return {"hot": hot, "peaks": peaks, "duration": duration}
+
+
 # ── layout engine ─────────────────────────────────────────────────────────────
 # Each layout builder returns a LayoutPlan: a filter_complex ending in [vmain]
 # (captions/music/encode are appended generically), plus any extra -i inputs it
@@ -3555,6 +3658,34 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         out_dir.mkdir(exist_ok=True)
         (out_dir / "transcript.json").write_text(json.dumps(segments, indent=2))
 
+        # Excitement signals: a cheap audio-energy pass for every job (feeds
+        # [HIGH ENERGY] annotations into the analysis); the visual scene pass
+        # only for low-dialogue videos where speech alone can't rank moments.
+        # Cached to signals.json so reprompts reuse it. Never fatal.
+        excitement = None
+        try:
+            sig_path = out_dir / "signals.json"
+            signals = None
+            if reprompt_parent_id:
+                _psig = OUTPUT_DIR / reprompt_parent_id / "signals.json"
+                if _psig.exists():
+                    signals = json.loads(_psig.read_text(encoding="utf-8"))
+            if signals is None and sig_path.exists():
+                signals = json.loads(sig_path.read_text(encoding="utf-8"))
+            if signals is None:
+                signals = await asyncio.to_thread(_compute_excitement_signals, video_path)
+                dur_est = max(1, len(signals["rms"]))
+                coverage = sum(s["end"] - s["start"] for s in segments) / dur_est
+                if coverage < 0.6 and dur_est <= 7200:
+                    log(job_id, f"  Low speech coverage ({coverage:.0%}) — running visual energy pass")
+                    signals["cuts"] = await asyncio.to_thread(_compute_scene_cuts, video_path)
+            sig_path.write_text(json.dumps(signals), encoding="utf-8")
+            excitement = _excitement_windows(signals)
+            if excitement:
+                log(job_id, f"  Excitement: {len(excitement['hot'])} hot windows, {len(excitement['peaks'])} peaks")
+        except Exception as _xe:
+            log(job_id, f"  Excitement signals skipped: {_xe}")
+
         # 3. Virality analysis
         log(job_id, "--- PHASE 3: ANALYZE ---")
         clips = await analyze_virality(
@@ -3564,6 +3695,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             exclude_prompt=req.exclude_prompt or "",
             timeframe_start=(req.timeframe_start_min * 60) if req.timeframe_start_min else None,
             timeframe_end=(req.timeframe_end_min * 60) if req.timeframe_end_min else None,
+            excitement=excitement,
         )
         log(job_id, f"Analysis done → {len(clips)} clips selected")
 

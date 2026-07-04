@@ -873,6 +873,69 @@ async def _call_openrouter(prompt: str, temp: float = 0.3, max_tokens: int = 200
 
 
 # ── virality analysis (OpenRouter primary, Groq Llama fallback) ───────────────
+async def _describe_energy_clips(clips: list, job_id: str) -> None:
+    """One LLM call to give synthesized energy clips real titles, hooks,
+    descriptions, and tags — grounded ONLY in what was actually spoken inside
+    each window (the model can't see the video, so it must never invent
+    specifics). Non-fatal: on any failure the template titles stay."""
+    targets = [(i, c) for i, c in enumerate(clips) if c.get("_energy")]
+    if not targets:
+        return
+    items = [{"n": i, "seconds": f"{c['start']:.0f}-{c['end']:.0f}",
+              "spoken": (c.get("_spoken") or "")[:400]} for i, c in targets]
+    prompt = f"""These video clips were auto-selected from a low-dialogue video (gaming/sports/vlog)
+by audio-energy spikes. For each, write social-media metadata. "spoken" is ALL you
+know about the clip — when it's empty or thin, write engaging but GENERIC hype copy
+(e.g. about an intense moment) and NEVER invent specific events, names, or outcomes.
+
+CLIPS:
+{json.dumps(items, ensure_ascii=False)}
+
+Return ONLY a JSON array, one item per clip, each with:
+- "n": the same n as the input
+- "title": catchy short title (max 8 words)
+- "hook": a one-line opening hook
+- "reason": 1-sentence description of the clip for a video description
+- "tags": array of 3 hashtag strings (without #)"""
+
+    def _sync():
+        client = Groq(api_key=get_groq_key())
+        r = client.chat.completions.create(
+            model=GROQ_ANALYSIS_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+            max_tokens=1500,
+        )
+        return r.choices[0].message.content.strip()
+
+    try:
+        raw = await groq_with_retry(lambda: asyncio.to_thread(_sync),
+                                    limiter=llama_limiter,
+                                    log_fn=lambda m: log(job_id, m))
+        if raw.startswith("```"):
+            raw = raw.split("```")[1].lstrip("json").strip()
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
+        data = json.loads(m.group(0) if m else raw)
+        by_n = {int(d["n"]): d for d in data if isinstance(d, dict) and "n" in d}
+        applied = 0
+        for i, c in targets:
+            d = by_n.get(i)
+            if not d:
+                continue
+            if d.get("title"):
+                c["title"] = _censor_text(str(d["title"]).strip())
+            if d.get("hook"):
+                c["hook"] = _censor_text(str(d["hook"]).strip())
+            if d.get("reason"):
+                c["reason"] = _censor_text(str(d["reason"]).strip())
+            if isinstance(d.get("tags"), list) and d["tags"]:
+                c["tags"] = [_censor_text(str(t)) for t in d["tags"][:3]]
+            applied += 1
+        log(job_id, f"  Energy clips described: {applied}/{len(targets)}")
+    except Exception as e:
+        log(job_id, f"  Energy clip descriptions skipped: {e}")
+
+
 async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int,
                            style_prompt: str = "", exclude_prompt: str = "",
                            timeframe_start: Optional[float] = None,
@@ -1134,7 +1197,9 @@ Return valid JSON array only, no markdown, no explanation."""
                 if any(c["start"] < end and start < c["end"] for c in valid):
                     continue
                 # Title from whatever was said inside the window, if anything —
-                # a generic label only as the last resort.
+                # a generic label only as the last resort. The _spoken text is
+                # kept temporarily so the describe pass below can ground its
+                # titles/hooks in real dialogue.
                 spoken = " ".join(s["text"].strip() for s in segments
                                   if s["start"] < end and s["end"] > start).strip()
                 if spoken:
@@ -1153,10 +1218,16 @@ Return valid JSON array only, no markdown, no explanation."""
                     "reason": "Low-dialogue section — selected by audio/visual energy.",
                     "tags": ["shorts", "clips", "viral"],
                     "keywords": [], "emojis": [],
+                    "_spoken": spoken,
+                    "_energy": True,
                 })
                 added += 1
             if added:
                 log(job_id, f"  Low-dialogue fallback: added {added} energy-based clips (speech coverage {coverage:.0%})")
+                await _describe_energy_clips(valid, job_id)
+    for c in valid:
+        c.pop("_spoken", None)
+        c.pop("_energy", None)
 
     return valid
 

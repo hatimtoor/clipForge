@@ -154,7 +154,7 @@ export default function HelloPage() {
           url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur,
           reframe: clipStyle === "reframe" && reframe,
           clip_style: clipStyle,
-          aspect_ratio: clipStyle === "facecam" ? "9:16" : aspectRatio,
+          aspect_ratio: ["facecam", "split", "screenshare"].includes(clipStyle) ? "9:16" : aspectRatio,
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
           exclude_prompt: excludePrompt.trim() || undefined,
@@ -304,6 +304,7 @@ export default function HelloPage() {
                 { id: "reframe", label: "FILL",     hint: "9:16 crop (tracked with REFRAME)", pro: false },
                 { id: "fit",     label: "FIT",      hint: "whole frame, letterboxed",          pro: true },
                 { id: "blur_bg", label: "BLUR BG",  hint: "centered on blurred fill",          pro: true },
+                { id: "split",   label: "SPLIT",    hint: "2 speakers stacked 50/50",          pro: true },
                 { id: "facecam", label: "GAMEPLAY", hint: "cam top 30%, gameplay 70%",         pro: true },
               ].map(({ id, label, hint, pro }) => {
                 const active = clipStyle === id;
@@ -331,7 +332,7 @@ export default function HelloPage() {
               ].map(({ id, label }) => {
                 const active = aspectRatio === id;
                 const locked = id !== "9:16" && !isPro;
-                const unavailable = clipStyle === "facecam" && id !== "9:16";
+                const unavailable = ["facecam", "split", "screenshare"].includes(clipStyle) && id !== "9:16";
                 return (
                   <button key={id} disabled={unavailable}
                     onClick={() => { if (locked) { navigate("/upgrade"); return; } setAspectRatio(id); }}

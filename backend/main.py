@@ -1796,43 +1796,42 @@ def smooth_crop_trajectory(
 _YUNET_PATH = Path(__file__).parent / "assets" / "models" / "face_detection_yunet.onnx"
 
 
-def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
-                           duration: float, n_samples: int = 48) -> Optional[dict]:
-    """Find the streamer's webcam ONCE for the whole video by sampling frames
-    spread across it, so every clip uses the same cam and splits consistently
-    (per-clip detection was firing on some clips and not others).
-
-    Returns {"box": (x,y,w,h), "fw": int, "fh": int, "fcx": float, "fcy": float}
-    or None. Face-primary: the persistent small face across the video = the cam.
-    """
-    if not _REFRAME_AVAILABLE:
+def _yunet_detector():
+    """A YuNet face detector instance, or None if unavailable."""
+    if not _REFRAME_AVAILABLE or not _YUNET_PATH.exists():
         return None
     try:
         import cv2 as _cv2
-    except ImportError:
-        return None
-    import numpy as _np
-    import statistics as _st
-    from collections import defaultdict
-
-    if not _YUNET_PATH.exists():
-        return None
-    try:
-        face_det = _cv2.FaceDetectorYN_create(
+        return _cv2.FaceDetectorYN_create(
             str(_YUNET_PATH), "", (320, 320),
             score_threshold=0.6, nms_threshold=0.3, top_k=50)
     except Exception as e:
         print(f"[facecam] YuNet unavailable: {e}", flush=True)
         return None
 
+
+def _detect_face_clusters(video_path: Path, src_w: int, src_h: int,
+                          duration: float, n_samples: int = 48) -> tuple:
+    """Sample frames across the whole video and cluster EVERY detected face by
+    position. Returns (clusters, n_ok) where each cluster is
+    {"fcx","fcy","fw","fh","hits","frames"} (frames = set of sample indices the
+    cluster appeared in, for co-presence checks), sorted most-persistent first.
+    Shared by the facecam-region detector (small persistent face = webcam) and
+    the split layout (two co-present faces = two speakers)."""
+    face_det = _yunet_detector()
+    if face_det is None:
+        return [], 0
+    import cv2 as _cv2
+    import statistics as _st
+    from collections import defaultdict
+
     cap = _cv2.VideoCapture(str(video_path))
     fps = cap.get(_cv2.CAP_PROP_FPS) or 30.0
     if duration <= 0:
         cnt = cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0
         duration = cnt / fps if fps else 0.0
-    frame_area = src_w * src_h
     n = max(8, n_samples)
-    face_hits, n_ok = [], 0
+    hits, n_ok = [], 0
     for i in range(n):
         t = duration * (i + 0.5) / n if duration > 0 else 0.0
         cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000.0)
@@ -1849,22 +1848,75 @@ def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
             continue
         for f in faces:
             fw, fh = int(f[2]), int(f[3])
-            if fw <= 0 or fh <= 0 or fw * fh >= frame_area * 0.08:
-                continue  # small face only = a cam, not the main subject
-            face_hits.append((int(f[0]) + fw / 2.0, int(f[1]) + fh / 2.0, fw, fh))
+            if fw <= 0 or fh <= 0:
+                continue
+            hits.append((i, int(f[0]) + fw / 2.0, int(f[1]) + fh / 2.0, fw, fh))
     cap.release()
 
-    if n_ok == 0 or not face_hits:
-        return None
+    if not hits:
+        return [], n_ok
     gx, gy = src_w * 0.08, src_h * 0.08
-    clusters = defaultdict(list)
-    for h in face_hits:
-        clusters[(int(h[0] / gx), int(h[1] / gy))].append(h)
-    best = max(clusters.values(), key=len)
-    if len(best) < max(3, int(0.20 * n_ok)):
+    grid = defaultdict(list)
+    for h in hits:
+        grid[(int(h[1] / gx), int(h[2] / gy))].append(h)
+    clusters = []
+    for members in grid.values():
+        clusters.append({
+            "fcx": float(_st.median(m[1] for m in members)),
+            "fcy": float(_st.median(m[2] for m in members)),
+            "fw": int(_st.median(m[3] for m in members)),
+            "fh": int(_st.median(m[4] for m in members)),
+            "hits": len(members),
+            "frames": {m[0] for m in members},
+        })
+    clusters.sort(key=lambda c: c["hits"], reverse=True)
+    return clusters, n_ok
+
+
+def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list]:
+    """Two co-present speaker faces for the Split layout, left-first, or None.
+    Requirements (Opus has the same co-presence constraint): both faces
+    persistent, both in the SAME frames often enough (two clusters that never
+    co-occur are one person who moved seats), horizontally separated, and of
+    comparable size."""
+    if n_ok == 0:
         return None
-    fcx, fcy = _st.median([h[0] for h in best]), _st.median([h[1] for h in best])
-    mfw, mfh = int(_st.median([h[2] for h in best])), int(_st.median([h[3] for h in best]))
+    cands = [c for c in clusters if c["hits"] >= max(3, int(0.4 * n_ok))]
+    from itertools import combinations
+    for a, b in combinations(cands[:4], 2):
+        co_present = len(a["frames"] & b["frames"])
+        if co_present < 0.3 * n_ok:
+            continue
+        if abs(a["fcx"] - b["fcx"]) < 0.22 * src_w:
+            continue
+        area_a, area_b = a["fw"] * a["fh"], b["fw"] * b["fh"]
+        if max(area_a, area_b) > 2.5 * max(1, min(area_a, area_b)):
+            continue
+        return sorted([a, b], key=lambda c: c["fcx"])
+    return None
+
+
+def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
+                           duration: float, n_samples: int = 48) -> Optional[dict]:
+    """Find the streamer's webcam ONCE for the whole video by sampling frames
+    spread across it, so every clip uses the same cam and splits consistently
+    (per-clip detection was firing on some clips and not others).
+
+    Returns {"box": (x,y,w,h), "fw": int, "fh": int, "fcx": float, "fcy": float}
+    or None. Face-primary: the persistent small face across the video = the cam.
+    """
+    clusters, n_ok = _detect_face_clusters(video_path, src_w, src_h, duration, n_samples)
+    if n_ok == 0:
+        return None
+    frame_area = src_w * src_h
+    # Small persistent face only = a cam, not the main subject.
+    small = [c for c in clusters
+             if c["fw"] * c["fh"] < frame_area * 0.08
+             and c["hits"] >= max(3, int(0.20 * n_ok))]
+    if not small:
+        return None
+    best = small[0]
+    fcx, fcy, mfw, mfh = best["fcx"], best["fcy"], best["fw"], best["fh"]
     bw, bh = int(mfw * 2.4), int(mfh * 3.0)
     bx = int(max(0, min(fcx - bw / 2, src_w - bw)))
     by = int(max(0, min(fcy - bh * 0.40, src_h - bh)))
@@ -2402,6 +2454,7 @@ class ClipRenderCtx:
     n_clips: int = 1
     clip_title: str = ""
     facecam_region: Optional[dict] = None
+    split_speakers: Optional[list] = None
 
 
 @_dataclass
@@ -2576,6 +2629,88 @@ async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
     return LayoutPlan(filter_complex=fc, extra_inputs=extra_inputs)
 
 
+def _faces_present_in_windows(clip_path: Path, windows: list, n_samples: int = 16) -> list:
+    """For each (x, y, w, h) window, the fraction of sampled frames whose face
+    centre lands inside it. Used to re-validate video-level split speakers on a
+    specific clip segment (the guest may not be on screen in this window)."""
+    face_det = _yunet_detector()
+    if face_det is None:
+        return [0.0] * len(windows)
+    import cv2 as _cv2
+    cap = _cv2.VideoCapture(str(clip_path))
+    fps = cap.get(_cv2.CAP_PROP_FPS) or 30.0
+    total = cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0
+    dur = total / fps if fps else 0.0
+    counts = [0] * len(windows)
+    n_ok = 0
+    for i in range(n_samples):
+        t = dur * (i + 0.5) / n_samples if dur > 0 else 0.0
+        cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        n_ok += 1
+        try:
+            face_det.setInputSize((frame.shape[1], frame.shape[0]))
+            _c, faces = face_det.detect(frame)
+        except Exception:
+            faces = None
+        if faces is None:
+            continue
+        for f in faces:
+            cx, cy = int(f[0]) + int(f[2]) / 2, int(f[1]) + int(f[3]) / 2
+            for wi, (wx, wy, ww, wh) in enumerate(windows):
+                if wx <= cx <= wx + ww and wy <= cy <= wy + wh:
+                    counts[wi] += 1
+                    break
+    cap.release()
+    return [c / max(1, n_ok) for c in counts]
+
+
+def _speaker_window(sp: dict, tile_w: int, tile_h: int, src_w: int, src_h: int) -> tuple:
+    """Head-and-shoulders crop window for one speaker at the tile's aspect,
+    sized off the face height (same framing as the gameplay top strip)."""
+    win_w = int(min(sp["fh"] * 2.6 * tile_w / tile_h, src_w)); win_w -= win_w % 2
+    win_h = int(win_w * tile_h / tile_w); win_h -= win_h % 2
+    win_h = min(win_h, src_h - (src_h % 2))
+    win_w = int(win_h * tile_w / tile_h); win_w -= win_w % 2
+    wx = int(max(0, min(sp["fcx"] - win_w / 2, src_w - win_w)))
+    wy = int(max(0, min(sp["fcy"] - win_h * 0.42, src_h - win_h)))
+    return wx, wy, win_w, win_h
+
+
+async def _plan_split(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
+    """Split layout: two co-present speakers stacked 50/50 (Opus's Split).
+    Requires the video-level speaker pair AND per-clip re-validation — if
+    either speaker isn't actually on screen during this clip's window, returns
+    None and the caller falls back to Fill (whose speaker tracking handles
+    two-person scenes gracefully)."""
+    if not ctx.split_speakers or len(ctx.split_speakers) < 2:
+        return None
+    tile_h = ctx.out_h // 2; tile_h -= tile_h % 2
+    windows = [_speaker_window(sp, ctx.out_w, tile_h, ctx.src_w, ctx.src_h)
+               for sp in ctx.split_speakers[:2]]
+
+    # Re-validate on THIS clip segment (cheap H.264 intermediate, 16 frames).
+    _sv_tmp = ctx.job_dir / f"clip_{ctx.idx}_split.mp4"
+    await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
+                         "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
+                         "-crf", "28", "-an", str(_sv_tmp)])
+    fractions = await asyncio.to_thread(_faces_present_in_windows, _sv_tmp, windows)
+    _sv_tmp.unlink(missing_ok=True)
+    if min(fractions) < 0.3:
+        log(ctx.job_id, f"  Split re-validation failed ({[round(f, 2) for f in fractions]}) — falling back to Fill")
+        return None
+
+    parts = []
+    for i, (wx, wy, ww, wh) in enumerate(windows):
+        parts.append(f"[0:v]crop={ww}:{wh}:{wx}:{wy},scale={ctx.out_w}:{tile_h}[t{i}]")
+    fc = ";".join(parts) + f";[t0][t1]vstack[vmain]"
+    log(ctx.job_id, f"  Split: speakers at x={int(ctx.split_speakers[0]['fcx'])},{int(ctx.split_speakers[1]['fcx'])} "
+                    f"presence={[round(f, 2) for f in fractions]}")
+    return LayoutPlan(filter_complex=fc)
+
+
 def _plan_fit(ctx: ClipRenderCtx) -> LayoutPlan:
     """Fit layout (Opus-style): source cropped to 4:3 centred, fitted to the
     output width, letterboxed with opaque bars. Nothing is ever cut off the
@@ -2606,6 +2741,12 @@ async def _build_layout_plan(ctx: ClipRenderCtx, clip_style: str) -> LayoutPlan:
         if plan is not None:
             return plan
         log(ctx.job_id, "  No facecam detected — using center crop instead")
+    if layout == "split" and _REFRAME_AVAILABLE:
+        plan = await _plan_split(ctx)
+        if plan is not None:
+            return plan
+        # Fill's active-speaker tracking handles two-person scenes gracefully.
+        ctx = _dc_replace(ctx, reframe=True) if not ctx.reframe else ctx
     if layout == "blur_bg":
         return _plan_blur_bg(ctx)
     if layout == "fit":
@@ -2676,7 +2817,9 @@ async def create_clips(
     # Detect the streamer's webcam ONCE for the whole video so every facecam clip
     # splits the same way (per-clip detection was inconsistent across clips).
     facecam_region = None
-    if _LAYOUT_ALIASES.get(clip_style, clip_style) == "gameplay" and _REFRAME_AVAILABLE:
+    split_speakers = None
+    _probe_layout = _LAYOUT_ALIASES.get(clip_style, clip_style)
+    if _probe_layout in ("gameplay", "split") and _REFRAME_AVAILABLE:
         try:
             _fc_probe = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
             _, _fo, _ = await asyncio.to_thread(run_cmd, _fc_probe)
@@ -2684,10 +2827,16 @@ async def create_clips(
             if _fvs:
                 _fw, _fh = int(_fvs["width"]), int(_fvs["height"])
                 _fd = float(_fvs.get("duration") or 0)
-                facecam_region = await asyncio.to_thread(_detect_facecam_region, video_path, _fw, _fh, _fd)
-            log(job_id, f"  Facecam region (video-level): {facecam_region['box'] if facecam_region else 'none'}")
+                if _probe_layout == "gameplay":
+                    facecam_region = await asyncio.to_thread(_detect_facecam_region, video_path, _fw, _fh, _fd)
+                    log(job_id, f"  Facecam region (video-level): {facecam_region['box'] if facecam_region else 'none'}")
+                else:
+                    _clusters, _n_ok = await asyncio.to_thread(_detect_face_clusters, video_path, _fw, _fh, _fd)
+                    split_speakers = _pick_split_speakers(_clusters, _n_ok, _fw)
+                    log(job_id, f"  Split speakers (video-level): "
+                                f"{[int(s['fcx']) for s in split_speakers] if split_speakers else 'none — will fall back to Fill'}")
         except Exception as _fe:
-            log(job_id, f"  Facecam region detection skipped: {_fe}")
+            log(job_id, f"  Layout probe skipped: {_fe}")
 
     results = []
     for idx, clip in enumerate(clip_defs):
@@ -2818,6 +2967,7 @@ async def create_clips(
             clip_fps=clip_fps, job_dir=job_dir, idx=idx, job_id=job_id,
             reframe=reframe, n_clips=len(clip_defs),
             clip_title=clip.get("title", ""), facecam_region=facecam_region,
+            split_speakers=split_speakers,
         )
         plan = await _build_layout_plan(ctx, clip_style)
         # One sendcmd-driven crop per graph — more cross-talk (sendcmd hits

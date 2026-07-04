@@ -280,7 +280,9 @@ class ClipRequest(BaseModel):
     min_duration: int = 30
     max_duration: int = 90
     reframe: bool = False
-    clip_style: str = "reframe"  # "reframe" | "blur_bg"
+    clip_style: str = "reframe"  # legacy name; aliased into layout (reframe→fill, facecam→gameplay)
+    layout: Optional[str] = None  # fill | fit | blur_bg | gameplay | split | screenshare (wins over clip_style)
+    aspect_ratio: str = "9:16"    # 9:16 | 1:1 | 16:9 (multi-region layouts are 9:16-only)
     style_prompt: Optional[str] = None       # "find" prompt (kept name for compat)
     exclude_prompt: Optional[str] = None     # topics the AI must never clip
     timeframe_start_min: Optional[float] = None  # only clip this window (minutes)
@@ -2490,8 +2492,8 @@ async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
 
     src_w, src_h, out_w, out_h = ctx.src_w, ctx.src_h, ctx.out_w, ctx.out_h
     fx, fy, fw, fh = facecam_box
-    top_h = (out_h * 2 // 5);  top_h -= top_h % 2     # 40%
-    bot_h = out_h - top_h                              # 60%
+    top_h = (out_h * 3 // 10); top_h -= top_h % 2     # 30% cam (Opus's Gameplay ratio)
+    bot_h = out_h - top_h                              # 70% gameplay
     gp_h  = ctx.crop_h
     gp_w  = min(int(gp_h * out_w / bot_h), src_w); gp_w -= gp_w % 2
     gp_min_x, gp_max_x = 0, src_w - gp_w
@@ -2574,15 +2576,40 @@ async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
     return LayoutPlan(filter_complex=fc, extra_inputs=extra_inputs)
 
 
+def _plan_fit(ctx: ClipRenderCtx) -> LayoutPlan:
+    """Fit layout (Opus-style): source cropped to 4:3 centred, fitted to the
+    output width, letterboxed with opaque bars. Nothing is ever cut off the
+    sides beyond the gentle 16:9→4:3 trim; captions land on the bottom bar."""
+    fit_h = ctx.src_h - (ctx.src_h % 2)
+    fit_w = min(int(ctx.src_h * 4 / 3), ctx.src_w); fit_w -= fit_w % 2
+    fit_x = max(0, (ctx.src_w - fit_w) // 2)
+    fc = (
+        f"[0:v]crop={fit_w}:{fit_h}:{fit_x}:0,"
+        f"scale={ctx.out_w}:-2,"
+        f"pad={ctx.out_w}:{ctx.out_h}:0:(oh-ih)/2:black[vmain]"
+    )
+    return LayoutPlan(filter_complex=fc)
+
+
+# clip_style names kept as accepted aliases for saved channels/backfills.
+_LAYOUT_ALIASES = {"reframe": "fill", "facecam": "gameplay"}
+# Layouts that stack multiple source regions — locked to 9:16 output in V1.
+_PORTRAIT_ONLY_LAYOUTS = {"gameplay", "split", "screenshare"}
+_ASPECT_RATIOS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
+
+
 async def _build_layout_plan(ctx: ClipRenderCtx, clip_style: str) -> LayoutPlan:
     """Dispatch to the right layout builder, with graceful fallbacks."""
-    if clip_style == "facecam" and _REFRAME_AVAILABLE:
+    layout = _LAYOUT_ALIASES.get(clip_style, clip_style)
+    if layout == "gameplay" and _REFRAME_AVAILABLE:
         plan = await _plan_gameplay(ctx)
         if plan is not None:
             return plan
         log(ctx.job_id, "  No facecam detected — using center crop instead")
-    if clip_style == "blur_bg":
+    if layout == "blur_bg":
         return _plan_blur_bg(ctx)
+    if layout == "fit":
+        return _plan_fit(ctx)
     return await _plan_fill(ctx)
 
 
@@ -2595,6 +2622,7 @@ async def create_clips(
     job_id: str,
     reframe: bool = False,
     clip_style: str = "reframe",
+    aspect_ratio: str = "9:16",
     caption_style: str = "bold_bottom",
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
@@ -2648,7 +2676,7 @@ async def create_clips(
     # Detect the streamer's webcam ONCE for the whole video so every facecam clip
     # splits the same way (per-clip detection was inconsistent across clips).
     facecam_region = None
-    if clip_style == "facecam" and _REFRAME_AVAILABLE:
+    if _LAYOUT_ALIASES.get(clip_style, clip_style) == "gameplay" and _REFRAME_AVAILABLE:
         try:
             _fc_probe = [FFPROBE, "-v", "quiet", "-print_format", "json", "-show_streams", str(video_path)]
             _, _fo, _ = await asyncio.to_thread(run_cmd, _fc_probe)
@@ -2716,16 +2744,23 @@ async def create_clips(
         else:
             clip_fps = 30.0
 
-        # Crop to 9:16 then scale to 1080x1920
-        # Subtract any detected hardcoded caption bar from the bottom
+        # Output resolution from the requested aspect ratio; multi-region
+        # layouts (gameplay/split/screenshare) are portrait-only in V1.
+        _layout_resolved = _LAYOUT_ALIASES.get(clip_style, clip_style)
+        _ar = aspect_ratio if aspect_ratio in _ASPECT_RATIOS else "9:16"
+        if _layout_resolved in _PORTRAIT_ONLY_LAYOUTS and _ar != "9:16":
+            log(job_id, f"  {_layout_resolved} layout is 9:16-only — ignoring aspect_ratio={_ar}")
+            _ar = "9:16"
+        out_w, out_h = _ASPECT_RATIOS[_ar]
+
+        # Crop the source to the output aspect, subtracting any detected
+        # hardcoded caption bar from the bottom. At 16:9 output on a 16:9
+        # source this degenerates to no horizontal crop (correct).
         effective_h = src_h - caption_crop_px
         crop_h = effective_h
-        crop_w = min(int(effective_h * 9 / 16), src_w)
+        crop_w = min(int(effective_h * out_w / out_h), src_w)
+        crop_w -= crop_w % 2
         center_crop_x = max(0, (src_w - crop_w) // 2)
-
-        # Final output resolution
-        out_w = 1080
-        out_h = 1920
 
         # For blur_bg, compute where the foreground video ends so captions land
         # in the bottom blurred zone rather than on top of the main video.
@@ -3214,7 +3249,8 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             final_clips = await create_clips(
                 video_path, clips, segments, job_dir, job_id,
                 reframe=req.reframe,
-                clip_style=req.clip_style,
+                clip_style=req.layout or req.clip_style,
+                aspect_ratio=req.aspect_ratio or "9:16",
                 caption_style=req.caption_style or "bold_bottom",
                 font_size=req.caption_font_size,
                 highlight_color=req.caption_highlight_color,
@@ -3586,11 +3622,12 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
     max_clips_per_job = PRO_MAX_CLIPS_PER_JOB if plan == "pro" else FREE_MAX_CLIPS_PER_JOB
     if req.reframe and plan != "pro":
         raise HTTPException(403, "Auto-reframe (9:16) requires a Pro plan. Upgrade to unlock.")
+    _effective_layout = _LAYOUT_ALIASES.get(req.layout or req.clip_style, req.layout or req.clip_style)
     if plan != "pro":
-        if req.clip_style == "blur_bg":
-            raise HTTPException(403, "Blur background style requires a Pro plan. Upgrade to unlock.")
-        if req.clip_style == "facecam":
-            raise HTTPException(403, "Facecam (gaming split) style requires a Pro plan. Upgrade to unlock.")
+        if _effective_layout in ("blur_bg", "gameplay", "fit", "split", "screenshare"):
+            raise HTTPException(403, "This layout requires a Pro plan. Upgrade to unlock.")
+        if req.aspect_ratio and req.aspect_ratio != "9:16":
+            raise HTTPException(403, "1:1 and 16:9 output formats require a Pro plan. Upgrade to unlock.")
         if req.trim_silence:
             raise HTTPException(403, "Trim silence requires a Pro plan. Upgrade to unlock.")
     req.max_clips = min(req.max_clips, max_clips_per_job)
@@ -3628,6 +3665,8 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             "timeframe_start_min": req.timeframe_start_min,
             "timeframe_end_min": req.timeframe_end_min,
             "clip_style": req.clip_style,
+            "layout": req.layout,
+            "aspect_ratio": req.aspect_ratio,
             "trim_silence": req.trim_silence,
         },
     })

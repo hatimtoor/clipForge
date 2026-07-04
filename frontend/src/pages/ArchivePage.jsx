@@ -50,6 +50,8 @@ export default function ArchivePage() {
     if (opt.exclude_prompt)             p.set("exclude_prompt", opt.exclude_prompt);
     if (opt.timeframe_start_min)        p.set("tf_start", opt.timeframe_start_min);
     if (opt.timeframe_end_min)          p.set("tf_end", opt.timeframe_end_min);
+    if (opt.clip_style)                 p.set("clip_style", opt.clip_style);
+    if (opt.aspect_ratio && opt.aspect_ratio !== "9:16") p.set("aspect_ratio", opt.aspect_ratio);
     return `/hello?${p}`;
   };
 

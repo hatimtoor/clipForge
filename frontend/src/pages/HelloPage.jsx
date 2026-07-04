@@ -85,6 +85,7 @@ export default function HelloPage() {
   const [maxDur, setMaxDur] = useState(Number(searchParams.get("max_dur")) || 90);
   const [reframe, setReframe] = useState(searchParams.get("reframe") === "1");
   const [clipStyle, setClipStyle] = useState(searchParams.get("clip_style") || "reframe");
+  const [aspectRatio, setAspectRatio] = useState(searchParams.get("aspect_ratio") || "9:16");
   const [trimSilence, setTrimSilence] = useState(searchParams.get("trim_silence") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
   const [excludePrompt, setExcludePrompt] = useState(searchParams.get("exclude_prompt") || "");
@@ -153,6 +154,7 @@ export default function HelloPage() {
           url, max_clips: maxClips, min_duration: minDur, max_duration: maxDur,
           reframe: clipStyle === "reframe" && reframe,
           clip_style: clipStyle,
+          aspect_ratio: clipStyle === "facecam" ? "9:16" : aspectRatio,
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
           exclude_prompt: excludePrompt.trim() || undefined,
@@ -294,14 +296,56 @@ export default function HelloPage() {
                 ? <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
                 : <ProToggle label="TRIM" hint="upgrade to cut pauses & dead air" />
               }
-              {isPro
-                ? <Toggle on={clipStyle === "blur_bg"} setOn={v => { setClipStyle(v ? "blur_bg" : "reframe"); if (v) setReframe(false); }} label={isMobile ? "BLUR" : "BLUR BG"} hint="landscape clip on blurred background" />
-                : <ProToggle label={isMobile ? "BLUR" : "BLUR BG"} hint="upgrade for blurred-background clips" />
-              }
-              {isPro
-                ? <Toggle on={clipStyle === "facecam"} setOn={v => { setClipStyle(v ? "facecam" : "reframe"); if (v) setReframe(false); }} label={isMobile ? "CAM" : "FACECAM"} hint="gaming: facecam on top, gameplay below" />
-                : <ProToggle label={isMobile ? "CAM" : "FACECAM"} hint="upgrade for gaming facecam layout" />
-              }
+            </div>
+
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>LAYOUT {!isPro && <Tag bg={C.amber} color={C.ink}>PRO</Tag>}</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+              {[
+                { id: "reframe", label: "FILL",     hint: "9:16 crop (tracked with REFRAME)", pro: false },
+                { id: "fit",     label: "FIT",      hint: "whole frame, letterboxed",          pro: true },
+                { id: "blur_bg", label: "BLUR BG",  hint: "centered on blurred fill",          pro: true },
+                { id: "facecam", label: "GAMEPLAY", hint: "cam top 30%, gameplay 70%",         pro: true },
+              ].map(({ id, label, hint, pro }) => {
+                const active = clipStyle === id;
+                const locked = pro && !isPro;
+                return (
+                  <button key={id} title={hint}
+                    onClick={() => { if (locked) { navigate("/upgrade"); return; } setClipStyle(id); if (id !== "reframe") setReframe(false); }}
+                    className="pixel"
+                    style={{ flex: "1 1 auto", padding: "9px 10px", fontSize: 8, cursor: "pointer",
+                      background: active ? C.signal : C.cream2, color: locked ? C.dim : C.ink,
+                      border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                      boxShadow: active ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                    {label}{locked ? " 🔒" : ""}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>FORMAT</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+              {[
+                { id: "9:16", label: "9:16 SHORTS" },
+                { id: "1:1", label: "1:1 SQUARE" },
+                { id: "16:9", label: "16:9 WIDE" },
+              ].map(({ id, label }) => {
+                const active = aspectRatio === id;
+                const locked = id !== "9:16" && !isPro;
+                const unavailable = clipStyle === "facecam" && id !== "9:16";
+                return (
+                  <button key={id} disabled={unavailable}
+                    onClick={() => { if (locked) { navigate("/upgrade"); return; } setAspectRatio(id); }}
+                    className="pixel"
+                    style={{ flex: 1, padding: "9px 0", fontSize: 8,
+                      cursor: unavailable ? "not-allowed" : "pointer",
+                      opacity: unavailable ? 0.4 : 1,
+                      background: active ? C.signal : C.cream2, color: locked ? C.dim : C.ink,
+                      border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                      boxShadow: active ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                    {label}{locked ? " 🔒" : ""}
+                  </button>
+                );
+              })}
             </div>
 
             {error && (

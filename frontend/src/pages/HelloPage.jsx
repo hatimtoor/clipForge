@@ -38,7 +38,8 @@ export default function HelloPage() {
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
   const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
   const [captionLanguage, setCaptionLanguage] = useState(searchParams.get("caption_language") || "source");
-  const [captionPosition, setCaptionPosition] = useState("default");
+  const [captionPosition, setCaptionPosition] = useState(searchParams.get("caption_position") || "default");
+  const [captionKeywords, setCaptionKeywords] = useState(searchParams.get("caption_keywords") !== "0");
   const [bgMusicUrl, setBgMusicUrl] = useState("");
   const [bgMusicVolume, setBgMusicVolume] = useState(0.15);
   const [error, setError] = useState("");
@@ -101,6 +102,7 @@ export default function HelloPage() {
           caption_font_size: fontSizeOverride || undefined,
           caption_highlight_color: highlightColor || undefined,
           caption_position: captionPosition !== "default" ? captionPosition : undefined,
+          caption_keywords: captionKeywords,
           caption_language: captionLanguage || "source",
           bg_music_url: bgMusicUrl.trim() || undefined,
           bg_music_volume: bgMusicVolume,
@@ -287,6 +289,22 @@ export default function HelloPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <button onClick={() => setCaptionKeywords(k => !k)} className="pixel"
+                  style={{ width: "100%", textAlign: "left", padding: 12, cursor: "pointer",
+                    background: captionKeywords ? C.signal : C.cream2,
+                    border: captionKeywords ? `3px solid ${C.ink}` : BORDER,
+                    boxShadow: captionKeywords ? SHADOW : SHADOW_SM, transition: "all .12s" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 10, color: C.ink }}>AI KEYWORDS</span>
+                    <span style={{ fontSize: 9, color: C.dim2 }}>{captionKeywords ? "ON" : "OFF"}</span>
+                  </div>
+                  <div className="vt" style={{ fontSize: 12, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2, marginTop: 3 }}>
+                    color-highlight the words that carry the clip
+                  </div>
+                </button>
               </div>
 
               <div style={{ marginBottom: 20 }}>

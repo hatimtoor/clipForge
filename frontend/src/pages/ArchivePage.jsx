@@ -43,6 +43,9 @@ export default function ArchivePage() {
     if (j.caption_font_size)       p.set("font_size",         j.caption_font_size);
     if (j.caption_highlight_color) p.set("highlight_color",   j.caption_highlight_color);
     if (j.caption_language)        p.set("caption_language",  j.caption_language);
+    const opt = j.options || {};
+    if (opt.caption_position)           p.set("caption_position", opt.caption_position);
+    if (opt.caption_keywords === false) p.set("caption_keywords", "0");
     return `/hello?${p}`;
   };
 

@@ -280,6 +280,7 @@ class ClipRequest(BaseModel):
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
     caption_position: Optional[str] = None  # default | bottom | middle | top
+    caption_keywords: bool = True           # AI keyword colour layer in captions
     caption_language: str = "source"
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
@@ -837,6 +838,9 @@ Return ONLY a JSON array. Each item must have:
 - "virality_score": integer 1-10
 - "reason": 1-sentence explanation of why this will perform well
 - "tags": array of 3 relevant hashtag strings (without #)
+- "keywords": array of 3-6 single words copied VERBATIM from the transcript inside
+  this clip's time range — the most emphatic, emotional, or high-stakes words
+  (these get color-highlighted in the burned-in captions)
 
 Return valid JSON array only, no markdown, no explanation."""
 
@@ -931,6 +935,14 @@ Return valid JSON array only, no markdown, no explanation."""
             c["reason"] = _censor_text(c["reason"])
         if isinstance(c.get("tags"), list):
             c["tags"] = [_censor_text(t) if isinstance(t, str) else t for t in c["tags"]]
+        # Caption keyword highlights: keep raw (they're matched against raw
+        # transcript words at render; the rendered word itself still gets
+        # censored). Cap at 6 single words.
+        kws = c.get("keywords")
+        if isinstance(kws, list):
+            c["keywords"] = [str(k).strip() for k in kws if str(k).strip() and " " not in str(k).strip()][:6]
+        else:
+            c["keywords"] = []
         valid.append(c)
 
     return valid
@@ -1304,6 +1316,7 @@ def build_ass_subtitles(
     highlight_color: Optional[str] = None,
     margin_v_override: Optional[int] = None,
     alignment_override: Optional[int] = None,
+    keywords: Optional[list] = None,
 ):
     tpl = CAPTION_TEMPLATES.get(caption_style) or CAPTION_TEMPLATES["bold_bottom"]
 
@@ -1374,6 +1387,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def _token(w: dict) -> str:
         return _ass_escape(_case(_censor_text(w["word"]).strip()))
 
+    # AI keyword layer: static accent colour on emphasis words, independent of
+    # the transient active-word highlight (Opus's two-layer system). Matching is
+    # against the raw transcript word, pre-censor/case.
+    kw_set = {k.lower().strip(".,!?\"'") for k in (keywords or []) if k}
+
+    def _is_kw(w: dict) -> bool:
+        return bool(kw_set) and w["word"].strip().strip(".,!?\"'").lower() in kw_set
+
     # Group into lines of ~words_per_line; merge a lonely 1-word tail into the
     # line before it (so "... YOUR" + "WHEELS" reads as one "... YOUR WHEELS").
     groups = [words_in_clip[i:i + tpl.words_per_line]
@@ -1396,7 +1417,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # the full line stays on screen throughout. The highlight fires
             # active_lead_ms early (Opus-style reading anticipation).
             base_i, hl_i = _inline_color(tpl.base_color), _inline_color(tpl.active_color)
+            kw_i = _inline_color(tpl.keyword_color)
             tokens = [_token(w) for w in group]
+            kw_flags = [_is_kw(w) for w in group]
             lead = tpl.active_lead_ms / 1000.0
             bounds = [line_start]
             for k in range(1, len(group)):
@@ -1406,8 +1429,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 k_start, k_end = bounds[k], bounds[k + 1]
                 if k_end <= k_start:
                     continue
+                # Every token carries its own colour: active wins, then the
+                # static keyword layer, then base.
                 parts = [
-                    f"{{\\1c{hl_i}}}{tok}{{\\1c{base_i}}}" if j == k else tok
+                    f"{{\\1c{hl_i if j == k else (kw_i if kw_flags[j] else base_i)}}}{tok}"
                     for j, tok in enumerate(tokens)
                 ]
                 events.append(
@@ -1415,16 +1440,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 )
         elif tpl.mode == "static":
             # Bold-statement look: the whole phrase appears at once, no reveal.
-            text = " ".join(_token(w) for w in group)
+            base_i, kw_i = _inline_color(tpl.base_color), _inline_color(tpl.keyword_color)
+            text = " ".join(
+                f"{{\\1c{kw_i}}}{_token(w)}{{\\1c{base_i}}}" if _is_kw(w) else _token(w)
+                for w in group
+            )
             events.append(
                 f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{text}"
             )
         else:
-            # Classic karaoke colour sweep (minimal/simple styles).
+            # Classic karaoke colour sweep (minimal/simple styles). Keyword words
+            # land on the keyword colour after the sweep passes them.
+            base_i, kw_i = _inline_color(tpl.base_color), _inline_color(tpl.keyword_color)
             karaoke_text = ""
             for w in group:
                 dur_cs = max(1, int((w["end"] - w["start"]) * 100))
-                karaoke_text += f"{{\\k{dur_cs}}}{_token(w)} "
+                colour = kw_i if _is_kw(w) else base_i
+                karaoke_text += f"{{\\k{dur_cs}\\1c{colour}}}{_token(w)} "
             events.append(
                 f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{karaoke_text.strip()}"
             )
@@ -2173,6 +2205,7 @@ async def create_clips(
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
     caption_position: Optional[str] = None,
+    caption_keywords: bool = True,
     caption_segments: Optional[list] = None,
     bg_music_url: Optional[str] = None,
     bg_music_volume: float = 0.15,
@@ -2334,6 +2367,7 @@ async def create_clips(
             # Force bottom-center alignment in blur_bg so captions land in the
             # bottom blur zone even for center-aligned styles like POP.
             alignment_override=2 if clip_style == "blur_bg" else pos_align,
+            keywords=clip.get("keywords") if caption_keywords else None,
         )
 
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])
@@ -2976,6 +3010,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 font_size=req.caption_font_size,
                 highlight_color=req.caption_highlight_color,
                 caption_position=req.caption_position,
+                caption_keywords=req.caption_keywords,
                 caption_segments=caption_segs,
                 bg_music_url=req.bg_music_url,
                 bg_music_volume=req.bg_music_volume,
@@ -3328,6 +3363,12 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
         "caption_language": req.caption_language or "source",
         "bg_music_url": req.bg_music_url or None,
         "bg_music_volume": req.bg_music_volume,
+        # New-style knobs live in one JSONB bag (see sql/options_column.sql).
+        # PostgREST silently drops the key if the column doesn't exist yet.
+        "options": {
+            "caption_position": req.caption_position,
+            "caption_keywords": req.caption_keywords,
+        },
     })
     job_id = job["id"]
     task = asyncio.create_task(run_pipeline(job_id, req, user_id=user.id))

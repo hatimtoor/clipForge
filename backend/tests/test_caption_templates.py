@@ -113,3 +113,26 @@ def test_minimal_does_not_embed_font(tmp_path):
     # matching pre-refactor behavior.
     content = _build(tmp_path, "minimal")
     assert "[Fonts]" not in content
+
+
+def test_keyword_layer_colors_keyword_in_pop(tmp_path):
+    # "WHEELS" is a keyword: in events where it is NOT the active word it must
+    # carry the template's keyword colour (gold &H00D7FF) instead of base white.
+    content = _build(tmp_path, "bold_bottom", keywords=["wheels"])
+    dialogues = [l for l in content.splitlines() if l.startswith("Dialogue:")]
+    first = dialogues[0]  # STUCK active; WHEELS inactive keyword
+    assert "{\\1c&H00D7FF&}WHEELS" in first
+    # In its own active window, WHEELS gets the ACTIVE colour, not keyword.
+    last = dialogues[-1]
+    assert "{\\1c&H00FF2B&}WHEELS" in last
+
+
+def test_keyword_layer_in_karaoke_mode(tmp_path):
+    content = _build(tmp_path, "minimal", keywords=["your"])
+    line = next(l for l in content.splitlines() if l.startswith("Dialogue:"))
+    assert "\\1c&H00D7FF&}YOUR" in line
+
+
+def test_no_keywords_means_no_keyword_color(tmp_path):
+    content = _build(tmp_path, "bold_bottom")
+    assert "&H00D7FF&" not in content

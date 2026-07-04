@@ -38,12 +38,16 @@ export default function HelloPage() {
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
   const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
   const [captionLanguage, setCaptionLanguage] = useState(searchParams.get("caption_language") || "source");
+  const [captionPosition, setCaptionPosition] = useState("default");
   const [bgMusicUrl, setBgMusicUrl] = useState("");
   const [bgMusicVolume, setBgMusicVolume] = useState(0.15);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const STYLE_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56 };
+  const STYLE_FONT_DEFAULTS = {
+    bold_bottom: 72, center_pop: 88, minimal: 56,
+    karaoke: 76, hormozi: 84, beasty: 92, bold_statement: 64, simple: 56, pod_p: 62,
+  };
   const HIGHLIGHT_SWATCHES = [
     { color: null,      label: "AUTO", bg: C.cream2,  fg: C.dim2  },
     { color: "#FFD400", label: "YLW",  bg: "#FFD400", fg: "#222"  },
@@ -96,6 +100,7 @@ export default function HelloPage() {
           caption_style: captionStyle,
           caption_font_size: fontSizeOverride || undefined,
           caption_highlight_color: highlightColor || undefined,
+          caption_position: captionPosition !== "default" ? captionPosition : undefined,
           caption_language: captionLanguage || "source",
           bg_music_url: bgMusicUrl.trim() || undefined,
           bg_music_volume: bgMusicVolume,
@@ -242,18 +247,46 @@ export default function HelloPage() {
 
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, minmax(0,1fr))" : "1fr 1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 20 }}>
                 {[
-                  { id: "bold_bottom", label: "BOLD",    hint: "white + yellow, bottom", bg: C.amber    },
-                  { id: "center_pop",  label: "POP",     hint: "large, centered",         bg: C.lavender },
-                  { id: "minimal",     label: "MINIMAL", hint: "small, clean",            bg: C.signal   },
+                  { id: "bold_bottom",    label: "BOLD",      hint: "white + green, bottom",   bg: C.amber    },
+                  { id: "center_pop",     label: "POP",       hint: "large, centered",          bg: C.lavender },
+                  { id: "minimal",        label: "MINIMAL",   hint: "small, clean",             bg: C.signal   },
+                  { id: "karaoke",        label: "KARAOKE",   hint: "yellow active word",       bg: C.amber    },
+                  { id: "hormozi",        label: "HORMOZI",   hint: "huge, heavy outline",      bg: C.signal   },
+                  { id: "beasty",         label: "BEASTY",    hint: "playful display font",     bg: C.lavender },
+                  { id: "bold_statement", label: "STATEMENT", hint: "full phrase, no reveal",   bg: C.signal   },
+                  { id: "simple",         label: "SIMPLE",    hint: "sentence case sweep",      bg: C.lavender },
+                  { id: "pod_p",          label: "POD",       hint: "podcast, mid-screen",      bg: C.amber    },
+                  { id: "none",           label: "NONE",      hint: "no captions",              bg: C.cream2   },
                 ].map(({ id, label, hint, bg }) => (
                   <button key={id} onClick={() => handleStyleChange(id)} className="pixel"
-                    style={{ textAlign: "left", padding: 12, background: captionStyle === id ? bg : C.paper,
+                    style={{ textAlign: "left", padding: isMobile ? 8 : 12, background: captionStyle === id ? bg : C.paper,
                       border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
                       boxShadow: captionStyle === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
-                    <div style={{ fontSize: 10, color: C.ink, marginBottom: 3 }}>{label}</div>
+                    <div style={{ fontSize: isMobile ? 8 : 10, color: C.ink, marginBottom: 3 }}>{label}</div>
                     <div className="vt" style={{ fontSize: 12, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
                   </button>
                 ))}
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>CAPTION POSITION</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[
+                    { id: "default", label: "AUTO" },
+                    { id: "bottom",  label: "BOTTOM" },
+                    { id: "middle",  label: "MID" },
+                    { id: "top",     label: "TOP" },
+                  ].map(({ id, label }) => (
+                    <button key={id} onClick={() => setCaptionPosition(id)} className="pixel"
+                      style={{ flex: 1, padding: "9px 0", fontSize: 8, cursor: "pointer",
+                        background: captionPosition === id ? C.signal : C.cream2, color: C.ink,
+                        border: captionPosition === id ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                        boxShadow: captionPosition === id ? `2px 2px 0 ${C.ink}` : "none",
+                        transition: "all .1s" }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div style={{ marginBottom: 20 }}>

@@ -279,6 +279,7 @@ class ClipRequest(BaseModel):
     caption_style: str = "bold_bottom"
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
+    caption_position: Optional[str] = None  # default | bottom | middle | top
     caption_language: str = "source"
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
@@ -969,29 +970,92 @@ def _fill_words(seg: dict) -> list:
     ]
 
 
-# ── caption style presets ─────────────────────────────────────────────────────
-# Each entry: (Default style line, Highlight style line) — ASS V4+ format
-# Fields after Name: Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,
-#   BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,
-#   BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-_CAPTION_STYLES: dict[str, tuple[str, str]] = {
-    # Format: Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,...
-    # PrimaryColour  = colour of words AFTER being spoken (white)
-    # SecondaryColour = karaoke sweep colour — words show in this colour BEFORE being spoken
-    "bold_bottom": (
-        # Active word highlights bright green (&H0000FF2B = #2BFF00), like the reference.
-        "ClipForgeCaps,72,&H00FFFFFF,&H0000FF2B,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
-        "ClipForgeCaps,72,&H0000FF2B,&H0000FF2B,&H00000000,&H80000000,-1,0,0,0,100,100,2,0,1,3,2,2,80,80,500,1",
-    ),
-    "center_pop": (
-        "ClipForgeCaps,88,&H00FFFFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
-        "ClipForgeCaps,88,&H0000FFFF,&H0000FFFF,&H00000000,&HFF000000,-1,0,0,0,100,100,2,0,1,5,0,5,80,80,0,1",
-    ),
-    "minimal": (
-        # Smaller, not bold, thin outline, no per-word colour change
-        "Montserrat,56,&H00FFFFFF,&H00FFFFFF,&H00000000,&HFF000000,0,0,0,0,100,100,2,0,1,2,0,2,80,80,400,1",
-        "Montserrat,56,&H00FFFFFF,&H00FFFFFF,&H00000000,&HFF000000,0,0,0,0,100,100,2,0,1,2,0,2,80,80,400,1",
-    ),
+# ── caption template registry ─────────────────────────────────────────────────
+# Each template fully describes a caption look; style_lines() emits the ASS V4+
+# (Default, Highlight) style strings. The three legacy keys (bold_bottom,
+# center_pop, minimal) emit byte-identical lines to the old _CAPTION_STYLES
+# tuples (asserted in tests) so saved channels/backfills need no migration.
+# Colours are ASS &HAABBGGRR.
+from dataclasses import dataclass as _dataclass, replace as _dc_replace
+
+
+@_dataclass(frozen=True)
+class CaptionTemplate:
+    font: str = "ClipForgeCaps"
+    font_size: int = 72
+    base_color: str = "&H00FFFFFF"      # PrimaryColour — normal/spoken text
+    active_color: str = "&H0000FF2B"    # SecondaryColour — the active-word highlight
+    keyword_color: str = "&H0000D7FF"   # static AI-keyword layer (gold), independent of active
+    outline_color: str = "&H00000000"
+    back_color: str = "&H80000000"
+    bold: bool = True
+    spacing: int = 2
+    outline: int = 3
+    shadow: int = 2
+    alignment: int = 2
+    margin_l: int = 80
+    margin_r: int = 80
+    margin_v: int = 500
+    words_per_line: int = 3
+    uppercase: bool = True
+    mode: str = "pop"                   # pop | karaoke | static | none
+    active_lead_ms: int = 80            # highlight fires this early (Opus-style anticipation)
+
+    def style_lines(self) -> tuple[str, str]:
+        def _line(primary: str) -> str:
+            return (
+                f"{self.font},{self.font_size},{primary},{self.active_color},"
+                f"{self.outline_color},{self.back_color},{-1 if self.bold else 0},0,0,0,"
+                f"100,100,{self.spacing},0,1,{self.outline},{self.shadow},"
+                f"{self.alignment},{self.margin_l},{self.margin_r},{self.margin_v},1"
+            )
+        return _line(self.base_color), _line(self.active_color)
+
+
+CAPTION_TEMPLATES: dict[str, CaptionTemplate] = {
+    # ── legacy three (byte-identical to the old raw strings) ──
+    "bold_bottom": CaptionTemplate(),
+    "center_pop": CaptionTemplate(
+        font_size=88, active_color="&H0000FFFF", back_color="&HFF000000",
+        outline=5, shadow=0, alignment=5, margin_v=0),
+    "minimal": CaptionTemplate(
+        font="Montserrat", font_size=56, active_color="&H00FFFFFF",
+        back_color="&HFF000000", bold=False, outline=2, shadow=0, margin_v=400,
+        mode="karaoke", active_lead_ms=0),
+    # ── Opus-style presets ──
+    # Classic karaoke: white text, yellow active word.
+    "karaoke": CaptionTemplate(font_size=76, active_color="&H0000FFFF"),
+    # Hormozi/Mozi: huge, heavy outline, green active word, yellow keywords.
+    "hormozi": CaptionTemplate(
+        font_size=84, active_color="&H0000FF2B", keyword_color="&H0000FFFF",
+        outline=4, shadow=3, margin_v=480),
+    # Beasty: playful display font, yellow active, red keywords.
+    "beasty": CaptionTemplate(
+        font="Bangers", font_size=92, active_color="&H0000FFFF",
+        keyword_color="&H003131FF", outline=4, margin_v=520),
+    # Bold statement: full phrase shown at once, no per-word reveal, mid-screen.
+    "bold_statement": CaptionTemplate(
+        font_size=64, alignment=5, margin_v=0, back_color="&HFF000000",
+        words_per_line=6, mode="static"),
+    # Simple: minimal's sweep with a yellow active word, sentence case.
+    "simple": CaptionTemplate(
+        font="Montserrat", font_size=56, active_color="&H0000FFFF",
+        back_color="&HFF000000", bold=False, outline=2, shadow=0, margin_v=400,
+        mode="karaoke", uppercase=False),
+    # Pod P: podcast look — mid-screen, smaller, cyan active word.
+    "pod_p": CaptionTemplate(
+        font_size=62, active_color="&H00FFFF00", alignment=5, margin_v=0,
+        back_color="&HFF000000", words_per_line=4),
+    # No captions at all (header-only ASS keeps every render graph unchanged).
+    "none": CaptionTemplate(mode="none"),
+}
+
+# Position presets → (alignment, MarginV). MarginV measures from the bottom for
+# alignment 1-3 and from the top for 7-9; ignored for middle row (4-6).
+_CAPTION_POSITIONS = {
+    "bottom": (2, 500),
+    "middle": (5, 0),
+    "top": (8, 140),
 }
 
 _LANGUAGE_NAMES: dict[str, str] = {
@@ -1109,6 +1173,13 @@ from functools import lru_cache as _lru_cache
 
 FONTS_DIR     = Path(__file__).parent / "assets" / "fonts"
 _CAPTION_FONT = FONTS_DIR / "ClipForgeCaps-Bold.ttf"
+# ASS family name -> bundled file. Families listed here get embedded into the
+# ASS [Fonts] section; anything else (e.g. Montserrat) relies on server fonts,
+# matching the legacy minimal-style behavior.
+_FONT_FILES = {
+    "ClipForgeCaps": "ClipForgeCaps-Bold.ttf",
+    "Bangers": "Bangers-Regular.ttf",
+}
 # fontsdir for the libass filter — escape ':' (Windows drive) for the filtergraph.
 _FONTSDIR_ESC = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
 
@@ -1128,32 +1199,34 @@ def _ssa_uuencode(data: bytes) -> str:
     return "\n".join(s[i:i + 80] for i in range(0, len(s), 80))
 
 
-@_lru_cache(maxsize=1)
-def _embedded_caption_font() -> str:
-    """The [Fonts] section embedding the caption font, so libass renders with the
-    exact font we measure word widths against (no dependency on server fontconfig,
-    which the systemd service doesn't share — the real cause of caption spacing)."""
+@_lru_cache(maxsize=8)
+def _embedded_caption_font(font: str = "ClipForgeCaps") -> str:
+    """The [Fonts] section embedding a bundled caption font, so libass renders
+    with the exact font we measure/design against (no dependency on server
+    fontconfig, which the systemd service doesn't share — the real cause of the
+    old caption-spacing bug). Returns "" for non-bundled families (Montserrat)."""
+    filename = _FONT_FILES.get(font)
+    if not filename:
+        return ""
     try:
-        data = _CAPTION_FONT.read_bytes()
+        data = (FONTS_DIR / filename).read_bytes()
     except Exception:
         return ""
-    return "\n[Fonts]\nfontname: ClipForgeCaps-Bold_0.ttf\n" + _ssa_uuencode(data) + "\n"
-
-POP_CAPTION_STYLES = {"bold_bottom", "center_pop"}  # styles that get the pop animation
-_POP_SCALE = 118    # how big the active word grows (%)
-_POP_MS    = 90     # pop-in / settle duration (ms)
+    stem = filename.rsplit(".", 1)[0]
+    return f"\n[Fonts]\nfontname: {stem}_0.ttf\n" + _ssa_uuencode(data) + "\n"
 
 
-@_lru_cache(maxsize=16)
-def _caption_pil_font(size: int):
+@_lru_cache(maxsize=32)
+def _caption_pil_font(size: int, font: str = "ClipForgeCaps"):
     from PIL import ImageFont
-    return ImageFont.truetype(str(_CAPTION_FONT), size)
+    filename = _FONT_FILES.get(font, "ClipForgeCaps-Bold.ttf")
+    return ImageFont.truetype(str(FONTS_DIR / filename), size)
 
 
-def _measure_caption(text: str, size: int) -> float:
-    """Pixel width of text at the caption font size (for per-word layout)."""
+def _measure_caption(text: str, size: int, font: str = "ClipForgeCaps") -> float:
+    """Pixel width of text at the caption font size (for overlay placement)."""
     try:
-        return float(_caption_pil_font(size).getlength(text))
+        return float(_caption_pil_font(size, font).getlength(text))
     except Exception:
         return len(text) * size * 0.6  # rough fallback if the font can't be loaded
 
@@ -1232,35 +1305,27 @@ def build_ass_subtitles(
     margin_v_override: Optional[int] = None,
     alignment_override: Optional[int] = None,
 ):
-    default_line, highlight_line = _CAPTION_STYLES.get(caption_style, _CAPTION_STYLES["bold_bottom"])
+    tpl = CAPTION_TEMPLATES.get(caption_style) or CAPTION_TEMPLATES["bold_bottom"]
 
-    # Apply per-job overrides on top of the chosen style preset
-    if font_size is not None or highlight_color is not None or margin_v_override is not None or alignment_override is not None:
-        def _apply(line: str, is_default: bool) -> str:
-            parts = line.split(",")
-            if font_size is not None:
-                parts[1] = str(font_size)
-            if highlight_color is not None and is_default:
-                # SecondaryColour (parts[3]) = the karaoke sweep colour shown before a
-                # word is "spoken".  All dialogue events use the Default style, so this
-                # is the only field that actually changes what the viewer sees.
-                ass_color = _hex_to_ass(highlight_color)
-                if ass_color is not None:  # ignore malformed colours, keep the preset
-                    parts[3] = ass_color
-            if alignment_override is not None:
-                # Alignment (parts[17]). Must be forced to a bottom value for the
-                # MarginV override to take effect — ASS ignores MarginV for the
-                # middle-row alignments (4/5/6), e.g. the center_pop style.
-                parts[17] = str(alignment_override)
-            if margin_v_override is not None:
-                parts[20] = str(margin_v_override)  # MarginV field (0-indexed)
-            return ",".join(parts)
-        default_line = _apply(default_line, is_default=True)
-        highlight_line = _apply(highlight_line, is_default=False)
+    # Apply per-job overrides on top of the chosen template
+    if font_size is not None:
+        tpl = _dc_replace(tpl, font_size=font_size)
+    if highlight_color is not None:
+        ass_color = _hex_to_ass(highlight_color)
+        if ass_color is not None:  # ignore malformed colours, keep the preset
+            tpl = _dc_replace(tpl, active_color=ass_color)
+    if alignment_override is not None:
+        # Must be forced to a bottom value for the MarginV override to take
+        # effect — ASS ignores MarginV for middle-row alignments (4/5/6).
+        tpl = _dc_replace(tpl, alignment=alignment_override)
+    if margin_v_override is not None:
+        tpl = _dc_replace(tpl, margin_v=margin_v_override)
 
-    # Pop styles position each word by PIL-measured width, so libass MUST render
-    # with the same font — embed it directly rather than trusting server fonts.
-    _fonts_section = _embedded_caption_font() if caption_style in POP_CAPTION_STYLES else ""
+    default_line, highlight_line = tpl.style_lines()
+
+    # Embed the bundled font so libass renders with the exact face we designed
+    # against (server fontconfig is unreliable under systemd).
+    _fonts_section = _embedded_caption_font(tpl.font) if tpl.mode != "none" else ""
 
     ass_header = f"""[Script Info]
 ScriptType: v4.00+
@@ -1298,21 +1363,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if w["start"] >= clip_start - 0.05 and w["start"] < clip_end + 0.05:
                 words_in_clip.append(w)
 
-    # Parse the (override-applied) style so pop captions reuse its size/colours.
-    _p = default_line.split(",")
-    fs_px  = int(_p[1])
-    base_c = _p[2]      # PrimaryColour — base/white text
-    hl_c   = _p[3]      # SecondaryColour — the active-word highlight colour
-    outl_c = _p[4]      # OutlineColour
-    bord_w = _p[15]
-    shad_w = _p[16]
-    align  = int(_p[17])
-    mv     = int(_p[20])
-    pop_on = caption_style in POP_CAPTION_STYLES
-    # Group into lines of ~3 words; merge a lonely 1-word tail into the line
-    # before it (so "... YOUR" + "WHEELS" reads as one "... YOUR WHEELS" line).
-    LINE_SIZE = 3
-    groups = [words_in_clip[i:i + LINE_SIZE] for i in range(0, len(words_in_clip), LINE_SIZE)]
+    # "none" template: header-only ASS — every render graph keeps its ass=
+    # filter unchanged, libass just has nothing to draw.
+    if tpl.mode == "none":
+        output_path.write_text(ass_header, encoding="utf-8")
+        return
+
+    _case = (lambda s: s.upper()) if tpl.uppercase else (lambda s: s)
+
+    def _token(w: dict) -> str:
+        return _ass_escape(_case(_censor_text(w["word"]).strip()))
+
+    # Group into lines of ~words_per_line; merge a lonely 1-word tail into the
+    # line before it (so "... YOUR" + "WHEELS" reads as one "... YOUR WHEELS").
+    groups = [words_in_clip[i:i + tpl.words_per_line]
+              for i in range(0, len(words_in_clip), tpl.words_per_line)]
     if len(groups) >= 2 and len(groups[-1]) == 1:
         tail = groups.pop()
         groups[-1] += tail
@@ -1322,19 +1387,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         line_start = group[0]["start"]
         line_end   = group[-1]["end"]
 
-        if pop_on:
-            # Full-line redraw with a moving single-word highlight (the reference
-            # look). libass lays out and centres the WHOLE line itself — using the
-            # style's alignment/MarginV — so word spacing is always natural and we
-            # never position words by hand (this is what killed the spacing bug).
+        if tpl.mode == "pop":
+            # Full-line redraw with a moving single-word highlight. libass lays
+            # out and centres the WHOLE line itself — using the style's
+            # alignment/MarginV — so word spacing is always natural and we never
+            # position words by hand (this is what killed the old spacing bug).
             # One event per word window; only the active word is recoloured, and
-            # the full line stays on screen throughout. base_c/hl_c come from the
-            # style's Primary/Secondary colours.
-            base_i, hl_i = _inline_color(base_c), _inline_color(hl_c)
-            tokens = [_ass_escape(_censor_text(w["word"]).strip().upper()) for w in group]
-            for k, w in enumerate(group):
-                k_start = w["start"]
-                k_end   = group[k + 1]["start"] if k + 1 < len(group) else line_end
+            # the full line stays on screen throughout. The highlight fires
+            # active_lead_ms early (Opus-style reading anticipation).
+            base_i, hl_i = _inline_color(tpl.base_color), _inline_color(tpl.active_color)
+            tokens = [_token(w) for w in group]
+            lead = tpl.active_lead_ms / 1000.0
+            bounds = [line_start]
+            for k in range(1, len(group)):
+                bounds.append(max(bounds[-1], group[k]["start"] - lead))
+            bounds.append(max(bounds[-1], line_end))
+            for k in range(len(group)):
+                k_start, k_end = bounds[k], bounds[k + 1]
                 if k_end <= k_start:
                     continue
                 parts = [
@@ -1344,13 +1413,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 events.append(
                     f"Dialogue: 0,{ts(k_start)},{ts(k_end)},Default,,0,0,0,,{' '.join(parts)}"
                 )
+        elif tpl.mode == "static":
+            # Bold-statement look: the whole phrase appears at once, no reveal.
+            text = " ".join(_token(w) for w in group)
+            events.append(
+                f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{text}"
+            )
         else:
-            # Classic karaoke colour sweep (e.g. the minimal style).
+            # Classic karaoke colour sweep (minimal/simple styles).
             karaoke_text = ""
             for w in group:
                 dur_cs = max(1, int((w["end"] - w["start"]) * 100))
-                safe_word = _ass_escape(_censor_text(w["word"]).strip().upper())
-                karaoke_text += f"{{\\k{dur_cs}}}{safe_word} "
+                karaoke_text += f"{{\\k{dur_cs}}}{_token(w)} "
             events.append(
                 f"Dialogue: 0,{ts(line_start)},{ts(line_end)},Default,,0,0,0,,{karaoke_text.strip()}"
             )
@@ -2098,6 +2172,7 @@ async def create_clips(
     caption_style: str = "bold_bottom",
     font_size: Optional[int] = None,
     highlight_color: Optional[str] = None,
+    caption_position: Optional[str] = None,
     caption_segments: Optional[list] = None,
     bg_music_url: Optional[str] = None,
     bg_music_volume: float = 0.15,
@@ -2237,6 +2312,12 @@ async def create_clips(
             # Centre the caption text in the bottom blur zone
             blur_bg_margin_v = max(30, (bottom_zone - eff_font) // 2)
 
+        # Caption position preset → alignment/MarginV pair. blur_bg wins (its
+        # captions must land in the bottom blur zone regardless of preset).
+        pos_align, pos_mv = None, None
+        if caption_position and caption_position != "default" and clip_style != "blur_bg":
+            pos_align, pos_mv = _CAPTION_POSITIONS.get(caption_position, (None, None))
+
         # Build ASS subtitle
         ass_path = job_dir / f"clip_{idx}.ass"
         build_ass_subtitles(
@@ -2249,10 +2330,10 @@ async def create_clips(
             caption_style=caption_style,
             font_size=font_size,
             highlight_color=highlight_color,
-            margin_v_override=blur_bg_margin_v,
+            margin_v_override=blur_bg_margin_v if clip_style == "blur_bg" else pos_mv,
             # Force bottom-center alignment in blur_bg so captions land in the
             # bottom blur zone even for center-aligned styles like POP.
-            alignment_override=2 if clip_style == "blur_bg" else None,
+            alignment_override=2 if clip_style == "blur_bg" else pos_align,
         )
 
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])
@@ -2894,6 +2975,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 caption_style=req.caption_style or "bold_bottom",
                 font_size=req.caption_font_size,
                 highlight_color=req.caption_highlight_color,
+                caption_position=req.caption_position,
                 caption_segments=caption_segs,
                 bg_music_url=req.bg_music_url,
                 bg_music_volume=req.bg_music_volume,

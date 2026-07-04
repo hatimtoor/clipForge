@@ -275,7 +275,10 @@ class ClipRequest(BaseModel):
     max_duration: int = 90
     reframe: bool = False
     clip_style: str = "reframe"  # "reframe" | "blur_bg"
-    style_prompt: Optional[str] = None
+    style_prompt: Optional[str] = None       # "find" prompt (kept name for compat)
+    exclude_prompt: Optional[str] = None     # topics the AI must never clip
+    timeframe_start_min: Optional[float] = None  # only clip this window (minutes)
+    timeframe_end_min: Optional[float] = None
     caption_style: str = "bold_bottom"
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
@@ -783,9 +786,24 @@ async def _call_openrouter(prompt: str, temp: float = 0.3, max_tokens: int = 200
 
 
 # ── virality analysis (OpenRouter primary, Groq Llama fallback) ───────────────
-async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int, style_prompt: str = "") -> list:
+async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur: int, max_dur: int,
+                           style_prompt: str = "", exclude_prompt: str = "",
+                           timeframe_start: Optional[float] = None,
+                           timeframe_end: Optional[float] = None) -> list:
     log(job_id, f"Analyzing virality: {len(segments)} segments, max_clips={max_clips}, dur={min_dur}-{max_dur}s")
     await update_job(job_id, status="analyzing", progress=66, message="AI is identifying viral moments...")
+
+    # Processing timeframe: only analyze the requested window of the source
+    # (seconds). Captions still use the full segment list at render time.
+    if timeframe_start is not None or timeframe_end is not None:
+        t0 = timeframe_start or 0.0
+        t1 = timeframe_end if timeframe_end is not None else float("inf")
+        before = len(segments)
+        segments = [s for s in segments if s["end"] > t0 and s["start"] < t1]
+        log(job_id, f"  Timeframe {t0:.0f}s-{t1 if t1 != float('inf') else 'end'}s: {before} → {len(segments)} segments")
+        if not segments:
+            log(job_id, "  Timeframe excluded every segment — falling back to full transcript")
+            return []
 
     # Build transcript lines
     transcript_lines = []
@@ -815,7 +833,15 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
         log(job_id, f"Sending chunk {chunk_idx+1}/{len(chunks)} to {_analysis_provider} ({len(transcript_text)} chars)...")
         await update_job(job_id, progress=analysis_progress, message=f"AI analyzing part {chunk_idx+1}/{len(chunks)}...")
 
-        focus_line = f"\nFOCUS ON: {style_prompt.strip()}\n" if style_prompt and style_prompt.strip() else ""
+        _find = (style_prompt or "").strip()
+        _excl = (exclude_prompt or "").strip()
+        focus_line = ""
+        if _find:
+            focus_line += (f"\nUSER REQUEST — find ALL moments about: {_find}. "
+                           f"Rank matching moments by virality; prefer relevance to this request over generic virality.\n")
+        if _excl:
+            focus_line += (f"\nHARD EXCLUDE — never return moments about: {_excl}. "
+                           f"If a candidate touches an excluded topic, drop it entirely.\n")
         prompt = f"""You are a viral short-form content expert. Analyze this video transcript segment and identify the {clips_per_chunk} most viral-worthy moments.
 
 A viral segment should have ONE OR MORE of:
@@ -3134,6 +3160,9 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             segments, job_id,
             req.max_clips, req.min_duration, req.max_duration,
             style_prompt=req.style_prompt or "",
+            exclude_prompt=req.exclude_prompt or "",
+            timeframe_start=(req.timeframe_start_min * 60) if req.timeframe_start_min else None,
+            timeframe_end=(req.timeframe_end_min * 60) if req.timeframe_end_min else None,
         )
         log(job_id, f"Analysis done → {len(clips)} clips selected")
 
@@ -3519,6 +3548,9 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             "caption_position": req.caption_position,
             "caption_keywords": req.caption_keywords,
             "caption_emoji": req.caption_emoji,
+            "exclude_prompt": req.exclude_prompt,
+            "timeframe_start_min": req.timeframe_start_min,
+            "timeframe_end_min": req.timeframe_end_min,
         },
     })
     job_id = job["id"]

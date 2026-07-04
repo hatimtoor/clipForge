@@ -47,6 +47,9 @@ export default function ArchivePage() {
     if (opt.caption_position)           p.set("caption_position", opt.caption_position);
     if (opt.caption_keywords === false) p.set("caption_keywords", "0");
     if (opt.caption_emoji === false)    p.set("caption_emoji", "0");
+    if (opt.exclude_prompt)             p.set("exclude_prompt", opt.exclude_prompt);
+    if (opt.timeframe_start_min)        p.set("tf_start", opt.timeframe_start_min);
+    if (opt.timeframe_end_min)          p.set("tf_end", opt.timeframe_end_min);
     return `/hello?${p}`;
   };
 

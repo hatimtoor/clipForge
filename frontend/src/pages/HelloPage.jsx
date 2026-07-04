@@ -34,6 +34,9 @@ export default function HelloPage() {
   const [clipStyle, setClipStyle] = useState(searchParams.get("clip_style") || "reframe");
   const [trimSilence, setTrimSilence] = useState(searchParams.get("trim_silence") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
+  const [excludePrompt, setExcludePrompt] = useState(searchParams.get("exclude_prompt") || "");
+  const [tfStart, setTfStart] = useState(Number(searchParams.get("tf_start")) || 0);
+  const [tfEnd, setTfEnd] = useState(Number(searchParams.get("tf_end")) || 0);
   const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
   const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
@@ -99,6 +102,9 @@ export default function HelloPage() {
           clip_style: clipStyle,
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
+          exclude_prompt: excludePrompt.trim() || undefined,
+          timeframe_start_min: tfStart > 0 ? tfStart : undefined,
+          timeframe_end_min: tfEnd > 0 ? tfEnd : undefined,
           caption_style: captionStyle,
           caption_font_size: fontSizeOverride || undefined,
           caption_highlight_color: highlightColor || undefined,
@@ -169,22 +175,59 @@ export default function HelloPage() {
               {valid && <Tag color={C.signalDeep} bg={C.signal}>v OK</Tag>}
             </div>
 
-            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>FOCUS <span style={{ color: C.dim, fontWeight: 400 }}>(optional — guide what the AI picks)</span></div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.paper, border: BORDER, marginBottom: 24 }}>
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>FIND <span style={{ color: C.dim, fontWeight: 400 }}>(optional — what should the AI clip?)</span></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.paper, border: BORDER, marginBottom: 12 }}>
               <input
                 value={stylePrompt}
                 onChange={e => setStylePrompt(e.target.value)}
-                placeholder="e.g. controversial takes, actionable tips, funny moments"
+                placeholder="e.g. every moment about pricing, the funniest reactions"
                 className="mono"
                 style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 14, minWidth: 0 }}
               />
               {stylePrompt && <button onClick={() => setStylePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 14, marginBottom: 24 }}>
+            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>EXCLUDE <span style={{ color: C.dim, fontWeight: 400 }}>(optional — topics to never clip)</span></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.paper, border: BORDER, marginBottom: 24 }}>
+              <input
+                value={excludePrompt}
+                onChange={e => setExcludePrompt(e.target.value)}
+                placeholder="e.g. intros, sponsor reads, audio checks"
+                className="mono"
+                style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 14, minWidth: 0 }}
+              />
+              {excludePrompt && <button onClick={() => setExcludePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 14, marginBottom: 12 }}>
               <NumField label="MAX CLIPS" value={maxClips} setValue={setMaxClips} min={1} max={10} step={1} bg={C.lavender} />
               <NumField label="MIN DUR" suffix="s" value={minDur} setValue={setMinDur} min={15} max={90} step={5} bg={C.peach} />
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
+            </div>
+
+            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+              {[
+                { label: "< 30S", min: 15, max: 30 },
+                { label: "30-60S", min: 30, max: 60 },
+                { label: "60-90S", min: 60, max: 90 },
+                { label: "90S+", min: 90, max: 180 },
+              ].map(({ label, min, max }) => {
+                const active = minDur === min && maxDur === max;
+                return (
+                  <button key={label} onClick={() => { setMinDur(min); setMaxDur(max); }} className="pixel"
+                    style={{ padding: "6px 12px", fontSize: 8, cursor: "pointer",
+                      background: active ? C.signal : C.cream2, color: C.ink,
+                      border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                      boxShadow: active ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 14, marginBottom: 24 }}>
+              <NumField label="CLIP FROM" suffix="min" value={tfStart} setValue={setTfStart} min={0} max={600} step={1} bg={C.cream2} />
+              <NumField label="CLIP UNTIL" suffix="min" value={tfEnd} setValue={setTfEnd} min={0} max={600} step={1} bg={C.cream2} />
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 10, marginBottom: 28 }}>

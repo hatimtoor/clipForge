@@ -7,6 +7,25 @@ import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
 import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
+import FacecamBoxModal, { youtubeId } from "../components/FacecamBoxModal";
+import OnboardingTour from "../components/OnboardingTour";
+
+const TOUR_STEPS = [
+  { target: "#tour-url",       title: "START WITH A LINK",
+    text: "Paste any YouTube URL — podcast, stream, lecture. This is where every job begins." },
+  { target: "#tour-find",      title: "TELL THE AI WHAT TO CLIP",
+    text: "Optional but powerful: \"every moment about pricing\", \"the funniest reactions\". EXCLUDE below keeps intros and sponsor reads out." },
+  { target: "#tour-durations", title: "HOW MANY, HOW LONG",
+    text: "Up to 10 clips per job. Set a length range or use the quick buckets underneath." },
+  { target: "#tour-layout",    title: "PICK A LAYOUT",
+    text: "FILL tracks the speaker. SPLIT stacks two people. GAMEPLAY puts the facecam on top. AUTO ✨ reads the video and decides for you." },
+  { target: "#tour-format",    title: "PICK A FORMAT",
+    text: "9:16 for Shorts and TikTok, 1:1 for feeds, 16:9 for YouTube. Pro unlocks all three." },
+  { target: "#tour-captions",  title: "CAPTIONS, YOUR WAY",
+    text: "Live previews of every style — the highlight moves exactly like the burned-in captions. AI keywords and emoji are on by default." },
+  { target: "#tour-submit",    title: "ROLL TAPE!",
+    text: "That's everything. Clips arrive in a few minutes — watch progress on WORK, revisit them anytime in ARCHIVE." },
+];
 
 export default function HelloPage() {
   const navigate = useNavigate();
@@ -34,6 +53,8 @@ export default function HelloPage() {
   const [reframe, setReframe] = useState(searchParams.get("reframe") === "1");
   const [clipStyle, setClipStyle] = useState(searchParams.get("clip_style") || "reframe");
   const [aspectRatio, setAspectRatio] = useState(searchParams.get("aspect_ratio") || "9:16");
+  const [facecamBox, setFacecamBox] = useState(null);
+  const [camModalOpen, setCamModalOpen] = useState(false);
   const [trimSilence, setTrimSilence] = useState(searchParams.get("trim_silence") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
   const [excludePrompt, setExcludePrompt] = useState(searchParams.get("exclude_prompt") || "");
@@ -107,6 +128,7 @@ export default function HelloPage() {
           reframe: clipStyle === "reframe" && reframe,
           clip_style: clipStyle,
           aspect_ratio: ["facecam", "split", "screenshare", "auto"].includes(clipStyle) ? "9:16" : aspectRatio,
+          facecam_box: facecamBox || undefined,
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
           exclude_prompt: excludePrompt.trim() || undefined,
@@ -172,7 +194,7 @@ export default function HelloPage() {
             </p>
 
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>YOUTUBE URL</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: C.paper, border: BORDER, boxShadow: isMobile ? "none" : (valid ? `4px 4px 0 ${C.signalDeep}` : `4px 4px 0 ${C.ink}`), marginBottom: 24, transition: "box-shadow .15s" }}>
+            <div id="tour-url" style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: C.paper, border: BORDER, boxShadow: isMobile ? "none" : (valid ? `4px 4px 0 ${C.signalDeep}` : `4px 4px 0 ${C.ink}`), marginBottom: 24, transition: "box-shadow .15s" }}>
               <span className="pixel" style={{ fontSize: 12, color: valid ? C.signalDeep : C.dim }}>{`>`}</span>
               <input value={url} onChange={e => setUrl(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && valid && handleSubmit()}
@@ -183,7 +205,7 @@ export default function HelloPage() {
             </div>
 
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>FIND <span style={{ color: C.dim, fontWeight: 400 }}>(optional — what should the AI clip?)</span></div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.paper, border: BORDER, marginBottom: 12 }}>
+            <div id="tour-find" style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: C.paper, border: BORDER, marginBottom: 12 }}>
               <input
                 value={stylePrompt}
                 onChange={e => setStylePrompt(e.target.value)}
@@ -206,7 +228,7 @@ export default function HelloPage() {
               {excludePrompt && <button onClick={() => setExcludePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 14, marginBottom: 12 }}>
+            <div id="tour-durations" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 14, marginBottom: 12 }}>
               <NumField label="MAX CLIPS" value={maxClips} setValue={setMaxClips} min={1} max={10} step={1} bg={C.lavender} />
               <NumField label="MIN DUR" suffix="s" value={minDur} setValue={setMinDur} min={15} max={90} step={5} bg={C.peach} />
               <NumField label="MAX DUR" suffix="s" value={maxDur} setValue={setMaxDur} min={30} max={180} step={10} bg={C.amber} />
@@ -251,7 +273,7 @@ export default function HelloPage() {
             </div>
 
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>LAYOUT {!isPro && <Tag bg={C.amber} color={C.ink}>PRO</Tag>}</div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+            <div id="tour-layout" style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
               {[
                 { id: "auto",    label: "AUTO ✨",  hint: "AI picks the best layout per video", pro: true },
                 { id: "reframe", label: "FILL",     hint: "9:16 crop (tracked with REFRAME)", pro: false },
@@ -277,8 +299,20 @@ export default function HelloPage() {
               })}
             </div>
 
+            {["facecam", "screenshare", "auto"].includes(clipStyle) && (
+              <div style={{ marginBottom: 16 }}>
+                <button onClick={() => setCamModalOpen(true)} className="pixel" id="tour-cambox"
+                  style={{ width: "100%", textAlign: "left", padding: "10px 12px", fontSize: 8, cursor: "pointer",
+                    background: facecamBox ? C.signal : C.cream2, color: C.ink,
+                    border: facecamBox ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                    boxShadow: facecamBox ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                  {facecamBox ? "✓ CAM BOX SET — click to adjust" : "▦ MARK THE FACECAM (optional — auto-detect otherwise)"}
+                </button>
+              </div>
+            )}
+
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>FORMAT</div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+            <div id="tour-format" style={{ display: "flex", gap: 6, marginBottom: 20 }}>
               {[
                 { id: "9:16", label: "9:16 SHORTS" },
                 { id: "1:1", label: "1:1 SQUARE" },
@@ -311,7 +345,7 @@ export default function HelloPage() {
 
             <div style={{ display: "flex", justifyContent: isMobile ? "center" : "space-between", alignItems: "center", paddingTop: 18, borderTop: `2px dashed ${C.ink}33`, gap: 14, flexWrap: "wrap" }}>
               {!isMobile && <div className="vt" style={{ fontSize: 18, color: C.dim2 }}>Ctrl+V to paste · Enter to forge · est. 2-4 min</div>}
-              <PixelBtn color="hot" size="lg" onClick={handleSubmit} disabled={!valid || loading} style={isMobile ? { width: "100%" } : {}}>
+              <PixelBtn id="tour-submit" color="hot" size="lg" onClick={handleSubmit} disabled={!valid || loading} style={isMobile ? { width: "100%" } : {}}>
                 {loading ? "STARTING..." : `> ROLL TAPE`}
               </PixelBtn>
             </div>
@@ -344,7 +378,7 @@ export default function HelloPage() {
             <PixelCard color={C.cream} padding={isMobile ? 16 : 20} style={{ order: isMobile ? 0 : 1, ...(isMobile ? { boxShadow: "none" } : {}) }}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>CAPTION STYLE</div>
 
-              <div style={{ marginBottom: 20 }}>
+              <div id="tour-captions" style={{ marginBottom: 20 }}>
                 <CaptionStyleGrid value={captionStyle} onChange={handleStyleChange}
                   highlightColor={highlightColor} isMobile={isMobile} />
               </div>
@@ -489,6 +523,15 @@ export default function HelloPage() {
 
         </div>
       </div>
+      <OnboardingTour steps={TOUR_STEPS} />
+      {camModalOpen && (
+        <FacecamBoxModal
+          videoId={youtubeId(url)}
+          value={facecamBox ? { x: facecamBox[0], y: facecamBox[1], w: facecamBox[2], h: facecamBox[3] } : null}
+          onSave={setFacecamBox}
+          onClose={() => setCamModalOpen(false)}
+        />
+      )}
     </div>
   );
 }

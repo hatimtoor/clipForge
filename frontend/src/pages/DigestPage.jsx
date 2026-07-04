@@ -6,6 +6,7 @@ import { authFetch } from "../lib/supabase";
 import { useApp } from "../context/AppContext";
 import { useMobile } from "../hooks/useMobile";
 import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
+import FacecamBoxModal from "../components/FacecamBoxModal";
 
 const DAY_OPTIONS = [
   { value: 30,  label: "30 days back" },
@@ -105,6 +106,8 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
   const [captionEmoji,    setCaptionEmoji]    = useState(bfOpt.caption_emoji !== false);
   const [findPrompt,      setFindPrompt]      = useState(bfOpt.style_prompt ?? "");
   const [excludePrompt,   setExcludePrompt]   = useState(bfOpt.exclude_prompt ?? "");
+  const [facecamBox,      setFacecamBox]      = useState(bfOpt.facecam_box ?? null);
+  const [camModalOpen,    setCamModalOpen]    = useState(false);
 
   const ytChannels = ytStatus?.channels || [];
   const ttAccounts = ttStatus?.accounts || [];
@@ -286,6 +289,24 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
                         </button>
                       ))}
                     </div>
+
+                    {["facecam", "screenshare", "auto"].includes(clipStyle) && (
+                      <button onClick={() => setCamModalOpen(true)} className="pixel"
+                        style={{ width: "100%", textAlign: "left", padding: "9px 10px", fontSize: 8, cursor: "pointer",
+                          background: facecamBox ? C.signal : C.cream2, color: C.ink, marginBottom: 12,
+                          border: facecamBox ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                          boxShadow: facecamBox ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                        {facecamBox ? "✓ CAM BOX SET — click to adjust" : "▦ MARK THE FACECAM (optional)"}
+                      </button>
+                    )}
+                    {camModalOpen && (
+                      <FacecamBoxModal
+                        videoId={(bf.processed_video_ids || [])[0] || null}
+                        value={facecamBox ? { x: facecamBox[0], y: facecamBox[1], w: facecamBox[2], h: facecamBox[3] } : null}
+                        onSave={(b) => { setFacecamBox(b); patch({ facecam_box: b }); }}
+                        onClose={() => setCamModalOpen(false)}
+                      />
+                    )}
 
                     <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FORMAT</div>
                     <div style={{ display: "flex", gap: 5, marginBottom: 12 }}>

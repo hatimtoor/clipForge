@@ -131,14 +131,14 @@ function HowItWorksSection({ isMobile }) {
       color: C.hot,
       icon: <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={3} />,
       title: "PASTE A LINK",
-      desc: "Drop any YouTube URL — podcast, interview, long-form vlog, lecture. ClipForge handles everything from 10 minutes to 3 hours.",
+      desc: "Drop any YouTube URL — podcast, interview, gameplay stream, lecture. ClipForge handles everything from 10 minutes to 3 hours.",
     },
     {
       num: "02",
       color: C.amber,
       icon: <span style={{ fontSize: 28 }}>🤖</span>,
       title: "AI FINDS THE GOLD",
-      desc: "Every word gets transcribed. Our AI reads the full transcript and scores each segment for virality — tension, hooks, confessions, numbers.",
+      desc: "Transcript, audio energy, and your own prompts — every segment scored 0-99 for hook, flow, value, and trend. Even low-dialogue gameplay gets clipped by its loudest moments.",
     },
     {
       num: "03",
@@ -223,12 +223,18 @@ function FeaturesSection({ isMobile }) {
 
 function ToolsSection({ isMobile }) {
   const tools = [
+    { icon: "🧠", color: C.signal,   tag: "NEW",          title: "AUTO LAYOUT",        desc: "The AI reads your video and picks the layout itself — split for podcasts, screen-share for tutorials, gameplay split for streams." },
+    { icon: "🎮", color: C.hot,      tag: "NEW",          title: "GAMEPLAY SPLIT",     desc: "Facecam framed on top, tracked gameplay below — and if detection misses, draw the cam box yourself." },
+    { icon: "👥", color: C.lavender, tag: "NEW",          title: "SPLIT & SCREEN",     desc: "Two speakers stacked for podcasts. Screen content up top, presenter below for tutorials and webinars." },
+    { icon: "🎨", color: C.cream2,   tag: "NEW",          title: "10 CAPTION STYLES",  desc: "Hormozi, Karaoke, Beasty and more — animated previews, AI keyword highlights, auto emoji on big moments." },
+    { icon: "🔍", color: C.amber,    tag: "NEW",          title: "CLIP BY PROMPT",     desc: "“Find every moment about pricing. Skip the sponsor reads.” Then re-clip the same video with a new prompt — no reprocessing." },
+    { icon: "📐", color: C.peach,    tag: "NEW",          title: "3 FORMATS",          desc: "9:16 Shorts, 1:1 square, 16:9 wide — same clip intelligence, every placement covered." },
+    { icon: "📊", color: C.signal,   tag: "NEW",          title: "VIRALITY 0-99",      desc: "Every clip scored on hook, flow, value, and trend — post the winners first, skip the guesswork." },
     { icon: "🎬", color: C.peach,    tag: null,           title: "BLUR BACKGROUND",    desc: "Landscape clip centered on a blurred, scaled background — full 9:16 frame, no black bars, no crop." },
     { icon: "🎵", color: C.signal,   tag: null,           title: "BACKGROUND MUSIC",   desc: "Paste any YouTube music URL. Lay a bed track under every clip at the volume you choose." },
     { icon: "✂️", color: C.amber,    tag: null,           title: "TRIM SILENCE",       desc: "Dead air and long pauses cut automatically. Tighter pacing, higher watch time, no manual editing." },
     { icon: "📺", color: C.lavender, tag: "PRO",          title: "DIGEST",             desc: "Backfill an entire channel's history. Clips from every video ever uploaded, completely hands-free." },
     { icon: "♪",  color: C.tt,       tag: "COMING SOON",  title: "TIKTOK AUTO-UPLOAD", desc: "Connect your TikTok account and publish clips directly — no downloading, no re-uploading." },
-    { icon: "🎨", color: C.cream2,   tag: null,           title: "CAPTION STYLES",     desc: "Bold bottom, center pop, or minimal. Custom font size and highlight color per job." },
   ];
 
   return (

@@ -20,7 +20,7 @@ export const PixelSprite = ({ data, size = 4, palette, style }) => {
 };
 
 // ── PixelBtn ───────────────────────────────────────────────────────────────────
-export function PixelBtn({ color = "signal", size = "md", full, children, onClick, disabled, type, style: ext, onMouseEnter, onMouseLeave }) {
+export function PixelBtn({ color = "signal", size = "md", full, children, onClick, disabled, type, id, style: ext, onMouseEnter, onMouseLeave }) {
   const colors = {
     signal:   { bg: C.signal,   deep: C.signalDeep },
     hot:      { bg: C.hot,      deep: C.hotDeep },
@@ -53,7 +53,7 @@ export function PixelBtn({ color = "signal", size = "md", full, children, onClic
 
   const isDisabled = disabled || busy;
   return (
-    <button
+    <button id={id}
       type={type} onClick={handleClick} disabled={isDisabled}
       onMouseEnter={onMouseEnter}
       onMouseDown={() => setPressed(true)} onMouseUp={() => setPressed(false)}

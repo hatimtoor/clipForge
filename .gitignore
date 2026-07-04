@@ -19,3 +19,8 @@ cookies.txt
 *.egg-info/
 .pytest_cache/
 *.pt
+# golden-render harness artifacts (generated locally)
+backend/tests/_golden/
+backend/tests/_face.jpg
+music_cache/
+source_cache/

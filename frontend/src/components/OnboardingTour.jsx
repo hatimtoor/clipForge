@@ -1,43 +1,88 @@
 import { useEffect, useState } from "react";
-import { C, BORDER, SHADOW } from "../lib/theme";
+import { C, SHADOW } from "../lib/theme";
 import { PixelBtn } from "./ui";
 
+const TIP_W = 300;
+const TIP_H = 200;   // conservative tooltip height estimate for clamping
+
 // First-visit guided tour: spotlights one control at a time with an arrowed
-// tooltip explaining what it does. Pure CSS/DOM — the spotlight is a fixed div
-// over the target whose giant box-shadow dims everything else. Completion is
-// remembered per browser (localStorage), so it runs once after signup.
+// tooltip explaining what it does. The spotlight is re-measured every frame so
+// it stays glued to its target through async content loads and reflows; user
+// scrolling and clicking are blocked while the tour runs (SKIP exits).
+// Completion is remembered per browser (localStorage).
 export default function OnboardingTour({ steps, storageKey = "cf_tour_v1" }) {
   const [step, setStep] = useState(() =>
     typeof window !== "undefined" && !localStorage.getItem(storageKey) ? 0 : -1);
   const [rect, setRect] = useState(null);
 
+  const active = step >= 0 && step < steps.length;
   const finish = () => { localStorage.setItem(storageKey, "1"); setStep(-1); };
 
+  // Follow the target continuously — async data loads shift layouts long
+  // after the step starts, and the spotlight must move with them.
   useEffect(() => {
-    if (step < 0 || step >= steps.length) return;
-    const el = document.querySelector(steps[step].target);
-    if (!el) { setStep(s => s + 1 < steps.length ? s + 1 : (finish(), -1)); return; }
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    let raf;
+    if (!active) return;
+    const sel = steps[step].target;
+    let raf, scrolled = false;
     const measure = () => {
-      const r = el.getBoundingClientRect();
-      setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-      raf = requestAnimationFrame(measure);   // follows the smooth scroll
+      const el = document.querySelector(sel);
+      if (el) {
+        if (!scrolled) { el.scrollIntoView({ behavior: "smooth", block: "center" }); scrolled = true; }
+        const r = el.getBoundingClientRect();
+        setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+      }
+      raf = requestAnimationFrame(measure);
     };
-    const t = setTimeout(() => cancelAnimationFrame(raf), 900);
     measure();
-    const stop = () => { cancelAnimationFrame(raf); };
-    window.addEventListener("resize", measure);
-    return () => { stop(); clearTimeout(t); window.removeEventListener("resize", measure); };
+    // Target genuinely absent (feature hidden on this account) → skip the step
+    // after giving async content a moment to arrive.
+    const absent = setTimeout(() => {
+      if (!document.querySelector(sel)) setStep(s => (s + 1 < steps.length ? s + 1 : (finish(), -1)));
+    }, 1500);
+    return () => { cancelAnimationFrame(raf); clearTimeout(absent); };
   }, [step]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (step < 0 || step >= steps.length || !rect) return null;
+  // Block user scrolling and page interaction while the tour runs. Wheel,
+  // touch, and scroll keys are prevented (programmatic scrollIntoView still
+  // works); the click shield below eats stray clicks.
+  useEffect(() => {
+    if (!active) return;
+    const block = (e) => e.preventDefault();
+    const keyBlock = (e) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(e.key)) e.preventDefault();
+    };
+    window.addEventListener("wheel", block, { passive: false });
+    window.addEventListener("touchmove", block, { passive: false });
+    window.addEventListener("keydown", keyBlock);
+    return () => {
+      window.removeEventListener("wheel", block);
+      window.removeEventListener("touchmove", block);
+      window.removeEventListener("keydown", keyBlock);
+    };
+  }, [active]);
+
+  if (!active || !rect) return null;
   const s = steps[step];
   const pad = 6;
-  const below = rect.top + rect.height + 170 < window.innerHeight;
-  const tipTop = below ? rect.top + rect.height + pad + 14 : undefined;
-  const tipBottom = below ? undefined : window.innerHeight - rect.top + pad + 14;
-  const tipLeft = Math.max(12, Math.min(rect.left, window.innerWidth - 320));
+  const vw = window.innerWidth, vh = window.innerHeight;
+
+  // Tooltip placement: below the target, else above, else (target taller than
+  // the viewport allows) pinned inside the viewport over the target — always
+  // fully on screen so NEXT/SKIP stay clickable.
+  const fitsBelow = rect.top + rect.height + pad + TIP_H + 24 < vh;
+  const fitsAbove = rect.top - pad - TIP_H - 24 > 0;
+  let tipTop, arrow = null;
+  if (fitsBelow) {
+    tipTop = rect.top + rect.height + pad + 14;
+    arrow = { ch: "▲", top: rect.top + rect.height + pad };
+  } else if (fitsAbove) {
+    tipTop = rect.top - pad - TIP_H - 2;
+    arrow = { ch: "▼", top: rect.top - pad - 16 };
+  } else {
+    tipTop = Math.max(12, Math.min(vh - TIP_H - 12, rect.top + 40));
+  }
+  tipTop = Math.max(12, Math.min(tipTop, vh - TIP_H - 12));
+  const tipLeft = Math.max(12, Math.min(rect.left, vw - TIP_W - 20));
 
   return (
     <>
@@ -50,19 +95,21 @@ export default function OnboardingTour({ steps, storageKey = "cf_tour_v1" }) {
         border: `2px dashed ${C.signal}`,
       }} />
       {/* click shield so the page doesn't react underneath */}
-      <div style={{ position: "fixed", inset: 0, zIndex: 401 }} onClick={() => {}} />
-      {/* arrow */}
-      <div className="pixel" style={{
-        position: "fixed", zIndex: 402, color: C.signal, fontSize: 14,
-        left: tipLeft + 18,
-        ...(below ? { top: rect.top + rect.height + pad } : { bottom: window.innerHeight - rect.top + pad }),
-      }}>
-        {below ? "▲" : "▼"}
-      </div>
+      <div style={{ position: "fixed", inset: 0, zIndex: 401 }}
+        onClick={(e) => e.stopPropagation()}
+        onWheel={(e) => e.preventDefault()} />
+      {arrow && (
+        <div className="pixel" style={{
+          position: "fixed", zIndex: 402, color: C.signal, fontSize: 14,
+          left: tipLeft + 18, top: arrow.top, pointerEvents: "none",
+        }}>
+          {arrow.ch}
+        </div>
+      )}
       {/* tooltip */}
       <div className="pixel" style={{
-        position: "fixed", zIndex: 402, width: 300, maxWidth: "calc(100vw - 24px)",
-        left: tipLeft, ...(below ? { top: tipTop } : { bottom: tipBottom }),
+        position: "fixed", zIndex: 402, width: TIP_W, maxWidth: "calc(100vw - 24px)",
+        left: tipLeft, top: tipTop,
         background: C.cream, border: `3px solid ${C.ink}`, boxShadow: SHADOW, padding: 14,
       }}>
         <div style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>

@@ -342,7 +342,7 @@ class ChannelRequest(BaseModel):
     max_clips: int = 3
     min_duration: int = 30
     max_duration: int = 90
-    clip_style: str = "reframe"  # "reframe" | "blur_bg"
+    clip_style: str = "reframe"  # any layout: reframe|fit|blur_bg|split|screenshare|facecam|auto
     caption_style: str = "bold_bottom"
     caption_font_size: Optional[int] = None
     caption_highlight_color: Optional[str] = None
@@ -352,6 +352,14 @@ class ChannelRequest(BaseModel):
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
     trim_silence: bool = False
+    # New-style knobs — stored in the channels.options JSONB bag
+    aspect_ratio: Optional[str] = None
+    caption_position: Optional[str] = None
+    caption_keywords: Optional[bool] = None
+    caption_emoji: Optional[bool] = None
+    style_prompt: Optional[str] = None
+    exclude_prompt: Optional[str] = None
+    facecam_box: Optional[list] = None
 
 class ChannelPatchRequest(BaseModel):
     auto_upload: Optional[bool] = None
@@ -368,6 +376,51 @@ class ChannelPatchRequest(BaseModel):
     bg_music_url: Optional[str] = None
     bg_music_volume: Optional[float] = None
     trim_silence: Optional[bool] = None
+    aspect_ratio: Optional[str] = None
+    caption_position: Optional[str] = None
+    caption_keywords: Optional[bool] = None
+    caption_emoji: Optional[bool] = None
+    style_prompt: Optional[str] = None
+    exclude_prompt: Optional[str] = None
+    facecam_box: Optional[list] = None
+
+
+# Fields that live in the options JSONB bag on channels/backfill_channels
+# (instead of a column per knob). Split out of create/patch payloads.
+_OPTIONS_FIELDS = ("aspect_ratio", "caption_position", "caption_keywords",
+                   "caption_emoji", "style_prompt", "exclude_prompt", "facecam_box")
+
+
+def _channel_clip_request(row: dict, video_url: str) -> ClipRequest:
+    """Build a ClipRequest from a watchlist channel / backfill row, including
+    the new-style knobs stored in its options JSONB bag — so auto-created jobs
+    honour everything the manual submit form can express."""
+    style = row.get("clip_style") or "reframe"
+    opt = row.get("options") or {}
+    return ClipRequest(
+        url=video_url,
+        max_clips=row.get("max_clips", 3),
+        min_duration=row.get("min_duration", 30),
+        max_duration=row.get("max_duration", 90),
+        # Tracked crop except for whole-frame layouts; multi-region layouts use
+        # `reframe` only for their Fill fallback, where tracking is wanted.
+        reframe=style not in ("blur_bg", "fit"),
+        clip_style=style,
+        aspect_ratio=opt.get("aspect_ratio") or "9:16",
+        facecam_box=opt.get("facecam_box"),
+        style_prompt=opt.get("style_prompt") or None,
+        exclude_prompt=opt.get("exclude_prompt") or None,
+        caption_style=row.get("caption_style") or "bold_bottom",
+        caption_font_size=row.get("caption_font_size"),
+        caption_highlight_color=row.get("caption_highlight_color"),
+        caption_position=opt.get("caption_position"),
+        caption_keywords=opt.get("caption_keywords") is not False,
+        caption_emoji=opt.get("caption_emoji") is not False,
+        caption_language=row.get("caption_language") or "source",
+        bg_music_url=row.get("bg_music_url") or None,
+        bg_music_volume=row.get("bg_music_volume") or 0.15,
+        trim_silence=row.get("trim_silence", False),
+    )
 
 
 class BackfillRequest(BaseModel):
@@ -387,6 +440,13 @@ class BackfillRequest(BaseModel):
     bg_music_volume: float = 0.15
     trim_silence: bool = False
     tt_open_id: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    caption_position: Optional[str] = None
+    caption_keywords: Optional[bool] = None
+    caption_emoji: Optional[bool] = None
+    style_prompt: Optional[str] = None
+    exclude_prompt: Optional[str] = None
+    facecam_box: Optional[list] = None
 
 
 class BackfillPatchRequest(BaseModel):
@@ -406,6 +466,13 @@ class BackfillPatchRequest(BaseModel):
     bg_music_volume: Optional[float] = None
     trim_silence: Optional[bool] = None
     tt_open_id: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    caption_position: Optional[str] = None
+    caption_keywords: Optional[bool] = None
+    caption_emoji: Optional[bool] = None
+    style_prompt: Optional[str] = None
+    exclude_prompt: Optional[str] = None
+    facecam_box: Optional[list] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3403,22 +3470,7 @@ async def channel_poller():
                         "source": "watchlist", "channel_id": channel_id,
                     })
                     job_id = job["id"]
-                    _ch_clip_style = ch.get("clip_style", "reframe")
-                    req = ClipRequest(
-                        url=video_url,
-                        max_clips=ch.get("max_clips", 3),
-                        min_duration=ch.get("min_duration", 30),
-                        max_duration=ch.get("max_duration", 90),
-                        reframe=_ch_clip_style != "blur_bg",
-                        clip_style=_ch_clip_style,
-                        caption_style=ch.get("caption_style", "bold_bottom"),
-                        caption_font_size=ch.get("caption_font_size"),
-                        caption_highlight_color=ch.get("caption_highlight_color"),
-                        caption_language=ch.get("caption_language", "source"),
-                        bg_music_url=ch.get("bg_music_url") or None,
-                        bg_music_volume=ch.get("bg_music_volume") or 0.15,
-                        trim_silence=ch.get("trim_silence", False),
-                    )
+                    req = _channel_clip_request(ch, video_url)
                     _watchlist_inflight.add(key)
                     _running_tasks[job_id] = asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id"), watchlist_channel_id=channel_id, watchlist_video_id=video_id, watchlist_video_title=video.get("title", "")))
             except Exception as e:
@@ -3942,22 +3994,7 @@ async def _process_backfill_inner(bf: dict) -> None:
 
     for video in to_process:
         try:
-            _bf_clip_style = bf.get("clip_style", "reframe")
-            req = ClipRequest(
-                url=video["url"],
-                max_clips=bf.get("max_clips", 3),
-                min_duration=bf.get("min_duration", 30),
-                max_duration=bf.get("max_duration", 90),
-                reframe=_bf_clip_style != "blur_bg",
-                clip_style=_bf_clip_style,
-                caption_style=bf.get("caption_style", "bold_bottom"),
-                caption_font_size=bf.get("caption_font_size"),
-                caption_highlight_color=bf.get("caption_highlight_color"),
-                caption_language=bf.get("caption_language", "source"),
-                bg_music_url=bf.get("bg_music_url") or None,
-                bg_music_volume=bf.get("bg_music_volume") or 0.15,
-                trim_silence=bf.get("trim_silence", False),
-            )
+            req = _channel_clip_request(bf, video["url"])
             job_data = {
                 "user_id": user_id,
                 "url": video["url"],
@@ -4939,6 +4976,7 @@ async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,
         "tt_open_id": req.tt_open_id or None,
+        "options": {k: getattr(req, k) for k in _OPTIONS_FIELDS},
         "processed_video_ids": [],
         "total_videos": 0,
         "status": "active",
@@ -4954,6 +4992,10 @@ async def patch_backfill(backfill_id: str, req: BackfillPatchRequest, user=Depen
     updates = req.model_dump(exclude_unset=True)
     if "days_back" in updates and (updates["days_back"] < 1 or updates["days_back"] > 365):
         raise HTTPException(400, "days_back must be between 1 and 365")
+    # New-style knobs live in the options JSONB bag — merge, don't clobber.
+    opt_updates = {k: updates.pop(k) for k in list(updates) if k in _OPTIONS_FIELDS}
+    if opt_updates:
+        updates["options"] = {**(bf.get("options") or {}), **opt_updates}
     if updates:
         await asyncio.to_thread(db_update_backfill, backfill_id, updates)
     return await asyncio.to_thread(db_get_backfill, backfill_id)
@@ -5559,6 +5601,7 @@ async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,
         "tt_open_id": req.tt_open_id or None,
+        "options": {k: getattr(req, k) for k in _OPTIONS_FIELDS},
     })
     return _c(ch_data)
 
@@ -5576,6 +5619,11 @@ async def update_channel(channel_id: str, req: ChannelPatchRequest, user=Depends
     if not db_channel_owned_by(channel_id, user.id):
         raise HTTPException(404, "Channel not found")
     updates = req.model_dump(exclude_unset=True)
+    # New-style knobs live in the options JSONB bag — merge, don't clobber.
+    opt_updates = {k: updates.pop(k) for k in list(updates) if k in _OPTIONS_FIELDS}
+    if opt_updates:
+        current = db_get_channel(channel_id) or {}
+        updates["options"] = {**(current.get("options") or {}), **opt_updates}
     if updates:
         db_update_channel(channel_id, updates)
     return _c(db_get_channel(channel_id))
@@ -5608,17 +5656,9 @@ async def check_channel_now(request: Request, channel_id: str, user=Depends(requ
             "source": "watchlist", "channel_id": channel_id,
         })
         job_id = job["id"]
-        clip_req = ClipRequest(
-            url=video_url,
-            max_clips=ch.get("max_clips", 3),
-            min_duration=ch.get("min_duration", 30),
-            max_duration=ch.get("max_duration", 90),
-            reframe=True,
-            caption_style=ch.get("caption_style", "bold_bottom"),
-            caption_font_size=ch.get("caption_font_size"),
-            caption_highlight_color=ch.get("caption_highlight_color"),
-            caption_language=ch.get("caption_language", "source"),
-        )
+        # Same builder as the poller — the manual check previously dropped
+        # clip_style/music/trim (and all the new knobs).
+        clip_req = _channel_clip_request(ch, video_url)
         asyncio.create_task(run_pipeline(job_id, clip_req, user_id=user.id, auto_upload=ch.get("auto_upload", False)))
         return {"triggered": True, "job_id": job_id, "video_title": video.get("title")}
     return {"triggered": False, "reason": "No new video found"}

@@ -5,6 +5,7 @@ import Header from "../components/Header";
 import { authFetch } from "../lib/supabase";
 import { useApp } from "../context/AppContext";
 import { useMobile } from "../hooks/useMobile";
+import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
 
 const DAY_OPTIONS = [
   { value: 30,  label: "30 days back" },
@@ -19,12 +20,16 @@ const VPD_OPTIONS = [
   { value: 3, color: C.peach },
   { value: 5, color: C.hot },
 ];
-const CAPTION_STYLES = [
-  { id: "bold_bottom", label: "BOLD",    hint: "white + yellow, bottom", bg: C.amber    },
-  { id: "center_pop",  label: "POP",     hint: "large, centered",         bg: C.lavender },
-  { id: "minimal",     label: "MINIMAL", hint: "small, clean",            bg: C.signal   },
+const CAPTION_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56, simple: 56 };
+const LAYOUT_CHOICES = [
+  { id: "auto",        label: "AUTO ✨" },
+  { id: "reframe",     label: "FILL" },
+  { id: "fit",         label: "FIT" },
+  { id: "blur_bg",     label: "BLUR" },
+  { id: "split",       label: "SPLIT" },
+  { id: "screenshare", label: "SCREEN" },
+  { id: "facecam",     label: "GAMEPLAY" },
 ];
-const CAPTION_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56 };
 const HIGHLIGHT_SWATCHES = [
   { color: null,      label: "AUTO", bg: C.cream2,  fg: C.dim2 },
   { color: "#FFD400", label: "YLW",  bg: "#FFD400", fg: "#222" },
@@ -93,10 +98,18 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
   const [bgMusicVolume,  setBgMusicVolume]  = useState(bf.bg_music_volume ?? 0.15);
   const [trimSilence,    setTrimSilence]    = useState(bf.trim_silence ?? false);
   const [clipStyle,      setClipStyle]      = useState(bf.clip_style ?? "reframe");
+  const bfOpt = bf.options || {};
+  const [aspectRatio,     setAspectRatio]     = useState(bfOpt.aspect_ratio ?? "9:16");
+  const [captionPosition, setCaptionPosition] = useState(bfOpt.caption_position ?? "default");
+  const [captionKeywords, setCaptionKeywords] = useState(bfOpt.caption_keywords !== false);
+  const [captionEmoji,    setCaptionEmoji]    = useState(bfOpt.caption_emoji !== false);
+  const [findPrompt,      setFindPrompt]      = useState(bfOpt.style_prompt ?? "");
+  const [excludePrompt,   setExcludePrompt]   = useState(bfOpt.exclude_prompt ?? "");
 
   const ytChannels = ytStatus?.channels || [];
   const ttAccounts = ttStatus?.accounts || [];
   const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
+  const captionCustomizable = CUSTOMIZABLE_CAPTION_STYLES.includes(captionStyle);
 
   const patch = (fields) => onPatch(bf.id, fields);
   const adj = (val, setVal, min, max, delta, field) => {
@@ -152,18 +165,51 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
 
               {captionOpen && (
                 <div style={{ marginTop: 12, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 14 }}>
-                    {CAPTION_STYLES.map(({ id, label, hint, bg }) => (
-                      <button key={id} onClick={() => { setCaptionStyle(id); patch({ caption_style: id }); }} className="pixel"
-                        style={{ textAlign: "left", padding: "10px 8px",
-                          background: captionStyle === id ? bg : C.paper,
-                          border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
-                          boxShadow: captionStyle === id ? SHADOW : SHADOW_SM,
-                          cursor: "pointer", transition: "all .12s" }}>
-                        <div style={{ fontSize: 9, color: C.ink, marginBottom: 2 }}>{label}</div>
-                        <div className="vt" style={{ fontSize: 11, color: C.dim2, letterSpacing: 0, textTransform: "none", lineHeight: 1.2 }}>{hint}</div>
-                      </button>
-                    ))}
+                  <div style={{ marginBottom: 14 }}>
+                    <CaptionStyleGrid value={captionStyle}
+                      onChange={(id) => {
+                        setCaptionStyle(id);
+                        const fields = { caption_style: id };
+                        if (!CUSTOMIZABLE_CAPTION_STYLES.includes(id)) {
+                          setFontSize(null); setHighlightColor(null);
+                          fields.caption_font_size = null; fields.caption_highlight_color = null;
+                        }
+                        patch(fields);
+                      }}
+                      highlightColor={highlightColor} isMobile={isMobile} />
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>AI EXTRAS</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {[
+                        { on: captionKeywords, label: "KEYWORDS", toggle: () => { const v = !captionKeywords; setCaptionKeywords(v); patch({ caption_keywords: v }); } },
+                        { on: captionEmoji, label: "EMOJI", toggle: () => { const v = !captionEmoji; setCaptionEmoji(v); patch({ caption_emoji: v }); } },
+                      ].map(({ on, label, toggle }) => (
+                        <button key={label} onClick={toggle} className="pixel"
+                          style={{ flex: 1, padding: "8px 4px", fontSize: 8, cursor: "pointer",
+                            background: on ? C.signal : C.cream2, color: C.ink,
+                            border: on ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                            boxShadow: on ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                          {label} {on ? "ON" : "OFF"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>CAPTION POSITION</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {[["default", "AUTO"], ["bottom", "BOTTOM"], ["middle", "MID"], ["top", "TOP"]].map(([id, label]) => (
+                        <button key={id} onClick={() => { setCaptionPosition(id); patch({ caption_position: id === "default" ? null : id }); }} className="pixel"
+                          style={{ flex: 1, padding: "8px 0", fontSize: 8, cursor: "pointer",
+                            background: captionPosition === id ? C.signal : C.cream2, color: C.ink,
+                            border: captionPosition === id ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                            boxShadow: captionPosition === id ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div style={{ marginBottom: 14 }}>
                     <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>LANGUAGE</div>
@@ -172,33 +218,35 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
                       {CAPTION_LANGUAGES.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
                     </select>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div>
-                      <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FONT SIZE</div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
-                        <div style={{ flex: 1 }}>
-                          <Stepper label="" val={effectiveFontSize} min={40} max={120} step={4} suffix="px"
-                            onAdj={d => { const v = Math.min(120, Math.max(40, effectiveFontSize + d)); setFontSize(v); patch({ caption_font_size: v }); }} />
+                  {captionCustomizable && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      <div>
+                        <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FONT SIZE</div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+                          <div style={{ flex: 1 }}>
+                            <Stepper label="" val={effectiveFontSize} min={40} max={120} step={4} suffix="px"
+                              onAdj={d => { const v = Math.min(120, Math.max(40, effectiveFontSize + d)); setFontSize(v); patch({ caption_font_size: v }); }} />
+                          </div>
+                          <button onClick={() => { setFontSize(null); patch({ caption_font_size: null }); }} className="pixel"
+                            style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer",
+                              background: fontSize === null ? C.signal : C.cream2, color: C.ink, border: BORDER,
+                              boxShadow: fontSize === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>AUTO</button>
                         </div>
-                        <button onClick={() => { setFontSize(null); patch({ caption_font_size: null }); }} className="pixel"
-                          style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer",
-                            background: fontSize === null ? C.signal : C.cream2, color: C.ink, border: BORDER,
-                            boxShadow: fontSize === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>AUTO</button>
+                      </div>
+                      <div>
+                        <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>HIGHLIGHT</div>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => (
+                            <button key={label} onClick={() => { setHighlightColor(color); patch({ caption_highlight_color: color }); }} className="pixel"
+                              style={{ padding: "5px 8px", fontSize: 7, background: bg, color: fg,
+                                border: highlightColor === color ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                                boxShadow: highlightColor === color ? `2px 2px 0 ${C.ink}` : "none",
+                                cursor: "pointer", transition: "all .1s" }}>{label}</button>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>HIGHLIGHT</div>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => (
-                          <button key={label} onClick={() => { setHighlightColor(color); patch({ caption_highlight_color: color }); }} className="pixel"
-                            style={{ padding: "5px 8px", fontSize: 7, background: bg, color: fg,
-                              border: highlightColor === color ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                              boxShadow: highlightColor === color ? `2px 2px 0 ${C.ink}` : "none",
-                              cursor: "pointer", transition: "all .1s" }}>{label}</button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+                  )}
 
                   <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
                     <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>
@@ -225,22 +273,56 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
                     )}
                   </div>
 
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22`, display: "flex", gap: 6 }}>
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>LAYOUT</div>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
+                      {LAYOUT_CHOICES.map(({ id, label }) => (
+                        <button key={id} onClick={() => { setClipStyle(id); patch({ clip_style: id }); }} className="pixel"
+                          style={{ flex: "1 1 auto", padding: "8px 8px", fontSize: 7, cursor: "pointer",
+                            background: clipStyle === id ? C.signal : C.cream2, color: C.ink,
+                            border: clipStyle === id ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                            boxShadow: clipStyle === id ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FORMAT</div>
+                    <div style={{ display: "flex", gap: 5, marginBottom: 12 }}>
+                      {["9:16", "1:1", "16:9"].map((id) => {
+                        const unavailable = ["facecam", "split", "screenshare", "auto"].includes(clipStyle) && id !== "9:16";
+                        return (
+                          <button key={id} disabled={unavailable}
+                            onClick={() => { setAspectRatio(id); patch({ aspect_ratio: id }); }} className="pixel"
+                            style={{ flex: 1, padding: "8px 0", fontSize: 8,
+                              cursor: unavailable ? "not-allowed" : "pointer", opacity: unavailable ? 0.4 : 1,
+                              background: aspectRatio === id ? C.signal : C.cream2, color: C.ink,
+                              border: aspectRatio === id ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                              boxShadow: aspectRatio === id ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
+                            {id}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FIND <span style={{ color: C.dim }}>(optional)</span></div>
+                    <input value={findPrompt} onChange={e => setFindPrompt(e.target.value)}
+                      onBlur={() => patch({ style_prompt: findPrompt.trim() || null })}
+                      placeholder="e.g. every moment about pricing"
+                      className="mono" style={{ width: "100%", padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 11, marginBottom: 8 }} />
+                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>EXCLUDE <span style={{ color: C.dim }}>(optional)</span></div>
+                    <input value={excludePrompt} onChange={e => setExcludePrompt(e.target.value)}
+                      onBlur={() => patch({ exclude_prompt: excludePrompt.trim() || null })}
+                      placeholder="e.g. intros, sponsor reads"
+                      className="mono" style={{ width: "100%", padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 11, marginBottom: 12 }} />
+
                     <button onClick={() => { const v = !trimSilence; setTrimSilence(v); patch({ trim_silence: v }); }} className="pixel" style={{
-                      flex: 1, padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
+                      width: "100%", padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
                       background: trimSilence ? C.signal : C.cream2, color: C.ink, border: BORDER,
                       boxShadow: trimSilence ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
                       transform: trimSilence ? "translate(2px,2px)" : "none",
                     }}>
-                      ✂ TRIM {trimSilence ? "ON" : "OFF"}
-                    </button>
-                    <button onClick={() => { const v = clipStyle !== "blur_bg"; const s = v ? "blur_bg" : "reframe"; setClipStyle(s); patch({ clip_style: s }); }} className="pixel" style={{
-                      flex: 1, padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
-                      background: clipStyle === "blur_bg" ? C.signal : C.cream2, color: C.ink, border: BORDER,
-                      boxShadow: clipStyle === "blur_bg" ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                      transform: clipStyle === "blur_bg" ? "translate(2px,2px)" : "none",
-                    }}>
-                      ▣ BLUR BG {clipStyle === "blur_bg" ? "ON" : "OFF"}
+                      ✂ TRIM SILENCE {trimSilence ? "ON" : "OFF"}
                     </button>
                   </div>
                 </div>

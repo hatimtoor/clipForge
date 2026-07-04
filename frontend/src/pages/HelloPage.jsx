@@ -6,59 +6,7 @@ import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
-
-// ── caption template previews ─────────────────────────────────────────────────
-// Mirrors backend CAPTION_TEMPLATES (fonts, colors, case, mode) so the picker
-// shows what actually gets burned in. Colors are the RGB twins of the ASS BGR
-// values; the active word follows the user's highlight-color pick.
-const CAPTION_TEMPLATE_PREVIEWS = [
-  { id: "bold_bottom",    label: "BOLD",      bg: "#F5C24B", font: "ClipForgeCaps", px: 14, weight: 800, upper: true,  active: "#2BFF00", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2.5 },
-  { id: "center_pop",     label: "POP",       bg: "#C9B8F0", font: "ClipForgeCaps", px: 17, weight: 800, upper: true,  active: "#FFFF00", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 3 },
-  { id: "karaoke",        label: "KARAOKE",   bg: "#F5C24B", font: "ClipForgeCaps", px: 15, weight: 800, upper: true,  active: "#FFFF00", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2.5 },
-  { id: "hormozi",        label: "HORMOZI",   bg: "#7FD8A4", font: "ClipForgeCaps", px: 17, weight: 800, upper: true,  active: "#2BFF00", keyword: "#FFFF00", words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 3.2 },
-  { id: "beasty",         label: "BEASTY",    bg: "#C9B8F0", font: "Bangers",       px: 19, weight: 400, upper: true,  active: "#FFFF00", keyword: "#FF3131", words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2.8 },
-  { id: "bold_statement", label: "STATEMENT", bg: "#7FD8A4", font: "ClipForgeCaps", px: 13, weight: 800, upper: true,  active: null,      keyword: null,      words: ["BIG", "BOLD", "TAKES"],    activeIdx: -1, stroke: 2.5 },
-  { id: "simple",         label: "SIMPLE",    bg: "#C9B8F0", font: "Montserrat",    px: 12, weight: 400, upper: false, active: "#FFFF00", keyword: null,      words: ["clean", "and", "simple"],  activeIdx: 1, stroke: 1 },
-  { id: "minimal",        label: "MINIMAL",   bg: "#7FD8A4", font: "Montserrat",    px: 12, weight: 400, upper: true,  active: null,      keyword: null,      words: ["SMALL", "AND", "CLEAN"],   activeIdx: -1, stroke: 1 },
-  { id: "pod_p",          label: "POD",       bg: "#F5C24B", font: "ClipForgeCaps", px: 12, weight: 800, upper: true,  active: "#00FFFF", keyword: null,      words: ["BUILD", "REAL", "WEALTH"], activeIdx: 1, stroke: 2 },
-  { id: "none",           label: "NONE",      bg: "#EDE4CE", font: "ClipForgeCaps", px: 12, weight: 800, upper: true,  active: null,      keyword: null,      words: [],                          activeIdx: -1, stroke: 0 },
-];
-
-function TplPreview({ id, highlightColor }) {
-  const t = CAPTION_TEMPLATE_PREVIEWS.find(p => p.id === id);
-  if (!t) return null;
-  const activeColor = highlightColor || t.active;
-  return (
-    <div style={{
-      padding: "10px 6px", minHeight: 40,
-      display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3em",
-      overflow: "hidden", whiteSpace: "nowrap",
-    }}>
-      {t.words.length === 0 ? (
-        <span style={{ color: "#999", fontSize: 11, fontFamily: "monospace" }}>NO CAPTIONS</span>
-      ) : t.words.map((w, i) => {
-        // Sticker-style outline so white caption text stays legible directly on
-        // the light button background (no dark canvas behind the preview).
-        const s = t.stroke >= 2 ? 1.6 : 1.0;
-        return (
-          <span key={i} style={{
-            fontFamily: `${t.font}, Arial, sans-serif`,
-            fontWeight: t.weight,
-            fontSize: t.px,
-            lineHeight: 1,
-            color: i === t.activeIdx && activeColor ? activeColor
-                 : (i === 2 && t.keyword ? t.keyword : "#fff"),
-            WebkitTextStroke: t.stroke ? `${s}px #000` : undefined,
-            paintOrder: "stroke fill",
-            textShadow: t.stroke
-              ? `${s}px ${s}px 0 #000, -${s}px ${s}px 0 #000, ${s}px -${s}px 0 #000, -${s}px -${s}px 0 #000, 0 ${s * 1.5}px 0 #000`
-              : undefined,
-          }}>{w}</span>
-        );
-      })}
-    </div>
-  );
-}
+import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
 
 export default function HelloPage() {
   const navigate = useNavigate();
@@ -138,7 +86,11 @@ export default function HelloPage() {
   const handleStyleChange = (id) => {
     setCaptionStyle(id);
     if (fontSizeOverride !== null) setFontSizeOverride(null);
+    // Designed templates keep their identity — size/colour tweaks only apply
+    // to the plain styles, so clear a stale pick when switching away.
+    if (!CUSTOMIZABLE_CAPTION_STYLES.includes(id) && highlightColor) setHighlightColor(null);
   };
+  const captionCustomizable = CUSTOMIZABLE_CAPTION_STYLES.includes(captionStyle);
 
   const valid = /youtu\.?be/.test(url);
   const isMobile = useMobile();
@@ -161,8 +113,8 @@ export default function HelloPage() {
           timeframe_start_min: tfStart > 0 ? tfStart : undefined,
           timeframe_end_min: tfEnd > 0 ? tfEnd : undefined,
           caption_style: captionStyle,
-          caption_font_size: fontSizeOverride || undefined,
-          caption_highlight_color: highlightColor || undefined,
+          caption_font_size: (captionCustomizable && fontSizeOverride) || undefined,
+          caption_highlight_color: (captionCustomizable && highlightColor) || undefined,
           caption_position: captionPosition !== "default" ? captionPosition : undefined,
           caption_keywords: captionKeywords,
           caption_emoji: captionEmoji,
@@ -392,16 +344,9 @@ export default function HelloPage() {
             <PixelCard color={C.cream} padding={isMobile ? 16 : 20} style={{ order: isMobile ? 0 : 1, ...(isMobile ? { boxShadow: "none" } : {}) }}>
               <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 14 }}>CAPTION STYLE</div>
 
-              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr", gap: isMobile ? 6 : 8, marginBottom: 20 }}>
-                {CAPTION_TEMPLATE_PREVIEWS.map(({ id, label, bg }) => (
-                  <button key={id} onClick={() => handleStyleChange(id)} className="pixel"
-                    style={{ textAlign: "left", padding: isMobile ? 6 : 8, background: captionStyle === id ? bg : C.paper,
-                      border: captionStyle === id ? `3px solid ${C.ink}` : BORDER,
-                      boxShadow: captionStyle === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
-                    <div style={{ fontSize: isMobile ? 7 : 8, color: C.ink, marginBottom: 5 }}>{label}</div>
-                    <TplPreview id={id} highlightColor={highlightColor} />
-                  </button>
-                ))}
+              <div style={{ marginBottom: 20 }}>
+                <CaptionStyleGrid value={captionStyle} onChange={handleStyleChange}
+                  highlightColor={highlightColor} isMobile={isMobile} />
               </div>
 
               <div style={{ marginBottom: 20 }}>
@@ -461,46 +406,50 @@ export default function HelloPage() {
                 </select>
               </div>
 
-              <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginBottom: 16 }}>
-                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>FONT SIZE</div>
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <NumField
-                      label=""
-                      value={effectiveFontSize}
-                      setValue={setFontSizeOverride}
-                      min={40} max={120} step={4}
-                      bg={C.paper}
-                    />
-                  </div>
-                  <button onClick={() => setFontSizeOverride(null)} className="pixel"
-                    style={{ flex: 1, padding: "10px 0", fontSize: 9, cursor: "pointer",
-                      background: fontSizeOverride === null ? C.signal : C.cream2,
-                      color: C.ink,
-                      border: BORDER,
-                      boxShadow: fontSizeOverride === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>
-                    AUTO
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>HIGHLIGHT COLOR</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => {
-                    const active = highlightColor === color;
-                    return (
-                      <button key={label} onClick={() => setHighlightColor(color)} className="pixel"
-                        style={{ padding: "7px 11px", fontSize: 8, background: bg, color: fg,
-                          border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                          boxShadow: active ? `2px 2px 0 ${C.ink}` : "none",
-                          cursor: "pointer", transition: "all .1s" }}>
-                        {label}
+              {captionCustomizable && (
+                <>
+                  <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginBottom: 16 }}>
+                    <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>FONT SIZE</div>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <NumField
+                          label=""
+                          value={effectiveFontSize}
+                          setValue={setFontSizeOverride}
+                          min={40} max={120} step={4}
+                          bg={C.paper}
+                        />
+                      </div>
+                      <button onClick={() => setFontSizeOverride(null)} className="pixel"
+                        style={{ flex: 1, padding: "10px 0", fontSize: 9, cursor: "pointer",
+                          background: fontSizeOverride === null ? C.signal : C.cream2,
+                          color: C.ink,
+                          border: BORDER,
+                          boxShadow: fontSizeOverride === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>
+                        AUTO
                       </button>
-                    );
-                  })}
-                </div>
-              </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 10 }}>HIGHLIGHT COLOR</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => {
+                        const active = highlightColor === color;
+                        return (
+                          <button key={label} onClick={() => setHighlightColor(color)} className="pixel"
+                            style={{ padding: "7px 11px", fontSize: 8, background: bg, color: fg,
+                              border: active ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+                              boxShadow: active ? `2px 2px 0 ${C.ink}` : "none",
+                              cursor: "pointer", transition: "all .1s" }}>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div style={{ borderTop: `2px solid ${C.ink}11`, paddingTop: 16, marginTop: 16 }}>
                 <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>

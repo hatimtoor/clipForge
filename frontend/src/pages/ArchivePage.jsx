@@ -46,6 +46,7 @@ export default function ArchivePage() {
     const opt = j.options || {};
     if (opt.caption_position)           p.set("caption_position", opt.caption_position);
     if (opt.caption_keywords === false) p.set("caption_keywords", "0");
+    if (opt.caption_emoji === false)    p.set("caption_emoji", "0");
     return `/hello?${p}`;
   };
 

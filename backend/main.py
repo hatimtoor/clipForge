@@ -281,6 +281,7 @@ class ClipRequest(BaseModel):
     caption_highlight_color: Optional[str] = None
     caption_position: Optional[str] = None  # default | bottom | middle | top
     caption_keywords: bool = True           # AI keyword colour layer in captions
+    caption_emoji: bool = True              # AI emoji overlays near captions
     caption_language: str = "source"
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
@@ -841,6 +842,8 @@ Return ONLY a JSON array. Each item must have:
 - "keywords": array of 3-6 single words copied VERBATIM from the transcript inside
   this clip's time range — the most emphatic, emotional, or high-stakes words
   (these get color-highlighted in the burned-in captions)
+- "emojis": array of up to 4 objects {{"word": <a verbatim transcript word>, "emoji": <ONE common emoji>}}
+  pairing an emotional moment's word with a fitting emoji (shown near the captions)
 
 Return valid JSON array only, no markdown, no explanation."""
 
@@ -943,6 +946,15 @@ Return valid JSON array only, no markdown, no explanation."""
             c["keywords"] = [str(k).strip() for k in kws if str(k).strip() and " " not in str(k).strip()][:6]
         else:
             c["keywords"] = []
+        # Caption emoji: keep only pairs whose emoji exists in the bundled
+        # Twemoji whitelist (the LLM free-associates; we only render curated).
+        emo = c.get("emojis")
+        cleaned = []
+        if isinstance(emo, list):
+            for item in emo:
+                if isinstance(item, dict) and item.get("word") and _emoji_file(str(item.get("emoji", ""))):
+                    cleaned.append({"word": str(item["word"]).strip(), "emoji": str(item["emoji"]).strip()})
+        c["emojis"] = cleaned[:4]
         valid.append(c)
 
     return valid
@@ -1069,6 +1081,86 @@ _CAPTION_POSITIONS = {
     "middle": (5, 0),
     "top": (8, 140),
 }
+
+# ── caption emoji (Twemoji PNG overlays) ──────────────────────────────────────
+# libass can't render colour emoji, so emoji are composited as timed PNG
+# overlays in a post-pass after the clip renders. Only the curated set bundled
+# in assets/emoji ships — anything else the LLM suggests is silently dropped.
+_EMOJI_DIR = Path(__file__).parent / "assets" / "emoji"
+
+
+def _emoji_file(emoji: str) -> Optional[Path]:
+    """Path to the bundled Twemoji PNG for an emoji string, or None if it isn't
+    in the curated set. Tries the fe0f-stripped codepoint name first (Twemoji's
+    usual convention), then the full sequence."""
+    if not emoji:
+        return None
+    emoji = emoji.strip()
+    cps = [ord(c) for c in emoji]
+    stripped = "-".join(f"{c:x}" for c in cps if c != 0xFE0F)
+    full = "-".join(f"{c:x}" for c in cps)
+    for name in (stripped, full):
+        if name:
+            p = _EMOJI_DIR / f"{name}.png"
+            if p.exists():
+                return p
+    return None
+
+
+def _emoji_placements(emojis: list, cap_info: dict, render_dur: float) -> list:
+    """Map the LLM's {word, emoji} pairs onto caption-line display windows.
+    Returns [(png_path, x, y, size, t0, t1)], max one emoji per caption line,
+    max 8 per clip. Lines whose window falls outside the clip are skipped."""
+    placements, used_lines = [], set()
+    esz = cap_info["emoji_size"]
+    x = (cap_info["video_width"] - esz) // 2
+    y = cap_info["emoji_y"]
+    for item in emojis or []:
+        png = _emoji_file(item.get("emoji", ""))
+        if not png:
+            continue
+        target = item.get("word", "").strip().strip(".,!?\"'").lower()
+        if not target:
+            continue
+        for li, line in enumerate(cap_info.get("lines", [])):
+            if li in used_lines or target not in line["words"]:
+                continue
+            t0, t1 = line["start"], min(line["end"], render_dur)
+            if t1 - t0 >= 0.2 and t0 < render_dur:
+                placements.append((png, x, y, esz, round(t0, 3), round(t1, 3)))
+                used_lines.add(li)
+            break
+        if len(placements) >= 8:
+            break
+    return placements
+
+
+async def _apply_emoji_overlays(clip_path: Path, placements: list, job_id: str) -> None:
+    """Post-pass: composite timed emoji PNGs onto the rendered clip. A separate
+    pass (not part of the main filtergraph) so it works identically for every
+    layout; only runs when a clip actually has emoji, and failure is non-fatal."""
+    if not placements:
+        return
+    tmp = clip_path.with_name(clip_path.stem + "_emoji.mp4")
+    cmd = [FFMPEG, "-y", "-i", str(clip_path)]
+    for png, *_ in placements:
+        cmd += ["-i", str(png)]
+    fc, prev = [], "0:v"
+    for i, (_png, x, y, esz, t0, t1) in enumerate(placements):
+        fc.append(f"[{i + 1}:v]scale={esz}:{esz}[e{i}]")
+        out = f"v{i}"
+        fc.append(f"[{prev}][e{i}]overlay={x}:{y}:enable='between(t,{t0},{t1})'[{out}]")
+        prev = out
+    cmd += ["-filter_complex", ";".join(fc), "-map", f"[{prev}]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "copy", "-movflags", "+faststart", str(tmp)]
+    code, _, err = await run_cmd_async(cmd)
+    if code == 0 and tmp.exists() and tmp.stat().st_size > 0:
+        tmp.replace(clip_path)
+        log(job_id, f"  Emoji overlay: {len(placements)} placed")
+    else:
+        tmp.unlink(missing_ok=True)
+        log(job_id, f"  Emoji overlay skipped (ffmpeg exit {code}): {err[-200:] if err else ''}")
 
 _LANGUAGE_NAMES: dict[str, str] = {
     "en": "English", "es": "Spanish", "fr": "French", "de": "German",
@@ -1376,11 +1468,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if w["start"] >= clip_start - 0.05 and w["start"] < clip_end + 0.05:
                 words_in_clip.append(w)
 
+    # Caption geometry for the emoji overlay post-pass: where an emoji should
+    # sit relative to the caption block, plus each caption line's display
+    # window (clip-relative) and raw words.
+    _esz = int(tpl.font_size * 1.2)
+    if tpl.alignment in (7, 8, 9):        # top block → emoji below it
+        _emoji_y = tpl.margin_v + int(tpl.font_size * 1.5) + 12
+    elif tpl.alignment in (4, 5, 6):      # middle block → emoji above centre
+        _emoji_y = video_height // 2 - int(tpl.font_size * 0.75) - _esz - 12
+    else:                                  # bottom block → emoji above it
+        _emoji_y = video_height - tpl.margin_v - int(tpl.font_size * 1.25) - _esz - 12
+    cap_info = {"lines": [], "emoji_size": _esz,
+                "emoji_y": max(0, _emoji_y), "video_width": video_width}
+
     # "none" template: header-only ASS — every render graph keeps its ass=
     # filter unchanged, libass just has nothing to draw.
     if tpl.mode == "none":
         output_path.write_text(ass_header, encoding="utf-8")
-        return
+        return cap_info
 
     _case = (lambda s: s.upper()) if tpl.uppercase else (lambda s: s)
 
@@ -1407,6 +1512,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             continue
         line_start = group[0]["start"]
         line_end   = group[-1]["end"]
+        cap_info["lines"].append({
+            "start": max(0.0, line_start - clip_start),
+            "end": max(0.0, line_end - clip_start),
+            "words": [w["word"].strip().strip(".,!?\"'").lower() for w in group],
+        })
 
         if tpl.mode == "pop":
             # Full-line redraw with a moving single-word highlight. libass lays
@@ -1463,6 +1573,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     ass_content = ass_header + "\n".join(events) + "\n"
     output_path.write_text(ass_content, encoding="utf-8")
+    return cap_info
 
 
 # ── smart speaker-tracking crop ───────────────────────────────────────────────
@@ -2206,6 +2317,7 @@ async def create_clips(
     highlight_color: Optional[str] = None,
     caption_position: Optional[str] = None,
     caption_keywords: bool = True,
+    caption_emoji: bool = True,
     caption_segments: Optional[list] = None,
     bg_music_url: Optional[str] = None,
     bg_music_volume: float = 0.15,
@@ -2353,7 +2465,7 @@ async def create_clips(
 
         # Build ASS subtitle
         ass_path = job_dir / f"clip_{idx}.ass"
-        build_ass_subtitles(
+        cap_info = build_ass_subtitles(
             ass_segs,
             clip_start=ass_clip_start,
             clip_end=ass_clip_end,
@@ -2645,6 +2757,15 @@ async def create_clips(
             log(job_id, f"  !!! FFmpeg FAILED for clip {idx+1}: {err[-300:]}")
             await update_job(job_id, message=f"Clip {idx+1} render failed: {err[-200:]}")
             continue
+
+        # Emoji post-pass — composited after the main render so it works
+        # identically for every layout. Non-fatal on failure.
+        if caption_emoji and clip.get("emojis") and cap_info and cap_info.get("lines"):
+            try:
+                placements = _emoji_placements(clip["emojis"], cap_info, render_dur)
+                await _apply_emoji_overlays(clip_path, placements, job_id)
+            except Exception as _ee:
+                log(job_id, f"  Emoji overlay skipped: {_ee}")
 
         log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
 
@@ -3011,6 +3132,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 highlight_color=req.caption_highlight_color,
                 caption_position=req.caption_position,
                 caption_keywords=req.caption_keywords,
+                caption_emoji=req.caption_emoji,
                 caption_segments=caption_segs,
                 bg_music_url=req.bg_music_url,
                 bg_music_volume=req.bg_music_volume,
@@ -3368,6 +3490,7 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
         "options": {
             "caption_position": req.caption_position,
             "caption_keywords": req.caption_keywords,
+            "caption_emoji": req.caption_emoji,
         },
     })
     job_id = job["id"]

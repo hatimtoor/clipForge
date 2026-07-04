@@ -59,8 +59,16 @@ BEGIN
   INSERT INTO public.promo_redemptions(code, user_id)
     VALUES (v_code.code, p_user_id);
 
+  -- Never shorten existing Pro: a permanent-Pro account (pro_expires_at IS
+  -- NULL while already 'pro') keeps NULL; a promo-Pro account keeps whichever
+  -- expiry is LATER. Only free accounts get the fresh expiry stamped.
   UPDATE public.profiles
-    SET plan = 'pro', pro_expires_at = v_expires
+    SET pro_expires_at = CASE
+          WHEN plan = 'pro' AND pro_expires_at IS NULL THEN NULL
+          WHEN plan = 'pro' THEN GREATEST(pro_expires_at, v_expires)
+          ELSE v_expires
+        END,
+        plan = 'pro'
     WHERE id = p_user_id;
 
   RETURN jsonb_build_object('ok', true, 'pro_days', v_code.pro_days, 'expires_at', v_expires);

@@ -34,6 +34,10 @@ sys.modules.setdefault("supabase", MagicMock())
 
 import main  # noqa: E402
 
+# NEVER touch production R2 from the golden harness — keep clips on local disk
+# (the local .env may carry live credentials).
+main.R2_ENABLED = False
+
 WORK = BACKEND / "tests" / "_golden"
 GOLDEN_FILE = HERE / "golden_hashes.json"
 
@@ -95,7 +99,7 @@ def frame_hash(video: Path, t: float) -> str:
 async def render_all() -> dict:
     import shutil
     shutil.rmtree(WORK, ignore_errors=True)
-    WORK.mkdir(parents=True)
+    WORK.mkdir(parents=True, exist_ok=True)
     src = WORK / "source.mp4"
     build_source(src)
 

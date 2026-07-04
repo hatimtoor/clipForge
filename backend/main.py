@@ -1353,8 +1353,9 @@ _FONT_FILES = {
     "ClipForgeCaps": "ClipForgeCaps-Bold.ttf",
     "Bangers": "Bangers-Regular.ttf",
 }
-# fontsdir for the libass filter — escape ':' (Windows drive) for the filtergraph.
-_FONTSDIR_ESC = str(FONTS_DIR).replace("\\", "/").replace(":", "\\:")
+# fontsdir for the libass filter — single-quoted for spaces AND colon-escaped
+# for the Windows drive letter; both are needed for the filtergraph parser.
+_FONTSDIR_ESC = "'" + str(FONTS_DIR).replace("\\", "/").replace(":", "\\:") + "'"
 
 
 def _ssa_uuencode(data: bytes) -> str:
@@ -2372,6 +2373,219 @@ async def _build_trimmed_clip(video_path: Path, start: float, dur: float, keep: 
         return False
 
 
+# ── layout engine ─────────────────────────────────────────────────────────────
+# Each layout builder returns a LayoutPlan: a filter_complex ending in [vmain]
+# (captions/music/encode are appended generically), plus any extra -i inputs it
+# pre-rendered. HARD RULE: at most ONE sendcmd-driven crop per ffmpeg graph —
+# sendcmd targets every crop instance in a graph, so dynamic crops that must
+# move independently are rendered in separate pre-passes (asserted at dispatch).
+
+@_dataclass
+class ClipRenderCtx:
+    render_src: Path
+    render_ss: float
+    render_dur: float
+    src_w: int
+    src_h: int
+    out_w: int
+    out_h: int
+    crop_w: int
+    crop_h: int
+    center_crop_x: int
+    clip_fps: float
+    job_dir: Path
+    idx: int
+    job_id: str
+    reframe: bool
+    n_clips: int = 1
+    clip_title: str = ""
+    facecam_region: Optional[dict] = None
+
+
+@_dataclass
+class LayoutPlan:
+    filter_complex: str                 # ends in [vmain]; no ass/audio yet
+    extra_inputs: Optional[list] = None  # file paths appended as -i inputs
+    encode_crf: int = 23
+
+    def __post_init__(self):
+        if self.extra_inputs is None:
+            self.extra_inputs = []
+
+
+async def _plan_fill(ctx: ClipRenderCtx) -> LayoutPlan:
+    """Fill layout: 9:16 crop of the source — YOLO speaker-tracked when
+    reframe is on, static center crop otherwise."""
+    if ctx.reframe:
+        if not _REFRAME_AVAILABLE:
+            await update_job(ctx.job_id, message=f"Rendering clip {ctx.idx+1}/{ctx.n_clips}: {ctx.clip_title} (YOLO unavailable — using center crop)")
+            detections = []
+        else:
+            # Extract the clip segment first so YOLO can read frames sequentially
+            # (avoids codec seeking bugs in the full downloaded source video).
+            # Transcode to H.264 so OpenCV can decode it — AV1 source videos
+            # fail silently in OpenCV even though ffmpeg handles them fine.
+            # Keep audio so the sampler can gate tracking to actual speech.
+            temp_yolo = ctx.job_dir / f"clip_{ctx.idx}_yolo.mp4"
+            await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
+                                 "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
+                                 "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(temp_yolo)])
+            detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, ctx.src_w, ctx.src_h)
+            temp_yolo.unlink(missing_ok=True)
+            log(ctx.job_id, f"  YOLO detections: {len(detections)} samples, source: {ctx.src_w}x{ctx.src_h}, crop: {ctx.crop_w}x{ctx.crop_h}")
+            if len(detections) == 0:
+                await update_job(ctx.job_id, message=f"Rendering clip {ctx.idx+1}/{ctx.n_clips}: {ctx.clip_title} (no person detected — using center crop)")
+        trajectory = smooth_crop_trajectory(detections, ctx.render_dur, fallback_crop_x=ctx.center_crop_x, crop_w=ctx.crop_w, src_w=ctx.src_w)
+    else:
+        trajectory = [(0.0, ctx.center_crop_x), (round(ctx.render_dur, 3), ctx.center_crop_x)]
+    is_dynamic = len(set(x for _, x in trajectory)) > 1
+    log(ctx.job_id, f"  Crop mode: {'dynamic pan' if is_dynamic else 'static'} (x={trajectory[0][1]})")
+
+    if is_dynamic:
+        sendcmd_path = ctx.job_dir / f"clip_{ctx.idx}_crop.txt"
+        write_sendcmd_file(trajectory, sendcmd_path, fps=ctx.clip_fps)
+        fc = (
+            f"[0:v]sendcmd=f={sendcmd_path.name},"
+            f"crop={ctx.crop_w}:{ctx.crop_h}:0:0,"
+            f"scale={ctx.out_w}:{ctx.out_h}[vmain]"
+        )
+    else:
+        fc = (
+            f"[0:v]crop={ctx.crop_w}:{ctx.crop_h}:{trajectory[0][1]}:0,"
+            f"scale={ctx.out_w}:{ctx.out_h}[vmain]"
+        )
+    return LayoutPlan(filter_complex=fc)
+
+
+def _plan_blur_bg(ctx: ClipRenderCtx) -> LayoutPlan:
+    """Blur-background layout: landscape clip centred over a blurred fill.
+    Perf trick: blur at half-res then upscale — blurring a small image is ~4x
+    faster and the upscale smears the blur further, which improves the look.
+    CRF 26 because the background is heavily blurred; artefacts are invisible."""
+    half_w = ctx.out_w // 2
+    half_h = ctx.out_h // 2
+    fc = (
+        f"[0:v]scale={half_w}:{half_h}:force_original_aspect_ratio=increase,"
+        f"crop={half_w}:{half_h},boxblur=10:2,scale={ctx.out_w}:{ctx.out_h}[bg];"
+        f"[0:v]scale={ctx.out_w}:-2:force_original_aspect_ratio=decrease[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vmain]"
+    )
+    return LayoutPlan(filter_complex=fc, encode_crf=26)
+
+
+async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
+    """Gameplay layout: streamer's cam (face-framed/tracked) on top, tracked
+    gameplay on the bottom with the cam region excluded. Returns None when no
+    facecam is found (caller falls back to Fill)."""
+    _fc_tmp = ctx.job_dir / f"clip_{ctx.idx}_fc.mp4"
+    await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
+                         "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
+                         "-crf", "28", "-an", str(_fc_tmp)])
+    _known_box = ctx.facecam_region["box"] if ctx.facecam_region else None
+    facecam_box, face_info, game = await asyncio.to_thread(
+        _detect_facecam_and_track, _fc_tmp, ctx.src_w, ctx.src_h, _known_box)
+    _fc_tmp.unlink(missing_ok=True)
+    if not facecam_box:
+        return None
+
+    src_w, src_h, out_w, out_h = ctx.src_w, ctx.src_h, ctx.out_w, ctx.out_h
+    fx, fy, fw, fh = facecam_box
+    top_h = (out_h * 2 // 5);  top_h -= top_h % 2     # 40%
+    bot_h = out_h - top_h                              # 60%
+    gp_h  = ctx.crop_h
+    gp_w  = min(int(gp_h * out_w / bot_h), src_w); gp_w -= gp_w % 2
+    gp_min_x, gp_max_x = 0, src_w - gp_w
+    if fx + fw <= src_w / 2:                            # facecam on the left
+        gp_min_x = min(fx + fw, gp_max_x)
+    elif fx >= src_w / 2:                              # facecam on the right
+        gp_max_x = max(fx - gp_w, gp_min_x)
+    gp_dets  = [(t, max(gp_min_x, min(int(cx - gp_w / 2), gp_max_x))) for t, cx in game]
+    gp_fb    = max(gp_min_x, min((src_w - gp_w) // 2, gp_max_x))
+    gp_traj  = smooth_crop_trajectory(gp_dets, ctx.render_dur, fallback_crop_x=gp_fb, crop_w=gp_w, src_w=src_w)
+    gp_traj  = [(t, max(gp_min_x, min(x, gp_max_x))) for t, x in gp_traj]
+    if len(set(x for _, x in gp_traj)) > 1:
+        _gp_cmd = ctx.job_dir / f"clip_{ctx.idx}_gp.txt"
+        write_sendcmd_file(gp_traj, _gp_cmd, fps=ctx.clip_fps)
+        gp_crop = f"sendcmd=f={_gp_cmd.name},crop={gp_w}:{gp_h}:0:0"
+    else:
+        gp_crop = f"crop={gp_w}:{gp_h}:{gp_traj[0][1]}:0"
+
+    # Face geometry for the TOP: per-clip face (follow) if this segment showed
+    # it, else the shared video-level face (static) — so every clip frames the
+    # face the SAME clean way instead of some falling back to a blurred card.
+    if face_info:
+        fh_med, face_pts = face_info["fh"], face_info["traj"]
+    elif ctx.facecam_region:
+        fh_med = ctx.facecam_region["fh"]
+        face_pts = [(0.0, ctx.facecam_region["fcx"], ctx.facecam_region["fcy"])]
+    else:
+        fh_med, face_pts = None, None
+
+    extra_inputs = []
+    if face_pts:
+        # Frame the face (head + shoulders) at the top-strip aspect and FILL
+        # it (no blur). The follow needs its own sendcmd-driven crop, so the
+        # top strip renders in a separate pass — no sendcmd cross-talk.
+        import statistics as _stats
+        win_w = int(min(fh_med * 2.6 * out_w / top_h, src_w)); win_w -= win_w % 2
+        win_h = int(win_w * top_h / out_w); win_h -= win_h % 2
+        win_h = min(win_h, src_h - (src_h % 2))
+        win_w = int(win_h * out_w / top_h); win_w -= win_w % 2
+        cxs = [c for _, c, _ in face_pts]
+        cys = [c for _, _, c in face_pts]
+        win_y = int(max(0, min(_stats.median(cys) - win_h * 0.42, src_h - win_h)))
+        f_dets = [(t, int(max(0, min(cx - win_w / 2, src_w - win_w)))) for t, cx, _ in face_pts]
+        f_fb   = int(max(0, min(_stats.median(cxs) - win_w / 2, src_w - win_w)))
+        f_traj = smooth_crop_trajectory(f_dets, ctx.render_dur, fallback_crop_x=f_fb, crop_w=win_w, src_w=src_w)
+        if len(set(x for _, x in f_traj)) > 1:
+            _f_cmd = ctx.job_dir / f"clip_{ctx.idx}_face.txt"
+            write_sendcmd_file(f_traj, _f_cmd, fps=ctx.clip_fps)
+            top_crop = f"sendcmd=f={_f_cmd.name},crop={win_w}:{win_h}:0:{win_y}"
+            _top_mode = "tracked"
+        else:
+            top_crop = f"crop={win_w}:{win_h}:{f_traj[0][1]}:{win_y}"
+            _top_mode = "framed"
+        _top_tmp = ctx.job_dir / f"clip_{ctx.idx}_top.mp4"
+        await run_cmd_async([
+            FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src), "-t", str(ctx.render_dur),
+            "-filter_complex", f"[0:v]{top_crop},scale={out_w}:{top_h}[v]",
+            "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            str(_top_tmp),
+        ], str(ctx.job_dir))
+        extra_inputs.append(_top_tmp)
+        top_chain = f"[{len(extra_inputs)}:v]null[top];"
+    else:
+        # Last resort (no face anywhere) — fit the whole cam with blur.
+        _top_mode = "blur-fit"
+        top_chain = (
+            f"[0:v]crop={fw}:{fh}:{fx}:{fy},split[fcm][fcb];"
+            f"[fcb]scale={out_w}:{top_h}:force_original_aspect_ratio=increase,crop={out_w}:{top_h},boxblur=20:2[fcbg];"
+            f"[fcm]scale={out_w}:{top_h}:force_original_aspect_ratio=decrease[fcfg];"
+            f"[fcbg][fcfg]overlay=(W-w)/2:(H-h)/2[top];"
+        )
+
+    fc = (
+        top_chain +
+        f"[0:v]{gp_crop},scale={out_w}:{bot_h}[bot];"
+        f"[top][bot]vstack[vmain]"
+    )
+    log(ctx.job_id, f"  Facecam {facecam_box}, top={_top_mode}, "
+                    f"gameplay {gp_w}x{gp_h} x∈[{gp_min_x},{gp_max_x}]")
+    return LayoutPlan(filter_complex=fc, extra_inputs=extra_inputs)
+
+
+async def _build_layout_plan(ctx: ClipRenderCtx, clip_style: str) -> LayoutPlan:
+    """Dispatch to the right layout builder, with graceful fallbacks."""
+    if clip_style == "facecam" and _REFRAME_AVAILABLE:
+        plan = await _plan_gameplay(ctx)
+        if plan is not None:
+            return plan
+        log(ctx.job_id, "  No facecam detected — using center crop instead")
+    if clip_style == "blur_bg":
+        return _plan_blur_bg(ctx)
+    return await _plan_fill(ctx)
+
+
 # ── cut clips + burn subtitles ────────────────────────────────────────────────
 async def create_clips(
     video_path: Path,
@@ -2559,266 +2773,45 @@ async def create_clips(
         # basename-only for filter paths — avoids Windows drive-letter colon issue
         ass_filename = ass_path.name
 
-        # Speaker-tracking crop: YOLO + dead-zone smooth when reframe=True,
-        # static center crop otherwise (fast path, good for already-centered content)
-        if reframe:
-            if not _REFRAME_AVAILABLE:
-                await update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (YOLO unavailable — using center crop)")
-                detections = []
-            else:
-                # Extract the clip segment first so YOLO can read frames sequentially
-                # (avoids codec seeking bugs in the full downloaded source video)
-                temp_yolo = job_dir / f"clip_{idx}_yolo.mp4"
-                # Transcode to H.264 so OpenCV can decode it — AV1 source videos
-                # fail silently in OpenCV even though ffmpeg handles them fine.
-                # Keep audio so the sampler can gate tracking to actual speech
-                await run_cmd_async([FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
-                                     "-t", str(render_dur), "-c:v", "libx264", "-preset", "ultrafast",
-                                     "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(temp_yolo)])
-                detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, src_w, src_h)
-                temp_yolo.unlink(missing_ok=True)
-                log(job_id, f"  YOLO detections: {len(detections)} samples, source: {src_w}x{src_h}, crop: {crop_w}x{crop_h}")
-                if len(detections) == 0:
-                    await update_job(job_id, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']} (no person detected — using center crop)")
-            trajectory = smooth_crop_trajectory(detections, render_dur, fallback_crop_x=center_crop_x, crop_w=crop_w, src_w=src_w)
-        else:
-            trajectory = [(0.0, center_crop_x), (round(render_dur, 3), center_crop_x)]
-        is_dynamic = len(set(x for _, x in trajectory)) > 1
-        log(job_id, f"  Crop mode: {'dynamic pan' if is_dynamic else 'static'} (x={trajectory[0][1]})")
+        # Build the layout plan (Fill / Blur-BG / Gameplay, with fallbacks) and
+        # assemble the final command generically: captions and music are
+        # appended the same way for every layout.
+        ctx = ClipRenderCtx(
+            render_src=render_src, render_ss=render_ss, render_dur=render_dur,
+            src_w=src_w, src_h=src_h, out_w=out_w, out_h=out_h,
+            crop_w=crop_w, crop_h=crop_h, center_crop_x=center_crop_x,
+            clip_fps=clip_fps, job_dir=job_dir, idx=idx, job_id=job_id,
+            reframe=reframe, n_clips=len(clip_defs),
+            clip_title=clip.get("title", ""), facecam_region=facecam_region,
+        )
+        plan = await _build_layout_plan(ctx, clip_style)
+        # One sendcmd-driven crop per graph — more cross-talk (sendcmd hits
+        # every crop instance). Layouts needing more use pre-pass inputs.
+        assert plan.filter_complex.count("sendcmd") <= 1, "layout plan violates one-sendcmd-per-graph"
 
-        if is_dynamic:
-            sendcmd_path = job_dir / f"clip_{idx}_crop.txt"
-            write_sendcmd_file(trajectory, sendcmd_path, fps=clip_fps)
-            sendcmd_filename = sendcmd_path.name
-            vf_string = (
-                f"sendcmd=f={sendcmd_filename},"
-                f"crop={crop_w}:{crop_h}:0:0,"
-                f"scale={out_w}:{out_h},"
-                f"ass={ass_filename}:fontsdir={_FONTSDIR_ESC}"
-            )
-        else:
-            static_x = trajectory[0][1]
-            vf_string = (
-                f"crop={crop_w}:{crop_h}:{static_x}:0,"
-                f"scale={out_w}:{out_h},"
-                f"ass={ass_filename}:fontsdir={_FONTSDIR_ESC}"
-            )
-
-        # Facecam (gaming) layout: streamer's corner cam on top 40%, reframe-tracked
-        # gameplay on the bottom 60% (with the facecam excluded from the gameplay crop).
-        facecam_fc = None
-        facecam_extra_inputs = []
-        if clip_style == "facecam" and _REFRAME_AVAILABLE:
-            _fc_tmp = job_dir / f"clip_{idx}_fc.mp4"
-            await run_cmd_async([FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src),
-                                 "-t", str(render_dur), "-c:v", "libx264", "-preset", "ultrafast",
-                                 "-crf", "28", "-an", str(_fc_tmp)])
-            _known_box = facecam_region["box"] if facecam_region else None
-            facecam_box, face_info, game = await asyncio.to_thread(
-                _detect_facecam_and_track, _fc_tmp, src_w, src_h, _known_box)
-            _fc_tmp.unlink(missing_ok=True)
-            if facecam_box:
-                fx, fy, fw, fh = facecam_box
-                top_h = (out_h * 2 // 5);  top_h -= top_h % 2     # 40% (768)
-                bot_h = out_h - top_h                              # 60% (1152)
-                gp_h  = crop_h
-                gp_w  = min(int(gp_h * out_w / bot_h), src_w); gp_w -= gp_w % 2
-                gp_min_x, gp_max_x = 0, src_w - gp_w
-                if fx + fw <= src_w / 2:                            # facecam on the left
-                    gp_min_x = min(fx + fw, gp_max_x)
-                elif fx >= src_w / 2:                              # facecam on the right
-                    gp_max_x = max(fx - gp_w, gp_min_x)
-                gp_dets  = [(t, max(gp_min_x, min(int(cx - gp_w / 2), gp_max_x))) for t, cx in game]
-                gp_fb    = max(gp_min_x, min((src_w - gp_w) // 2, gp_max_x))
-                gp_traj  = smooth_crop_trajectory(gp_dets, render_dur, fallback_crop_x=gp_fb, crop_w=gp_w, src_w=src_w)
-                gp_traj  = [(t, max(gp_min_x, min(x, gp_max_x))) for t, x in gp_traj]
-                if len(set(x for _, x in gp_traj)) > 1:
-                    _gp_cmd = job_dir / f"clip_{idx}_gp.txt"
-                    write_sendcmd_file(gp_traj, _gp_cmd, fps=clip_fps)
-                    gp_crop = f"sendcmd=f={_gp_cmd.name},crop={gp_w}:{gp_h}:0:0"
-                else:
-                    gp_crop = f"crop={gp_w}:{gp_h}:{gp_traj[0][1]}:0"
-
-                # Face geometry for the TOP: per-clip face (follow) if this segment
-                # showed it, else the shared video-level face (static) — so every
-                # clip frames the face the SAME clean way (Opus-style fill) instead
-                # of some clips falling back to a blurred card.
-                if face_info:
-                    fh_med, face_pts = face_info["fh"], face_info["traj"]
-                elif facecam_region:
-                    fh_med = facecam_region["fh"]
-                    face_pts = [(0.0, facecam_region["fcx"], facecam_region["fcy"])]
-                else:
-                    fh_med, face_pts = None, None
-
-                if face_pts:
-                    # Frame the face (head + shoulders) at the top-strip aspect and
-                    # FILL it (no blur). The follow needs its own sendcmd-driven crop,
-                    # so render the top strip in a separate pass (one crop per graph)
-                    # and vstack it in the main pass — no sendcmd cross-talk.
-                    import statistics as _stats
-                    win_w = int(min(fh_med * 2.6 * out_w / top_h, src_w)); win_w -= win_w % 2
-                    win_h = int(win_w * top_h / out_w); win_h -= win_h % 2
-                    win_h = min(win_h, src_h - (src_h % 2))
-                    win_w = int(win_h * out_w / top_h); win_w -= win_w % 2
-                    cxs = [c for _, c, _ in face_pts]
-                    cys = [c for _, _, c in face_pts]
-                    win_y = int(max(0, min(_stats.median(cys) - win_h * 0.42, src_h - win_h)))
-                    f_dets = [(t, int(max(0, min(cx - win_w / 2, src_w - win_w)))) for t, cx, _ in face_pts]
-                    f_fb   = int(max(0, min(_stats.median(cxs) - win_w / 2, src_w - win_w)))
-                    f_traj = smooth_crop_trajectory(f_dets, render_dur, fallback_crop_x=f_fb, crop_w=win_w, src_w=src_w)
-                    if len(set(x for _, x in f_traj)) > 1:
-                        _f_cmd = job_dir / f"clip_{idx}_face.txt"
-                        write_sendcmd_file(f_traj, _f_cmd, fps=clip_fps)
-                        top_crop = f"sendcmd=f={_f_cmd.name},crop={win_w}:{win_h}:0:{win_y}"
-                        _top_mode = "tracked"
-                    else:
-                        top_crop = f"crop={win_w}:{win_h}:{f_traj[0][1]}:{win_y}"
-                        _top_mode = "framed"
-                    _top_tmp = job_dir / f"clip_{idx}_top.mp4"
-                    await run_cmd_async([
-                        FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src), "-t", str(render_dur),
-                        "-filter_complex", f"[0:v]{top_crop},scale={out_w}:{top_h}[v]",
-                        "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                        str(_top_tmp),
-                    ], str(job_dir))
-                    facecam_extra_inputs.append(["-i", str(_top_tmp)])
-                    top_chain = f"[{len(facecam_extra_inputs)}:v]null[top];"
-                else:
-                    # Last resort (no face anywhere) — fit the whole cam with blur.
-                    _top_mode = "blur-fit"
-                    top_chain = (
-                        f"[0:v]crop={fw}:{fh}:{fx}:{fy},split[fcm][fcb];"
-                        f"[fcb]scale={out_w}:{top_h}:force_original_aspect_ratio=increase,crop={out_w}:{top_h},boxblur=20:2[fcbg];"
-                        f"[fcm]scale={out_w}:{top_h}:force_original_aspect_ratio=decrease[fcfg];"
-                        f"[fcbg][fcfg]overlay=(W-w)/2:(H-h)/2[top];"
-                    )
-
-                facecam_fc = (
-                    top_chain +
-                    f"[0:v]{gp_crop},scale={out_w}:{bot_h}[bot];"
-                    f"[top][bot]vstack[stacked];"
-                    f"[stacked]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
-                )
-                log(job_id, f"  Facecam {facecam_box}, top={_top_mode}, "
-                            f"gameplay {gp_w}x{gp_h} x∈[{gp_min_x},{gp_max_x}]")
-            else:
-                log(job_id, "  No facecam detected — using center crop instead")
-
-        if clip_style == "facecam" and facecam_fc:
-            ffmpeg_cmd = [FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src)]
-            for _inp in facecam_extra_inputs:
-                ffmpeg_cmd += _inp
-            if music_path:
-                music_idx = 1 + len(facecam_extra_inputs)
-                facecam_fc += (
-                    f";[0:a]volume=1.0[speech];[{music_idx}:a]volume={bg_music_volume}[bgm];"
-                    f"[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0.5[aout]"
-                )
-                ffmpeg_cmd += [
-                    "-stream_loop", "-1", "-i", str(music_path), "-t", str(render_dur),
-                    "-filter_complex", facecam_fc, "-map", "[vout]", "-map", "[aout]",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(clip_path),
-                ]
-            else:
-                ffmpeg_cmd += [
-                    "-t", str(render_dur),
-                    "-filter_complex", facecam_fc, "-map", "[vout]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(clip_path),
-                ]
-        elif clip_style == "blur_bg":
-            # Blur-background style: landscape clip centred in 9:16 with a
-            # blurred+scaled copy filling the bars.
-            # Perf trick: blur at half-res (540x960) then upscale — blurring a
-            # small image is ~4x faster and the upscale smears the blur further,
-            # which actually improves the look. CRF 26 is fine here because the
-            # background is heavily blurred; nobody sees compression artefacts.
-            half_w = out_w // 2   # 540
-            half_h = out_h // 2   # 960
-            blur_bg_fc = (
-                f"[0:v]scale={half_w}:{half_h}:force_original_aspect_ratio=increase,"
-                f"crop={half_w}:{half_h},boxblur=10:2,scale={out_w}:{out_h}[bg];"
-                f"[0:v]scale={out_w}:-2:force_original_aspect_ratio=decrease[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[overlaid];"
-                f"[overlaid]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
-            )
-            if music_path:
-                blur_bg_fc += (
-                    f";[0:a]volume=1.0[speech];"
-                    f"[1:a]volume={bg_music_volume}[bgm];"
-                    f"[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0.5[aout]"
-                )
-                ffmpeg_cmd = [
-                    FFMPEG, "-y",
-                    "-ss", str(render_ss),
-                    "-i", str(render_src),
-                    "-stream_loop", "-1",
-                    "-i", str(music_path),
-                    "-t", str(render_dur),
-                    "-filter_complex", blur_bg_fc,
-                    "-map", "[vout]",
-                    "-map", "[aout]",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "26",
-                    "-c:a", "aac", "-b:a", "128k",
-                    "-movflags", "+faststart",
-                    str(clip_path),
-                ]
-            else:
-                ffmpeg_cmd = [
-                    FFMPEG, "-y",
-                    "-ss", str(render_ss),
-                    "-i", str(render_src),
-                    "-t", str(render_dur),
-                    "-filter_complex", blur_bg_fc,
-                    "-map", "[vout]",
-                    "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "26",
-                    "-c:a", "aac", "-b:a", "128k",
-                    "-movflags", "+faststart",
-                    str(clip_path),
-                ]
-        elif music_path:
-            fc = (
-                f"[0:v]{vf_string}[vout];"
-                f"[0:a]volume=1.0[speech];"
-                f"[1:a]volume={bg_music_volume}[bgm];"
+        fc = plan.filter_complex + f";[vmain]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
+        ffmpeg_cmd = [FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src)]
+        for _p in plan.extra_inputs:
+            ffmpeg_cmd += ["-i", str(_p)]
+        if music_path:
+            music_idx = 1 + len(plan.extra_inputs)
+            fc += (
+                f";[0:a]volume=1.0[speech];[{music_idx}:a]volume={bg_music_volume}[bgm];"
                 f"[speech][bgm]amix=inputs=2:duration=first:dropout_transition=0.5[aout]"
             )
-            ffmpeg_cmd = [
-                FFMPEG, "-y",
-                "-ss", str(render_ss),
-                "-i", str(render_src),
-                "-stream_loop", "-1",
-                "-i", str(music_path),
-                "-t", str(render_dur),
-                "-filter_complex", fc,
-                "-map", "[vout]",
-                "-map", "[aout]",
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "23",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
-                str(clip_path),
+            ffmpeg_cmd += [
+                "-stream_loop", "-1", "-i", str(music_path), "-t", str(render_dur),
+                "-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
             ]
         else:
-            ffmpeg_cmd = [
-                FFMPEG, "-y",
-                "-ss", str(render_ss),
-                "-i", str(render_src),
+            ffmpeg_cmd += [
                 "-t", str(render_dur),
-                "-vf", vf_string,
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "23",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
-                str(clip_path),
+                "-filter_complex", fc, "-map", "[vout]", "-map", "0:a?",
             ]
+        ffmpeg_cmd += [
+            "-c:v", "libx264", "-preset", "fast", "-crf", str(plan.encode_crf),
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(clip_path),
+        ]
 
         log(job_id, f"  Running FFmpeg for clip {idx+1}...")
         code, _, err = await run_cmd_async(ffmpeg_cmd, str(job_dir))

@@ -7,6 +7,7 @@ import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
 import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
 import FacecamBoxModal from "../components/FacecamBoxModal";
+import OnboardingTour from "../components/OnboardingTour";
 
 const CAPTION_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56, simple: 56 };
 export const LAYOUT_CHOICES = [
@@ -498,7 +499,13 @@ function WatchlistContent() {
 
   return (
     <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
-      <div style={{ marginBottom: 24 }}>
+      <OnboardingTour storageKey="cf_tour_watchlist_v1" steps={[
+        { target: "#tour-wl-head", title: "YOUR AUTO-CLIP RADAR",
+          text: "Every channel you add here is checked every 30 minutes. New uploads get clipped automatically with that channel's saved settings." },
+        { target: "#tour-wl-add", title: "ADD A CHANNEL",
+          text: "Paste a channel URL, then open CAPTION SETTINGS on its card to pick layout, captions, prompts, and auto-upload targets." },
+      ]} />
+      <div id="tour-wl-head" style={{ marginBottom: 24 }}>
         <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>WATCHLIST</div>
         <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink }}>Channel monitor.</h1>
         <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
@@ -506,6 +513,7 @@ function WatchlistContent() {
         </p>
       </div>
 
+      <div id="tour-wl-add">
       <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24, boxShadow: isMobile ? "none" : undefined }}>
         <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD CHANNEL</div>
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -525,6 +533,7 @@ function WatchlistContent() {
           </div>
         )}
       </PixelCard>
+      </div>
 
       {loading ? (
         <PixelCard color={C.paper} padding={48} style={{ textAlign: "center", boxShadow: isMobile ? "none" : undefined }}>

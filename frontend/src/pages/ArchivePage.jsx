@@ -5,6 +5,7 @@ import { PixelBtn, PixelCard, Tag } from "../components/ui";
 import Header from "../components/Header";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
+import OnboardingTour from "../components/OnboardingTour";
 
 const PAGE_SIZE = 20;
 
@@ -110,7 +111,11 @@ export default function ArchivePage() {
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 20, gap: 18, flexWrap: "wrap" }}>
           <div>
-            <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>
+            <OnboardingTour storageKey="cf_tour_archive_v1" steps={[
+          { target: "#tour-ar-head", title: "EVERY JOB LIVES HERE",
+            text: "Reopen any job to watch and download its clips again, or hit RETRY to re-run it with the exact same settings. Clip files expire after 7 days — your settings and history never do." },
+        ]} />
+        <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }} id="tour-ar-head">
               ARCHIVE — {jobs.length} JOBS LOADED
             </div>
             <h1 className="pixel" style={{ fontSize: 26, color: C.ink }}>The vault.</h1>

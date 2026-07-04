@@ -5,6 +5,7 @@ import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
+import OnboardingTour from "../components/OnboardingTour";
 
 export default function ConnectionsPage() {
   const { isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus } = useApp();
@@ -96,7 +97,14 @@ export default function ConnectionsPage() {
           </div>
         )}
 
+        <OnboardingTour storageKey="cf_tour_connections_v1" steps={[
+          { target: "#tour-cn-yt", title: "CONNECT YOUTUBE",
+            text: "One click and finished clips can upload straight to your channel — manually from the results page, or automatically from Watchlist and Digest." },
+          { target: "#tour-cn-tt", title: "CONNECT TIKTOK",
+            text: "Same idea for TikTok: connect once, then post clips directly without downloading and re-uploading." },
+        ]} />
         {/* YouTube */}
+        <div id="tour-cn-yt">
         <PixelCard color={C.cream} padding={isMobile ? 16 : 22} style={{ marginBottom: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <span className="pixel" style={{ fontSize: 11, background: C.yt, color: C.ink, padding: "8px 12px", border: BORDER }}>▶ YOUTUBE</span>
@@ -109,6 +117,8 @@ export default function ConnectionsPage() {
         </PixelCard>
 
         {/* TikTok */}
+        </div>
+        <div id="tour-cn-tt">
         <PixelCard color={C.cream} padding={isMobile ? 16 : 22}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
             <span className="pixel" style={{ fontSize: 11, background: C.tt, color: C.ink, padding: "8px 12px", border: BORDER }}>♪ TIKTOK</span>
@@ -119,6 +129,7 @@ export default function ConnectionsPage() {
           ))}
           <PixelBtn color="tt" size="md" onClick={() => connect("tiktok")}>+ CONNECT TIKTOK ACCOUNT</PixelBtn>
         </PixelCard>
+        </div>
 
         <PixelCard color={C.lavender} padding={16} style={{ marginTop: 18, boxShadow: isMobile ? "none" : undefined }}>
           <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 6 }}>HOW IT WORKS</div>

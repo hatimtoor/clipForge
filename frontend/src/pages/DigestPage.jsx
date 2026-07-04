@@ -7,6 +7,7 @@ import { useApp } from "../context/AppContext";
 import { useMobile } from "../hooks/useMobile";
 import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
 import FacecamBoxModal from "../components/FacecamBoxModal";
+import OnboardingTour from "../components/OnboardingTour";
 
 const DAY_OPTIONS = [
   { value: 30,  label: "30 days back" },
@@ -521,7 +522,12 @@ export default function DigestPage() {
           </p>
         </div>
 
+        <OnboardingTour storageKey="cf_tour_digest_v1" steps={[
+          { target: "#tour-dg-add", title: "CLIP THE BACK-CATALOG",
+            text: "Digest works through a channel's whole history, a few videos per day, hands-free. Add a channel, pick how far back to look and the daily pace on its card." },
+        ]} />
         {/* Add form — URL + button only, just like watchlist */}
+        <div id="tour-dg-add">
         <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24, boxShadow: isMobile ? "none" : undefined }}>
           <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD CHANNEL</div>
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -541,6 +547,7 @@ export default function DigestPage() {
             </div>
           )}
         </PixelCard>
+        </div>
 
         {/* Channel list */}
         {loading ? (

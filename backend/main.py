@@ -75,6 +75,18 @@ COOKIES_FILE = Path(__file__).parent.parent.parent / "cookies.txt"
 # youtubepot bot-bypass: only enabled when its sidecar service is configured
 POTTOKEN_URL = os.getenv("POTTOKEN_URL", "")
 
+# Remote JS challenge solver for yt-dlp. Modern YouTube requires solving a JS
+# signature/nsig challenge; "ejs:github" fetches the solver and runs it via a
+# JS runtime (deno). Without it, extraction degrades into the "sign in to
+# confirm you're not a bot" wall even with valid cookies + PO token. Empty on
+# local dev (no deno); set YTDLP_REMOTE_COMPONENTS=ejs:github on the server.
+YTDLP_REMOTE_COMPONENTS = os.getenv("YTDLP_REMOTE_COMPONENTS", "")
+# The ejs solver needs deno on PATH — prepend the standard install dir if present
+# (mirrors ytdlp_helper.py, the known-working downloader on the server).
+_DENO_BIN = Path.home() / ".deno" / "bin"
+if _DENO_BIN.is_dir() and str(_DENO_BIN) not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = f"{_DENO_BIN}{os.pathsep}" + os.environ.get("PATH", "")
+
 YOUTUBE_CLIENT_ID     = os.getenv("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_REDIRECT_URI  = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000/api/youtube/callback")
@@ -584,6 +596,8 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
     cmd += ["--extractor-args", "youtube:player_client=tv,mweb,web"]
     if POTTOKEN_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
+    if YTDLP_REMOTE_COMPONENTS:
+        cmd += ["--remote-components", YTDLP_REMOTE_COMPONENTS]
     # Tell yt-dlp exactly where ffmpeg is so it can merge streams reliably
     cmd += ["--ffmpeg-location", str(Path(FFMPEG).parent)]
     cmd += ["--", url]  # "--" stops yt-dlp parsing the URL as an option flag
@@ -680,6 +694,19 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
                 f"Download timed out after {_DOWNLOAD_TIMEOUT // 60} min — YouTube is "
                 f"likely throttling this server's IP. Last output: {tail[-300:]}")
         log(job_id, f"yt-dlp failed (exit {returncode})")
+        # Translate the common YouTube refusals into a clear user-facing reason
+        # instead of dumping raw yt-dlp output as a mysterious "clip errored".
+        low = tail.lower()
+        if "confirm your age" in low or "age-restricted" in low or "inappropriate for some" in low:
+            raise RuntimeError("This video is age-restricted, so YouTube won't let it be downloaded. Try a different video.")
+        if "not a bot" in low or "login_required" in low or "sign in to confirm" in low:
+            raise RuntimeError("YouTube blocked this video as restricted/sign-in-only (it can't be processed from a server). Try a different video.")
+        if "private video" in low or "video is private" in low:
+            raise RuntimeError("This video is private and can't be accessed. Try a different video.")
+        if "members-only" in low or "members only" in low or "join this channel" in low:
+            raise RuntimeError("This is a members-only video and can't be accessed. Try a different video.")
+        if "video unavailable" in low or "removed" in low or "no longer available" in low or "has been terminated" in low:
+            raise RuntimeError("This video is unavailable (removed, deleted, or region-blocked). Try a different video.")
         raise RuntimeError(f"yt-dlp failed: {tail[-500:]}")
     if not video_path.exists():
         log(job_id, "yt-dlp exited 0 but video.mp4 missing — merge likely failed")

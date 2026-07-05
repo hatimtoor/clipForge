@@ -24,3 +24,4 @@ backend/tests/_golden/
 backend/tests/_face.jpg
 music_cache/
 source_cache/
+backend/tests/_corpus/

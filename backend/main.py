@@ -11,7 +11,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 try:
-    from reframe import _get_yolo, _speaking_person_cx, _audio_rms_per_frame
+    from reframe import _get_yolo, _speaking_person_cx, _person_candidates, _audio_rms_per_frame
     _REFRAME_AVAILABLE = True
 except Exception as _reframe_err:
     _REFRAME_AVAILABLE = False
@@ -1851,6 +1851,90 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 # ── smart speaker-tracking crop ───────────────────────────────────────────────
 
+def _select_crop_center(cands: list, crop_w: int, state: dict) -> Optional[float]:
+    """Pick this sample's crop-centre x from person candidates
+    [(cx, area, head_motion), ...]. Pure function; `state` carries the sticky
+    target across samples ({target, chall, chall_n}).
+
+    Three stages, designed against the ping-pong/edge-hijack failure mode:
+    1. OUTLIER TRIM — drop candidates far from the area-weighted median cx, so
+       a lone straggler at the frame edge can't hijack the crop away from the
+       main cluster of people.
+    2. GROUP mode — if the surviving cluster fits inside the crop, return its
+       area-weighted centroid. Nobody is "chosen", so there is nothing to
+       ping-pong between: the camera holds the action's centre of mass.
+    3. SPEAKER mode — subjects too far apart to frame together: sticky lock.
+       Candidates score on motion+area+continuity, and a challenger must win
+       3 CONSECUTIVE samples (~1.5s) before the camera moves; meanwhile the
+       incumbent's own drift is still tracked.
+    """
+    if not cands:
+        return None
+
+    # 1. Outlier trim around the area-weighted median cx. Only applied when a
+    #    real MAJORITY cluster remains (≥55% of person area, ≥2 candidates in
+    #    a 3+ crowd) — trimming a 2-person wide shot would just delete whoever
+    #    loses the median tiebreak, hiding the other speaker forever.
+    cands = sorted(cands, key=lambda c: c[0])
+    total_area = sum(c[1] for c in cands) or 1.0
+    kept = cands
+    if len(cands) >= 3:
+        acc, wmedian = 0.0, cands[-1][0]
+        for cx, area, _ in cands:
+            acc += area
+            if acc >= total_area / 2:
+                wmedian = cx
+                break
+        trimmed = [c for c in cands if abs(c[0] - wmedian) <= 0.45 * crop_w]
+        if trimmed and sum(c[1] for c in trimmed) >= 0.55 * total_area:
+            kept = trimmed
+
+    # 2. GROUP mode: cluster fits in the crop → weighted centroid
+    spread = kept[-1][0] - kept[0][0]
+    if len(kept) == 1 or spread <= 0.75 * crop_w:
+        tw = sum(c[1] for c in kept) or 1.0
+        center = sum(c[0] * c[1] for c in kept) / tw
+        state["target"] = center
+        state["chall"], state["chall_n"] = None, 0
+        return center
+
+    # 3. SPEAKER mode: sticky lock with challenger persistence
+    target = state.get("target")
+    max_m = max((c[2] for c in kept), default=0.0) or 1.0
+    max_a = max((c[1] for c in kept), default=0.0) or 1.0
+
+    def _score(c):
+        s = 0.40 * (c[2] / max_m) + 0.35 * (c[1] / max_a)
+        if target is not None:
+            s += 0.25 * (1.0 - min(1.0, abs(c[0] - target) / max(1.0, float(crop_w))))
+        return s
+
+    best = max(kept, key=_score)
+    if target is None:
+        state["target"] = best[0]
+        return best[0]
+    if abs(best[0] - target) <= 0.30 * crop_w:
+        state["target"] = best[0]                      # incumbent drifting — follow
+        state["chall"], state["chall_n"] = None, 0
+        return best[0]
+    # A far-away challenger: count consecutive wins before conceding the lock.
+    if state.get("chall") is not None and abs(best[0] - state["chall"]) <= 0.30 * crop_w:
+        state["chall_n"] = state.get("chall_n", 0) + 1
+        state["chall"] = best[0]
+    else:
+        state["chall"], state["chall_n"] = best[0], 1
+    if state["chall_n"] >= 3:
+        state["target"] = best[0]
+        state["chall"], state["chall_n"] = None, 0
+        return best[0]
+    # Not yet — keep following the incumbent (their nearest candidate).
+    near = min(kept, key=lambda c: abs(c[0] - target))
+    if abs(near[0] - target) <= 0.30 * crop_w:
+        state["target"] = near[0]
+        return near[0]
+    return target
+
+
 def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -> list:
     """
     Sample frames SEQUENTIALLY from a pre-extracted clip (no random seeking).
@@ -1885,6 +1969,7 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
     prev_frame = None
     frame_idx  = 0
     frames_tried = 0
+    sel_state: dict = {}   # sticky-target state for _select_crop_center
 
     while True:
         ret, frame = cap.read()
@@ -1894,7 +1979,8 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
             is_speech = (speech_threshold == 0.0) or (frame_idx < len(rms) and rms[frame_idx] >= speech_threshold)
             if is_speech:
                 frames_tried += 1
-                cx = _speaking_person_cx(frame, prev_frame, model)
+                cands = _person_candidates(frame, prev_frame, model)
+                cx = _select_crop_center(cands, crop_w, sel_state)
                 if cx is not None:
                     t = frame_idx / fps
                     crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
@@ -1956,6 +2042,13 @@ def smooth_crop_trajectory(
     keyframes = [(0.0, current_x)] if filtered[0][0] >= 0.001 else []
     # tag each keyframe: (t, x, is_switch)
     kf = [(round(filtered[0][0], 3), current_x, True)]
+    # Adaptive hysteresis: each switch inside a rolling window raises the hold
+    # required for the next one — a hard physical bound on ping-ponging even
+    # when the detections themselves flip-flop.
+    recent_switches: list = []   # timestamps of switches in the last window
+    SWITCH_WINDOW_S = 12.0
+    HOLD_GROWTH = 1.8
+    HOLD_CAP_S = 4.0
 
     for t, centered_x in filtered[1:]:
         desired = _clamp(centered_x)
@@ -1966,10 +2059,14 @@ def smooth_crop_trajectory(
             current_x = desired                                  # same speaker drifting — track
             kf.append((round(t, 3), current_x, False))
         else:
-            # Different speaker — only switch if we've held the current one long enough
-            if (t - last_switch_t) >= min_hold_s:
+            # Different speaker — the hold requirement grows with every recent
+            # switch, so back-and-forth cutting gets progressively harder.
+            recent_switches = [s for s in recent_switches if t - s <= SWITCH_WINDOW_S]
+            hold_needed = min(HOLD_CAP_S, min_hold_s * (HOLD_GROWTH ** len(recent_switches)))
+            if (t - last_switch_t) >= hold_needed:
                 current_x = desired
                 last_switch_t = t
+                recent_switches.append(t)
                 kf.append((round(t, 3), current_x, True))        # mark as a fast switch
             else:
                 kf.append((round(t, 3), current_x, False))       # too soon — stay

@@ -1,0 +1,11 @@
+[
+  {"url": "https://www.youtube.com/watch?v=_JHt4tt97Uo", "expect": "fill",        "section": "*120-360",   "note": "user-reported gym group-action video — the ping-pong case; must stay fill"},
+  {"url": "https://www.youtube.com/watch?v=7qZl_5xHoBw", "expect": "split",       "section": "*600-840",   "note": "JRE #2223 Elon — studio wide two-shot"},
+  {"url": "https://www.youtube.com/watch?v=ycPr5-27vSI", "expect": "split",       "section": "*600-840",   "note": "JRE #1169 Elon — studio wide two-shot"},
+  {"url": "https://www.youtube.com/watch?v=rfscVS0vtbw", "expect": "screenshare", "section": "*1800-2040", "note": "freeCodeCamp Python course — pure screen recording"},
+  {"url": "https://www.youtube.com/watch?v=_uQrJ0TkZlc", "expect": "screenshare", "section": "*1800-2040", "note": "Mosh Python tutorial — slides/editor"},
+  {"url": "https://www.youtube.com/watch?v=XKHEtdqhLK8", "expect": "screenshare", "section": "*1800-2040", "note": "Bro Code Python — editor recording"},
+  {"url": "https://www.youtube.com/watch?v=mbMABIu_jJw", "expect": "gameplay",    "section": "*120-360",   "note": "Minecraft hardcore with facecam"},
+  {"url": "https://www.youtube.com/watch?v=GRSeyZqHK0E", "expect": "gameplay",    "section": "*300-540",   "note": "Hardcore Minecraft Day 1 facecam"},
+  {"url": "https://www.youtube.com/watch?v=HUJAwEGD2Os", "expect": "gameplay",    "section": "*120-360",   "note": "Valorant funny moments — streamer clips w/ cams (verify label from output)"}
+]

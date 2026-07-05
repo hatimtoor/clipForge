@@ -50,50 +50,52 @@ def _audio_rms_per_frame(clip_path: Path, fps: float, ffmpeg: str) -> np.ndarray
 
 # ── Speaker selection ─────────────────────────────────────────────────────────
 
-def _speaking_person_cx(frame: np.ndarray, prev_frame: np.ndarray | None,
-                         model: YOLO) -> float | None:
+def _person_candidates(frame: np.ndarray, prev_frame: np.ndarray | None,
+                       model: YOLO) -> list:
     """
-    Detect all people with YOLO, then return the center-x of whoever is
-    most likely speaking.
+    Detect every person and return [(cx, area, head_motion), ...].
 
-    Speaking proxy: the person whose head region (top 35 % of their bounding
-    box) has the highest mean pixel difference vs. the previous frame.
-    This catches mouth and head movement without needing a separate landmark
-    model.  Falls back to largest-box selection when prev_frame is unavailable.
+    head_motion is the mean pixel difference of the head region (top 35 % of
+    the box) vs. the previous frame — the speaking/activity proxy. Selection
+    policy lives in the caller: a single "most motion wins" pick here is what
+    made the camera ping-pong between subjects on busy footage.
+
+    conf=0.25 (was 0.15): at 0.15 background clutter (bags, gym equipment)
+    occasionally registers as a person at the frame edge and hijacks the crop.
     """
-    results = model(frame, classes=[0], verbose=False, conf=0.15)
+    results = model(frame, classes=[0], verbose=False, conf=0.25)
     boxes   = results[0].boxes
     if boxes is None or len(boxes) == 0:
-        return None
+        return []
 
-    # xyxy: absolute pixel coords [x1, y1, x2, y2]
-    xyxy  = boxes.xyxy.cpu().numpy().astype(int)
-    xywh  = boxes.xywh.cpu().numpy()
-
-    if prev_frame is None or len(xyxy) == 1:
-        # Only one person, or no previous frame to diff against → largest box
-        areas = xywh[:, 2] * xywh[:, 3]
-        best  = int(areas.argmax())
-        return float(xywh[best, 0])
-
-    # Compute head-region activity for each detected person
+    xyxy = boxes.xyxy.cpu().numpy().astype(int)
+    xywh = boxes.xywh.cpu().numpy()
     h, w = frame.shape[:2]
-    scores = []
-    for x1, y1, x2, y2 in xyxy:
-        x1, y1, x2, y2 = (max(0, x1), max(0, y1),
-                           min(w, x2), min(h, y2))
-        box_h = y2 - y1
-        # Head region = top 35 % of the bounding box
-        head_y2 = y1 + max(1, int(box_h * 0.35))
-        curr_head = frame    [y1:head_y2, x1:x2].astype(np.float32)
-        prev_head = prev_frame[y1:head_y2, x1:x2].astype(np.float32)
-        if curr_head.size == 0:
-            scores.append(0.0)
-        else:
-            scores.append(float(np.mean(np.abs(curr_head - prev_head))))
+    out = []
+    for i, (x1, y1, x2, y2) in enumerate(xyxy):
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+        area = float(xywh[i, 2] * xywh[i, 3])
+        motion = 0.0
+        if prev_frame is not None:
+            head_y2 = y1 + max(1, int((y2 - y1) * 0.35))
+            curr = frame[y1:head_y2, x1:x2].astype(np.float32)
+            prev = prev_frame[y1:head_y2, x1:x2].astype(np.float32)
+            if curr.size and curr.shape == prev.shape:
+                motion = float(np.mean(np.abs(curr - prev)))
+        out.append((float(xywh[i, 0]), area, motion))
+    return out
 
-    best = int(np.argmax(scores))
-    return float(xywh[best, 0])
+
+def _speaking_person_cx(frame: np.ndarray, prev_frame: np.ndarray | None,
+                         model: YOLO) -> float | None:
+    """Back-compat wrapper: the single most active (or largest) person's
+    center-x. Prefer _person_candidates + caller-side selection policy."""
+    cands = _person_candidates(frame, prev_frame, model)
+    if not cands:
+        return None
+    if prev_frame is None or len(cands) == 1:
+        return max(cands, key=lambda c: c[1])[0]   # largest box
+    return max(cands, key=lambda c: c[2])[0]       # most head motion
 
 
 # ── Trajectory ────────────────────────────────────────────────────────────────

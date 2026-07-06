@@ -99,3 +99,56 @@ def test_subtract_drops_slivers_and_handles_noop():
     # cut leaves a 0.1s sliver at the front — dropped
     assert _subtract_intervals(keep, [(0.1, 1.0)]) == []
     assert _subtract_intervals(keep, []) == keep
+
+
+# ── exports: SRT / Premiere XML / FCPXML ─────────────────────────────────────
+
+from main import _format_srt, _format_xmeml, _format_fcpxml, _export_segments  # noqa: E402
+import xml.etree.ElementTree as ET  # noqa: E402
+
+WORDS = [{"word": "Hello", "start": 0.0, "end": 0.4},
+         {"word": "world.", "start": 0.5, "end": 0.9},
+         {"word": "After", "start": 2.0, "end": 2.4},   # >0.6s gap → new block
+         {"word": "a", "start": 2.5, "end": 2.6},
+         {"word": "pause.", "start": 2.7, "end": 3.1}]
+
+META_CUT = {"fps": 29.97, "src_w": 1920, "src_h": 1080, "start": 100.0,
+            "end": 130.0, "duration": 24.0,
+            "keep": [[0.0, 10.0], [16.0, 30.0]], "words": WORDS}
+
+
+def test_srt_blocks_and_timestamps():
+    srt = _format_srt(WORDS)
+    blocks = srt.strip().split("\n\n")
+    assert len(blocks) == 2
+    assert "00:00:00,000 --> 00:00:00,900" in blocks[0]
+    assert blocks[0].endswith("Hello world.")
+    assert "00:00:02,000 --> 00:00:03,100" in blocks[1]
+
+
+def test_export_segments_source_time():
+    assert _export_segments(META_CUT) == [(100.0, 110.0), (116.0, 130.0)]
+    assert _export_segments({**META_CUT, "keep": None}) == [(100.0, 130.0)]
+
+
+def test_xmeml_wellformed_with_cut_items():
+    xml = _format_xmeml(META_CUT, 'Title & "quotes"', "abc123.mp4")
+    root = ET.fromstring(xml)  # raises if malformed (escaping matters!)
+    items = root.findall(".//clipitem")
+    assert len(items) == 2
+    # second clipitem starts on the timeline where the first ended
+    assert items[1].find("start").text == items[0].find("end").text
+    # source in/out at timebase 30: 116s → 3480
+    assert items[1].find("in").text == "3480"
+
+
+def test_fcpxml_wellformed_and_frame_aligned():
+    xml = _format_fcpxml(META_CUT, "My Clip", "abc123.mp4")
+    root = ET.fromstring(xml)
+    clips = root.findall(".//asset-clip")
+    assert len(clips) == 2
+    # NTSC 29.97 → all times are multiples of 1001/30000s
+    for c in clips:
+        for attr in ("offset", "start", "duration"):
+            num = int(c.get(attr).split("/")[0])
+            assert num % 1001 == 0

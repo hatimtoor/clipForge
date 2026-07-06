@@ -318,8 +318,27 @@ function TikTokUploadModal({ clip, clipIndex, jobId, ttAccounts, onClose, onUplo
 }
 
 // ── ClipCard ───────────────────────────────────────────────────────────────────
-function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTUpload, onEdit, ytConnected, jobId, ttConnected, ttAccounts }) {
+function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTUpload, onEdit, ytConnected, jobId, ttConnected, ttAccounts, isPro }) {
   const [downloading, setDownloading] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const handleExport = async (fmt) => {
+    setExportOpen(false);
+    if (fmt !== "srt" && !isPro) { navigate("/upgrade"); return; }
+    try {
+      const res = await authFetch(`/api/jobs/${jobId}/clips/${idx}/export?fmt=${fmt}`);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = cd.match(/filename="([^"]+)"/);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = m ? m[1] : `clip_${idx + 1}.${fmt === "xml" ? "xml" : fmt}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch { /* non-fatal */ }
+  };
   const [analytics, setAnalytics] = useState(clip.yt_analytics || null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [clipToken, setClipToken] = useState(null);
@@ -505,6 +524,26 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
           {onEdit && <PixelBtn color="lavender" size="sm" onClick={onEdit}>✂ EDIT</PixelBtn>}
           <PixelBtn color="cream" size="sm" onClick={handleDownload} disabled={downloading}>{downloading ? "..." : "v MP4"}</PixelBtn>
           {clip.thumbnail_url && <PixelBtn color="cream" size="sm" onClick={handleDownloadThumb}>v JPG</PixelBtn>}
+          <div style={{ position: "relative" }}>
+            <PixelBtn color="cream" size="sm" onClick={() => setExportOpen(o => !o)}>v MORE</PixelBtn>
+            {exportOpen && (
+              <>
+                <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 199 }} />
+                <div className="pixel" style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 200,
+                  background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: 8, width: 190 }}>
+                  {[["srt", "CC SRT CAPTIONS", false],
+                    ["xml", "PREMIERE XML", true],
+                    ["fcpxml", "FINAL CUT XML", true]].map(([fmt, label, pro]) => (
+                    <button key={fmt} onClick={() => handleExport(fmt)} className="pixel" style={{
+                      display: "block", width: "100%", textAlign: "left", padding: "7px 9px", marginBottom: 4,
+                      fontSize: 8, background: C.cream2, color: C.ink, border: BORDER, cursor: "pointer" }}>
+                      {label}{pro && !isPro ? " 🔒" : ""}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           {ytConnected && (
             ytUp?.status === "done"
               ? <a href={ytUp.url} target="_blank" rel="noreferrer" className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.yt, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textDecoration: "none", textTransform: "uppercase" }}>{`>`} YT ^</a>
@@ -806,6 +845,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
               onTTUpload={() => onTTUpload(c, i)}
               onEdit={() => setEditTarget({ clipIndex: i, title: c.title })}
               jobId={job.job_id}
+              isPro={isPro}
             />
           ))}
           {clips.length === 0 && (

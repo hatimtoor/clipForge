@@ -3921,6 +3921,31 @@ async def create_clips(
             keywords=clip.get("keywords") if caption_keywords else None,
         )
 
+        # Persist the clip's FINAL caption words + cut metadata for exports
+        # (SRT / Premiere XML / FCPXML). Reconstructing this later is impossible
+        # for trimmed clips — every cut shifts every timestamp — so we snapshot
+        # exactly what the renderer used. Never fatal.
+        try:
+            _exp_words = []
+            for _seg in (ass_segs or []):
+                for _w in _fill_words(_seg):
+                    _ws, _we = float(_w["start"]), float(_w["end"])
+                    if _we <= ass_clip_start or _ws >= ass_clip_end:
+                        continue
+                    _exp_words.append({"word": str(_w["word"]).strip(),
+                                       "start": round(max(0.0, _ws - ass_clip_start), 3),
+                                       "end": round(min(render_dur, _we - ass_clip_start), 3)})
+            (OUTPUT_DIR / job_id).mkdir(exist_ok=True)
+            (OUTPUT_DIR / job_id / f"captions_{idx}.json").write_text(json.dumps({
+                "fps": round(clip_fps, 3), "src_w": src_w, "src_h": src_h,
+                "start": start, "end": end, "duration": round(render_dur, 3),
+                # keep = the cut plan in clip-relative seconds; None when uncut
+                "keep": [[round(a, 3), round(b, 3)] for a, b in keep] if needs_trim and trimmed_file else None,
+                "words": _exp_words,
+            }), encoding="utf-8")
+        except Exception as _xe:
+            log(job_id, f"  export metadata skipped: {_xe}")
+
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])
         clip_filename = f"clip_{idx+1}_{safe_title}.mp4"
         clip_path = OUTPUT_DIR / job_id / clip_filename
@@ -4940,6 +4965,192 @@ async def job_frame(job_id: str, t: float = 2.0, user=Depends(require_auth)):
     out.unlink(missing_ok=True)
     return Response(content=data, media_type="image/jpeg",
                     headers={"Cache-Control": "private, max-age=300"})
+
+
+def _srt_ts(t: float) -> str:
+    ms = int(round(max(0.0, t) * 1000))
+    h, rem = divmod(ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, ms = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _format_srt(words: list, max_chars: int = 42, max_gap: float = 0.6,
+                max_span: float = 3.5) -> str:
+    """Word timings → standard SRT blocks: new block on a speech gap, a
+    too-long line, or a too-long span."""
+    blocks, cur = [], []
+    for w in words:
+        if cur and (w["start"] - cur[-1]["end"] > max_gap
+                    or w["end"] - cur[0]["start"] > max_span
+                    or len(" ".join(x["word"] for x in cur)) + len(w["word"]) + 1 > max_chars):
+            blocks.append(cur)
+            cur = []
+        cur.append(w)
+    if cur:
+        blocks.append(cur)
+    out = []
+    for i, b in enumerate(blocks, 1):
+        out.append(f"{i}\n{_srt_ts(b[0]['start'])} --> {_srt_ts(b[-1]['end'])}\n"
+                   + " ".join(x["word"] for x in b))
+    return "\n\n".join(out) + "\n"
+
+
+def _fps_rational(fps: float) -> tuple:
+    """frameDuration as an exact rational for NTSC rates, 1/round(fps) otherwise."""
+    for real, (num, den) in {23.976: (1001, 24000), 29.97: (1001, 30000),
+                             59.94: (1001, 60000)}.items():
+        if abs(fps - real) < 0.01:
+            return num, den
+    r = max(1, int(round(fps)))
+    return 1, r
+
+
+def _export_segments(meta: dict) -> list:
+    """The clip's cut plan as SOURCE-time (in, out) pairs (uncut → one pair)."""
+    start = float(meta["start"])
+    if meta.get("keep"):
+        return [(start + a, start + b) for a, b in meta["keep"]]
+    return [(start, float(meta["end"]))]
+
+
+def _format_xmeml(meta: dict, title: str, src_name: str) -> str:
+    """Premiere-compatible 'Final Cut Pro XML' (xmeml v4): one video sequence
+    whose clipitems reproduce the clip's cuts against the source file."""
+    from xml.sax.saxutils import escape
+    tb = max(1, int(round(float(meta.get("fps") or 30))))
+    w, h = int(meta.get("src_w") or 1920), int(meta.get("src_h") or 1080)
+    segs = _export_segments(meta)
+    items, tl = [], 0
+    for i, (a, b) in enumerate(segs, 1):
+        fin, fout = int(round(a * tb)), int(round(b * tb))
+        d = max(1, fout - fin)
+        items.append(f"""      <clipitem id="clip-{i}">
+        <name>{escape(title)}</name>
+        <rate><timebase>{tb}</timebase><ntsc>FALSE</ntsc></rate>
+        <start>{tl}</start><end>{tl + d}</end>
+        <in>{fin}</in><out>{fout}</out>
+        <file id="src-file">
+          <name>{escape(src_name)}</name>
+          <pathurl>file://localhost/{escape(src_name)}</pathurl>
+          <rate><timebase>{tb}</timebase><ntsc>FALSE</ntsc></rate>
+          <media><video><samplecharacteristics><width>{w}</width><height>{h}</height></samplecharacteristics></video><audio/></media>
+        </file>
+      </clipitem>""")
+        tl += d
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+ <sequence>
+  <name>{escape(title)}</name>
+  <rate><timebase>{tb}</timebase><ntsc>FALSE</ntsc></rate>
+  <media><video>
+    <format><samplecharacteristics><rate><timebase>{tb}</timebase><ntsc>FALSE</ntsc></rate><width>{w}</width><height>{h}</height></samplecharacteristics></format>
+    <track>
+{chr(10).join(items)}
+    </track>
+  </video></media>
+ </sequence>
+</xmeml>
+"""
+
+
+def _format_fcpxml(meta: dict, title: str, src_name: str) -> str:
+    """FCPXML 1.9 for Final Cut Pro / DaVinci Resolve: asset-clips on a spine
+    reproducing the clip's cuts. Times snapped to frame boundaries."""
+    from xml.sax.saxutils import escape
+    fps = float(meta.get("fps") or 30)
+    num, den = _fps_rational(fps)
+    w, h = int(meta.get("src_w") or 1920), int(meta.get("src_h") or 1080)
+
+    def ts(t: float) -> str:
+        frames = int(round(t * den / num))
+        return f"{frames * num}/{den}s"
+
+    segs = _export_segments(meta)
+    clips, offset = [], 0.0
+    for a, b in segs:
+        clips.append(f'      <asset-clip ref="r2" offset="{ts(offset)}" start="{ts(a)}" '
+                     f'duration="{ts(b - a)}" name="{escape(title)}"/>')
+        offset += b - a
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" name="FFVideoFormatRateUndefined" frameDuration="{num}/{den}s" width="{w}" height="{h}"/>
+    <asset id="r2" name="{escape(src_name)}" src="file:///{escape(src_name)}" start="0s" hasVideo="1" hasAudio="1" format="r1"/>
+  </resources>
+  <library>
+    <event name="ClipForge">
+      <project name="{escape(title)}">
+        <sequence format="r1">
+          <spine>
+{chr(10).join(clips)}
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
+"""
+
+
+@app.get("/api/jobs/{job_id}/clips/{clip_idx}/export")
+async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends(require_auth)):
+    """Per-clip exports: SRT captions (free), Premiere XML / FCPXML timelines
+    (Pro). Uses the render-time snapshot (captions_{idx}.json) so timings match
+    the rendered video exactly, including editor/filler/silence cuts; falls
+    back to the raw transcript window for pre-snapshot jobs (uncut only)."""
+    job = db_get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    if fmt not in ("srt", "xml", "fcpxml"):
+        raise HTTPException(400, "fmt must be srt, xml, or fcpxml")
+    clips = job.get("clips") or []
+    if not (0 <= clip_idx < len(clips)):
+        raise HTTPException(404, "clip not found")
+    if fmt in ("xml", "fcpxml"):
+        profile = db_check_and_reset_quota(user.id)
+        if profile.get("plan", "free") != "pro":
+            raise HTTPException(403, "Timeline export (Premiere/FCP XML) requires a Pro plan.")
+
+    c = clips[clip_idx]
+    title = c.get("title") or f"Clip {clip_idx + 1}"
+    meta = None
+    mf = OUTPUT_DIR / job_id / f"captions_{clip_idx}.json"
+    if mf.exists():
+        try:
+            meta = json.loads(mf.read_text(encoding="utf-8"))
+        except Exception:
+            meta = None
+    if meta is None:
+        # Pre-snapshot job: rebuild from the transcript window (uncut clips only).
+        tr = OUTPUT_DIR / job_id / "transcript.json"
+        if not tr.exists():
+            raise HTTPException(404, "Export data not available for this job — re-run it first")
+        segs = json.loads(tr.read_text(encoding="utf-8"))
+        cs, ce = float(c.get("start") or 0), float(c.get("end") or 0)
+        words = [{"word": str(w["word"]).strip(),
+                  "start": round(float(w["start"]) - cs, 3),
+                  "end": round(float(w["end"]) - cs, 3)}
+                 for seg in segs for w in _fill_words(seg)
+                 if cs <= float(w["start"]) < ce]
+        meta = {"fps": 30.0, "src_w": 1920, "src_h": 1080,
+                "start": cs, "end": ce, "duration": ce - cs, "keep": None, "words": words}
+
+    _vid_m = re.search(r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{6,})", job.get("url") or "")
+    src_name = f"{_vid_m.group(1) if _vid_m else 'source'}.mp4"
+    safe = re.sub(r"[^\w]+", "_", title)[:40] or f"clip_{clip_idx + 1}"
+    if fmt == "srt":
+        body, mt, ext = _format_srt(meta.get("words") or []), "application/x-subrip", "srt"
+    elif fmt == "xml":
+        body, mt, ext = _format_xmeml(meta, title, src_name), "application/xml", "xml"
+    else:
+        body, mt, ext = _format_fcpxml(meta, title, src_name), "application/xml", "fcpxml"
+    return Response(content=body, media_type=mt,
+                    headers={"Content-Disposition": f'attachment; filename="{safe}.{ext}"'})
 
 
 @app.get("/api/jobs/{job_id}/transcript")

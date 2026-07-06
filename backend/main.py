@@ -919,31 +919,51 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
     return all_segments
 
 
+# Stealth-model self-healing: OPENROUTER_MODEL may be a rotating slug like
+# openrouter/owl-alpha that 404s between rotations. When the primary 404s we
+# fall through to this stable slug and remember the outage for an hour, so a
+# 75-chunk analysis doesn't re-404 once per chunk (that grind previously ate
+# the whole 90-min watchdog budget when Groq was also rate-limited).
+OPENROUTER_FALLBACK_MODEL = os.getenv("OPENROUTER_FALLBACK_MODEL", "openai/gpt-oss-120b")
+_OPENROUTER_DEAD_UNTIL: dict = {}   # model slug -> epoch seconds
+
+
 async def _call_openrouter(prompt: str, temp: float = 0.3, max_tokens: int = 2000) -> Optional[str]:
-    """Call the OpenRouter primary analysis model. Returns content, or None on any failure."""
+    """Call the OpenRouter primary analysis model, self-healing across dead
+    stealth slugs. Returns content, or None on any failure."""
     if not OPENROUTER_ENABLED:
         return None
     import httpx
+    import time as _t
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": _APP_URL,
         "X-Title": "ClipForge",
     }
-    payload = {
-        "model": OPENROUTER_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temp,
-        "max_tokens": max_tokens,
-    }
+    models = [OPENROUTER_MODEL]
+    if OPENROUTER_FALLBACK_MODEL and OPENROUTER_FALLBACK_MODEL != OPENROUTER_MODEL:
+        models.append(OPENROUTER_FALLBACK_MODEL)
     async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers, json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return (data["choices"][0]["message"]["content"] or "").strip()
+        for i, model in enumerate(models):
+            if _OPENROUTER_DEAD_UNTIL.get(model, 0) > _t.time():
+                continue
+            resp = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json={"model": model, "messages": [{"role": "user", "content": prompt}],
+                      "temperature": temp, "max_tokens": max_tokens},
+            )
+            if resp.status_code == 404 and i < len(models) - 1:
+                # Model slug currently dead (stealth rotation gap) — skip it
+                # for an hour and try the stable fallback.
+                _OPENROUTER_DEAD_UNTIL[model] = _t.time() + 3600
+                print(f"[openrouter] {model} → 404 (rotation gap?) — using {models[i + 1]} for the next hour", flush=True)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            return (data["choices"][0]["message"]["content"] or "").strip()
+    return None
 
 
 # ── virality analysis (OpenRouter primary, Groq Llama fallback) ───────────────

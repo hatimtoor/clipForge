@@ -74,13 +74,23 @@ def probe(video: Path) -> dict:
     split = main._pick_split_speakers(clusters, n_ok, w)
     region = main._facecam_region_from_clusters(clusters, n_ok, w, h)
     motion = edges = None
+    motion_full = edges_full = None
     corner = False
+    campos = None
     if region:
         motion, edges = main._probe_motion_edges(video, dur, region["box"])
-        corner = region["fcx"] < w * 0.33 or region["fcx"] > w * 0.67
+        corner = (region["fcx"] < w * 0.33 or region["fcx"] > w * 0.67
+                  or region["fcy"] > h * 0.75)
+        campos = (round(region["fcx"] / w, 2), round(region["fcy"] / h, 2))
+    else:
+        motion_full, edges_full = main._probe_motion_edges(video, dur, None)
+    face_evidence = sum(c["hits"] for c in clusters)
     return {"w": w, "h": h, "n_faces": len(clusters), "n_ok": n_ok,
             "split": bool(split), "cam": bool(region), "corner": corner,
-            "motion": motion, "edges": edges}
+            "campos": campos,
+            "motion": motion, "edges": edges,
+            "motion_full": motion_full, "edges_full": edges_full,
+            "face_evidence": face_evidence}
 
 
 def decide(m: dict, motion_low: float, edge_high: float, motion_high: float) -> str:
@@ -92,6 +102,13 @@ def decide(m: dict, motion_low: float, edge_high: float, motion_high: float) -> 
             return "screenshare"
         if m["motion"] is not None and m["motion"] >= motion_high and m["corner"]:
             return "gameplay"
+        return "fill"
+    # No cam: no-facecam screencast (face-free + static + edge-dense) → fit
+    if (m.get("face_evidence", 0) <= 0.25 * max(1, m["n_ok"])
+            and m.get("motion_full") is not None
+            and m["motion_full"] < motion_low
+            and (m.get("edges_full") or 0) > edge_high):
+        return "fit"
     return "fill"
 
 
@@ -109,8 +126,8 @@ def main_entry():
             corpus = [e for e in corpus if e["expect"] == args.only]
 
     cur = (float(os.getenv("AUTO_MOTION_LOW", "4.0")),
-           float(os.getenv("AUTO_EDGE_HIGH", "8.0")),
-           float(os.getenv("AUTO_MOTION_HIGH", "10.0")))
+           float(os.getenv("AUTO_EDGE_HIGH", "5.0")),
+           float(os.getenv("AUTO_MOTION_HIGH", "9.0")))
 
     rows = []
     for e in corpus:
@@ -122,9 +139,12 @@ def main_entry():
             mark = "OK " if got == e["expect"] else "MISS"
             mv = "-" if m["motion"] is None else f"{m['motion']:.1f}"
             ev = "-" if m["edges"] is None else f"{m['edges']:.1f}"
+            mfv = "-" if m["motion_full"] is None else f"{m['motion_full']:.1f}"
+            efv = "-" if m["edges_full"] is None else f"{m['edges_full']:.1f}"
             print(f"[{mark}] expect={e['expect']:<11} got={got:<11} faces={m['n_faces']} "
-                  f"split={m['split']} cam={m['cam']} corner={m['corner']} "
-                  f"motion={mv} edges={ev}   {e['url']}", flush=True)
+                  f"fev={m['face_evidence']}/{m['n_ok']} "
+                  f"split={m['split']} cam={m['cam']} corner={m['corner']} campos={m['campos']} "
+                  f"motion={mv} edges={ev} full={mfv}/{efv}   {e['url']}", flush=True)
         except Exception as ex:
             print(f"[ERR ] {e['url']}: {ex}", flush=True)
 

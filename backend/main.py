@@ -2148,7 +2148,6 @@ def _detect_face_clusters(video_path: Path, src_w: int, src_h: int,
         return [], 0
     import cv2 as _cv2
     import statistics as _st
-    from collections import defaultdict
 
     cap = _cv2.VideoCapture(str(video_path))
     fps = cap.get(_cv2.CAP_PROP_FPS) or 30.0
@@ -2169,33 +2168,108 @@ def _detect_face_clusters(video_path: Path, src_w: int, src_h: int,
             _c, faces = face_det.detect(frame)
         except Exception:
             faces = None
-        if faces is None:
-            continue
-        for f in faces:
+        found = [] if faces is None else [
+            [float(f[0]), float(f[1]), float(f[2]), float(f[3])]
+            for f in faces if f[2] > 0 and f[3] > 0]
+        # Recall boost: wide two-shots and tiny corner cams often yield 0-1
+        # detections at native res (YuNet misses small faces) — measured on JRE
+        # 720p wide shots: ~1 of 2 hosts found per frame, killing co-presence.
+        # Retry on a 2x upscale and merge (dedup against the first pass).
+        if len(found) < 2 and max(frame.shape[:2]) <= 1440:
+            try:
+                up = _cv2.resize(frame, None, fx=2.0, fy=2.0,
+                                 interpolation=_cv2.INTER_CUBIC)
+                face_det.setInputSize((up.shape[1], up.shape[0]))
+                _c2, faces2 = face_det.detect(up)
+                for f2 in (faces2 if faces2 is not None else []):
+                    g = [float(f2[0]) / 2, float(f2[1]) / 2, float(f2[2]) / 2, float(f2[3]) / 2]
+                    if g[2] <= 0 or g[3] <= 0:
+                        continue
+                    dup = any(abs((g[0] + g[2] / 2) - (f[0] + f[2] / 2)) < max(g[2], f[2])
+                              and abs((g[1] + g[3] / 2) - (f[1] + f[3] / 2)) < max(g[3], f[3])
+                              for f in found)
+                    if not dup:
+                        found.append(g)
+            except Exception:
+                pass
+        for f in found:
             fw, fh = int(f[2]), int(f[3])
             if fw <= 0 or fh <= 0:
                 continue
-            hits.append((i, int(f[0]) + fw / 2.0, int(f[1]) + fh / 2.0, fw, fh))
+            hits.append((i, f[0] + fw / 2.0, f[1] + fh / 2.0, fw, fh))
     cap.release()
 
     if not hits:
         return [], n_ok
-    gx, gy = src_w * 0.08, src_h * 0.08
-    grid = defaultdict(list)
-    for h in hits:
-        grid[(int(h[1] / gx), int(h[2] / gy))].append(h)
+    # Greedy centroid clustering (replaces the old fixed 8% grid, which
+    # fragmented one moving person into many single-cell "clusters" — a 4-person
+    # gym video measured 44 clusters). Radius scales with the face itself, so a
+    # tiny webcam face clusters tightly while a large moving subject can drift.
     clusters = []
-    for members in grid.values():
-        clusters.append({
-            "fcx": float(_st.median(m[1] for m in members)),
-            "fcy": float(_st.median(m[2] for m in members)),
-            "fw": int(_st.median(m[3] for m in members)),
-            "fh": int(_st.median(m[4] for m in members)),
-            "hits": len(members),
-            "frames": {m[0] for m in members},
+
+    def _radius(fw):
+        return max(fw * 1.2, src_w * 0.05)
+
+    for h in hits:
+        _, cx, cy, fw, fh = h
+        best, best_d = None, None
+        for c in clusters:
+            d = ((cx - c["_sx"] / c["hits"]) ** 2 + (cy - c["_sy"] / c["hits"]) ** 2) ** 0.5
+            if d <= _radius(max(fw, c["_sw"] / c["hits"])) and (best_d is None or d < best_d):
+                best, best_d = c, d
+        if best is None:
+            clusters.append({"_m": [h], "_sx": cx, "_sy": cy, "_sw": fw, "hits": 1})
+        else:
+            best["_m"].append(h)
+            best["_sx"] += cx; best["_sy"] += cy; best["_sw"] += fw
+            best["hits"] += 1
+
+    # Agglomerative merge pass: greedy assignment can still leave two halves of
+    # one wandering subject; fold clusters whose centroids overlap.
+    merged = True
+    while merged and len(clusters) > 1:
+        merged = False
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                a, b = clusters[i], clusters[j]
+                ax, ay = a["_sx"] / a["hits"], a["_sy"] / a["hits"]
+                bx, by = b["_sx"] / b["hits"], b["_sy"] / b["hits"]
+                r = _radius(max(a["_sw"] / a["hits"], b["_sw"] / b["hits"]))
+                if ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 <= r:
+                    a["_m"] += b["_m"]
+                    a["_sx"] += b["_sx"]; a["_sy"] += b["_sy"]; a["_sw"] += b["_sw"]
+                    a["hits"] += b["hits"]
+                    del clusters[j]
+                    merged = True
+                    break
+            if merged:
+                break
+
+    out = []
+    for c in clusters:
+        m = c["_m"]
+        xs = [v[1] for v in m]; ys = [v[2] for v in m]
+        mx, my = float(_st.median(xs)), float(_st.median(ys))
+        fw_med = int(_st.median(v[3] for v in m))
+        # Stability stats: a webcam overlay is pinned (near-zero drift, constant
+        # size); a person in the scene drifts and scales. Median-based so a few
+        # stray detections merged into the cluster can't inflate the spread
+        # (reaction videos: content faces near the cam corner did exactly that).
+        pos_std = float(_st.median(((x - mx) ** 2 + (y - my) ** 2) ** 0.5
+                                   for x, y in zip(xs, ys)))
+        sizes = [v[3] for v in m]
+        size_std = float(_st.median(abs(s - fw_med) for s in sizes)) if len(sizes) > 1 else 0.0
+        out.append({
+            "fcx": mx, "fcy": my,
+            "fw": fw_med,
+            "fh": int(_st.median(v[4] for v in m)),
+            "hits": len(m),
+            "frames": {v[0] for v in m},
+            "pos_std": pos_std,
+            "size_std": size_std,
         })
-    clusters.sort(key=lambda c: c["hits"], reverse=True)
-    return clusters, n_ok
+    out.sort(key=lambda c: c["hits"], reverse=True)
+    return out, n_ok
 
 
 def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list]:
@@ -2206,9 +2280,15 @@ def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list
     comparable size."""
     if n_ok == 0:
         return None
-    cands = [c for c in clusters if c["hits"] >= max(3, int(0.4 * n_ok))]
+    # Seated podcast hosts are persistent AND positionally stable; people moving
+    # through a scene (gym/action crowds) are excluded by the drift guard so the
+    # merged clusters of two movers can never masquerade as a two-shot.
+    cands = [c for c in clusters
+             if c["hits"] >= max(3, int(0.35 * n_ok))
+             and c.get("pos_std", 0.0) < src_w * 0.05]
     from itertools import combinations
-    for a, b in combinations(cands[:4], 2):
+    total_ev = sum(c["hits"] for c in clusters) or 1
+    for a, b in combinations(cands[:6], 2):
         co_present = len(a["frames"] & b["frames"])
         if co_present < 0.3 * n_ok:
             continue
@@ -2217,6 +2297,11 @@ def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list
         area_a, area_b = a["fw"] * a["fh"], b["fw"] * b["fh"]
         if max(area_a, area_b) > 2.5 * max(1, min(area_a, area_b)):
             continue
+        # Pair dominance: in a real two-shot the two hosts ARE the video's face
+        # evidence. A crowd (gym: 4 movers → 24 fragment clusters) can produce
+        # two stable-looking fragments, but they own a sliver of the total.
+        if a["hits"] + b["hits"] < 0.55 * total_ev:
+            continue
         return sorted([a, b], key=lambda c: c["fcx"])
     return None
 
@@ -2224,13 +2309,17 @@ def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list
 def _facecam_region_from_clusters(clusters: list, n_ok: int,
                                   src_w: int, src_h: int) -> Optional[dict]:
     """Pick the webcam from pre-computed face clusters: the persistent SMALL
-    face (a large face is the main subject, not a cam)."""
+    face (a large face is the main subject, not a cam) that is also ANCHORED —
+    a real cam overlay is pinned in place with a constant size, while a person
+    who happens to linger near a corner (gym crowds!) drifts and scales."""
     if n_ok == 0:
         return None
     frame_area = src_w * src_h
     small = [c for c in clusters
              if c["fw"] * c["fh"] < frame_area * 0.08
-             and c["hits"] >= max(3, int(0.20 * n_ok))]
+             and c["hits"] >= max(3, int(0.20 * n_ok))
+             and c.get("pos_std", 0.0) < src_w * 0.03
+             and c.get("size_std", 0.0) < max(4.0, c["fw"] * 0.35)]
     if not small:
         return None
     best = small[0]
@@ -3380,10 +3469,20 @@ async def create_clips(
                         if facecam_region:
                             _motion, _edges = await asyncio.to_thread(
                                 _probe_motion_edges, video_path, _fd, facecam_region["box"])
+                            # Defaults measured on the 12-video calibration corpus
+                            # (tests/layout_corpus.json, 2026-07-06): 4.0/5.0/9.0
+                            # scored 9/12 vs 7/12 for the old guesses 4.0/8.0/10.0.
                             _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
-                            _e_high = float(os.getenv("AUTO_EDGE_HIGH", "8.0"))
-                            _m_high = float(os.getenv("AUTO_MOTION_HIGH", "10.0"))
-                            _corner = (facecam_region["fcx"] < _fw * 0.33 or facecam_region["fcx"] > _fw * 0.67)
+                            _e_high = float(os.getenv("AUTO_EDGE_HIGH", "5.0"))
+                            _m_high = float(os.getenv("AUTO_MOTION_HIGH", "9.0"))
+                            # Streamer cams sit in the left/right corners or the
+                            # bottom band (bottom-center webcam bars are common);
+                            # top/center faces are subjects or logos, never cams —
+                            # confirmed across the calibration corpus (fill videos'
+                            # phantom "cams" all sit top/center, fcy ≤ 0.43).
+                            _corner = (facecam_region["fcx"] < _fw * 0.33
+                                       or facecam_region["fcx"] > _fw * 0.67
+                                       or facecam_region["fcy"] > _fh * 0.75)
                             log(job_id, f"  Auto probe: motion={_motion if _motion is None else round(_motion, 1)} "
                                         f"edges={_edges if _edges is None else round(_edges, 1)} corner_cam={_corner}")
                             if _motion is not None and _motion < _m_low and _edges > _e_high:
@@ -3393,7 +3492,21 @@ async def create_clips(
                             else:
                                 layout_resolved = "fill"
                         else:
+                            # No cam found. A no-facecam screencast (pure code/
+                            # slides — near-zero face evidence, static frame,
+                            # edge-dense) must NOT be center-cropped by fill;
+                            # letterbox it with Fit so the content stays legible.
+                            _face_evidence = sum(c["hits"] for c in _clusters)
                             layout_resolved = "fill"
+                            if _face_evidence <= 0.25 * _n_ok:
+                                _motion, _edges = await asyncio.to_thread(
+                                    _probe_motion_edges, video_path, _fd, None)
+                                _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
+                                _e_high = float(os.getenv("AUTO_EDGE_HIGH", "5.0"))
+                                log(job_id, f"  Auto probe (no cam): motion={_motion if _motion is None else round(_motion, 1)} "
+                                            f"edges={_edges if _edges is None else round(_edges, 1)}")
+                                if _motion is not None and _motion < _m_low and (_edges or 0) > _e_high:
+                                    layout_resolved = "fit"
                     log(job_id, f"  Auto layout → {layout_resolved}")
         except Exception as _fe:
             log(job_id, f"  Layout probe skipped: {_fe}")

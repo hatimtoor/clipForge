@@ -1,11 +1,14 @@
 [
-  {"url": "https://www.youtube.com/watch?v=_JHt4tt97Uo", "expect": "fill",        "section": "*120-360",   "note": "user-reported gym group-action video — the ping-pong case; must stay fill"},
-  {"url": "https://www.youtube.com/watch?v=7qZl_5xHoBw", "expect": "split",       "section": "*600-840",   "note": "JRE #2223 Elon — studio wide two-shot"},
-  {"url": "https://www.youtube.com/watch?v=ycPr5-27vSI", "expect": "split",       "section": "*600-840",   "note": "JRE #1169 Elon — studio wide two-shot"},
+  {"url": "https://www.youtube.com/watch?v=_JHt4tt97Uo", "expect": "fill",        "section": "*120-360",   "note": "user gym group-action video — EXACTLY 4 people throughout (probe saw 44 clusters = fragmentation); the ping-pong case; must stay fill"},
+  {"url": "https://www.youtube.com/watch?v=ZaCzhlDjVmY", "expect": "gameplay",    "section": "*120-360",   "note": "user reaction video — facecam on screen most of the time but layout swaps (cam sometimes fullscreen, content to corner); hard facecam-detection positive"},
+  {"url": "https://www.youtube.com/watch?v=JnlMl3nF5Zw", "expect": "fill",        "section": "*120-360",   "note": "user podcast, multi-cam edit — cuts between single-person shots, both hosts rarely co-present; must NOT be split"},
+  {"url": "https://www.youtube.com/watch?v=Zyplp6nhdCQ", "expect": "fill",        "section": "*120-360",   "note": "user group Q&A — sometimes multiple people on screen, sometimes one; group-tracking fill case"},
+  {"url": "https://www.youtube.com/watch?v=7qZl_5xHoBw", "expect": "fill",        "section": "*600-840",   "note": "JRE #2223 — RELABELED: measured fev~1.2 faces/frame = MULTICAM EDIT (cuts between close-ups), not a static two-shot; fill is correct. Corpus still needs a true static two-shot split positive"},
+  {"url": "https://www.youtube.com/watch?v=ycPr5-27vSI", "expect": "fill",        "section": "*600-840",   "note": "JRE #1169 — RELABELED: multicam edit like #2223; fill is correct"},
   {"url": "https://www.youtube.com/watch?v=rfscVS0vtbw", "expect": "screenshare", "section": "*1800-2040", "note": "freeCodeCamp Python course — pure screen recording"},
-  {"url": "https://www.youtube.com/watch?v=_uQrJ0TkZlc", "expect": "screenshare", "section": "*1800-2040", "note": "Mosh Python tutorial — slides/editor"},
-  {"url": "https://www.youtube.com/watch?v=XKHEtdqhLK8", "expect": "screenshare", "section": "*1800-2040", "note": "Bro Code Python — editor recording"},
-  {"url": "https://www.youtube.com/watch?v=mbMABIu_jJw", "expect": "gameplay",    "section": "*120-360",   "note": "Minecraft hardcore with facecam"},
-  {"url": "https://www.youtube.com/watch?v=GRSeyZqHK0E", "expect": "gameplay",    "section": "*300-540",   "note": "Hardcore Minecraft Day 1 facecam"},
-  {"url": "https://www.youtube.com/watch?v=HUJAwEGD2Os", "expect": "gameplay",    "section": "*120-360",   "note": "Valorant funny moments — streamer clips w/ cams (verify label from output)"}
+  {"url": "https://www.youtube.com/watch?v=_uQrJ0TkZlc", "expect": "fit",         "section": "*1800-2040", "note": "Mosh Python tutorial — slides/editor, NO facecam → letterboxed fit (screenshare needs a cam)"},
+  {"url": "https://www.youtube.com/watch?v=XKHEtdqhLK8", "expect": "fit",         "section": "*1800-2040", "note": "Bro Code Python — editor recording, no reliable facecam → letterboxed fit"},
+  {"url": "https://www.youtube.com/watch?v=mbMABIu_jJw", "expect": "gameplay",    "section": "*120-360",   "note": "Minecraft hardcore with facecam — the one case current probes get right"},
+  {"url": "https://www.youtube.com/watch?v=GRSeyZqHK0E", "expect": "gameplay",    "section": "*300-540",   "note": "Hardcore Minecraft Day 1 facecam — facecam currently NOT detected (flaky cam probe)"},
+  {"url": "https://www.youtube.com/watch?v=HUJAwEGD2Os", "expect": "fill",        "section": "*120-360",   "note": "Valorant funny moments — MONTAGE of many streamers' clips, cam position changes per segment so no single cam layout works; fill is correct"}
 ]

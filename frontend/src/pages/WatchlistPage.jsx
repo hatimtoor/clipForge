@@ -78,6 +78,7 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
   const [trimSilence,    setTrimSilence]    = useState(ch.trim_silence ?? false);
   const [clipStyle,      setClipStyle]      = useState(ch.clip_style ?? "reframe");
   const chOpt = ch.options || {};
+  const [removeFillers,  setRemoveFillers]  = useState(chOpt.remove_fillers ?? false);
   const [aspectRatio,     setAspectRatio]     = useState(chOpt.aspect_ratio ?? "9:16");
   const [captionPosition, setCaptionPosition] = useState(chOpt.caption_position ?? "default");
   const [captionKeywords, setCaptionKeywords] = useState(chOpt.caption_keywords !== false);
@@ -355,8 +356,17 @@ function ChannelCard({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, o
                   background: trimSilence ? C.signal : C.cream2, color: C.ink, border: BORDER,
                   boxShadow: trimSilence ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
                   transform: trimSilence ? "translate(2px,2px)" : "none",
+                  marginBottom: 8,
                 }}>
                   ✂ TRIM SILENCE {trimSilence ? "ON" : "OFF"}
+                </button>
+                <button onClick={() => { const v = !removeFillers; setRemoveFillers(v); patch({ remove_fillers: v }); }} className="pixel" style={{
+                  width: "100%", padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
+                  background: removeFillers ? C.signal : C.cream2, color: C.ink, border: BORDER,
+                  boxShadow: removeFillers ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
+                  transform: removeFillers ? "translate(2px,2px)" : "none",
+                }}>
+                  ⌫ CUT FILLERS (UM/UH) {removeFillers ? "ON" : "OFF"}
                 </button>
               </div>
             </div>

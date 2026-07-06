@@ -392,6 +392,7 @@ class ChannelRequest(BaseModel):
     style_prompt: Optional[str] = None
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
+    remove_fillers: Optional[bool] = None
 
 class ChannelPatchRequest(BaseModel):
     auto_upload: Optional[bool] = None
@@ -415,12 +416,14 @@ class ChannelPatchRequest(BaseModel):
     style_prompt: Optional[str] = None
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
+    remove_fillers: Optional[bool] = None
 
 
 # Fields that live in the options JSONB bag on channels/backfill_channels
 # (instead of a column per knob). Split out of create/patch payloads.
 _OPTIONS_FIELDS = ("aspect_ratio", "caption_position", "caption_keywords",
-                   "caption_emoji", "style_prompt", "exclude_prompt", "facecam_box")
+                   "caption_emoji", "style_prompt", "exclude_prompt", "facecam_box",
+                   "remove_fillers")
 
 
 def _channel_clip_request(row: dict, video_url: str) -> ClipRequest:
@@ -452,6 +455,7 @@ def _channel_clip_request(row: dict, video_url: str) -> ClipRequest:
         bg_music_url=row.get("bg_music_url") or None,
         bg_music_volume=row.get("bg_music_volume") or 0.15,
         trim_silence=row.get("trim_silence", False),
+        remove_fillers=bool(opt.get("remove_fillers")),
     )
 
 
@@ -479,6 +483,7 @@ class BackfillRequest(BaseModel):
     style_prompt: Optional[str] = None
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
+    remove_fillers: Optional[bool] = None
 
 
 class BackfillPatchRequest(BaseModel):
@@ -505,6 +510,7 @@ class BackfillPatchRequest(BaseModel):
     style_prompt: Optional[str] = None
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
+    remove_fillers: Optional[bool] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════

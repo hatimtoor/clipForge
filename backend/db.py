@@ -500,3 +500,48 @@ def db_update_backfill(backfill_id: str, updates: dict) -> None:
 
 def db_delete_backfill(backfill_id: str) -> None:
     get_db().table("backfill_channels").delete().eq("id", backfill_id).execute()
+
+
+# ── Scheduled posts (W5.5 scheduler/calendar) ─────────────────────────────────
+
+def db_create_scheduled_post(data: dict) -> dict:
+    r = get_db().table("scheduled_posts").insert(data).execute()
+    return r.data[0]
+
+
+def db_get_user_scheduled_posts(user_id: str, limit: int = 200) -> list:
+    r = (
+        get_db().table("scheduled_posts")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("publish_at", desc=False)
+        .limit(limit)
+        .execute()
+    )
+    return r.data or []
+
+
+def db_get_scheduled_post(post_id: str) -> Optional[dict]:
+    try:
+        r = get_db().table("scheduled_posts").select("*").eq("id", post_id).single().execute()
+        return r.data
+    except Exception:
+        return None
+
+
+def db_update_scheduled_post(post_id: str, updates: dict) -> None:
+    _retry_db(lambda: get_db().table("scheduled_posts").update(updates).eq("id", post_id).execute())
+
+
+def db_due_scheduled_posts(now_iso: str, limit: int = 10) -> list:
+    """Posts whose publish time has arrived, oldest first."""
+    r = (
+        get_db().table("scheduled_posts")
+        .select("*")
+        .eq("status", "scheduled")
+        .lte("publish_at", now_iso)
+        .order("publish_at", desc=False)
+        .limit(limit)
+        .execute()
+    )
+    return r.data or []

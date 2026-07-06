@@ -127,6 +127,8 @@ from db import (
     FREE_MONTHLY_JOB_LIMIT, FREE_MAX_CLIPS_PER_JOB, PRO_MAX_CLIPS_PER_JOB,
     db_create_backfill, db_get_user_backfills, db_get_active_backfills,
     db_get_backfill, db_update_backfill, db_delete_backfill,
+    db_create_scheduled_post, db_get_user_scheduled_posts, db_get_scheduled_post,
+    db_update_scheduled_post, db_due_scheduled_posts,
 )
 
 SUPABASE_URL     = os.getenv("SUPABASE_URL", "")
@@ -342,6 +344,16 @@ class BrandSettings(BaseModel):
     opacity: float = 0.5                # 0.1 - 1.0
     size: float = 0.15                  # logo width as a fraction of clip width
     color: Optional[str] = None         # brand hex — default caption highlight
+
+class ScheduleRequest(BaseModel):
+    job_id: str
+    clip_index: int
+    platform: str                       # youtube | tiktok
+    target_id: Optional[str] = None     # yt_channel_id / tt_open_id
+    title: Optional[str] = None
+    description: Optional[str] = None
+    privacy: Optional[str] = None       # youtube privacy_status / tiktok privacy_level
+    publish_at: str                     # ISO timestamp (UTC)
 
 class RepromptRequest(BaseModel):
     find: Optional[str] = None          # new find prompt (defaults to parent's)
@@ -4900,6 +4912,68 @@ async def temp_sweeper():
         await asyncio.sleep(6 * 3600)
 
 
+async def scheduled_post_publisher():
+    """Publish due scheduled posts through the existing YouTube/TikTok upload
+    workers. Runs every 60s; each post is claimed (status=publishing) before
+    the upload so a crash can't double-post, and the final state is read back
+    from the clip's upload record."""
+    await asyncio.sleep(120)  # let startup settle
+    while True:
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            due = await asyncio.to_thread(db_due_scheduled_posts, now_iso)
+            for post in due:
+                pid = post["id"]
+                try:
+                    await asyncio.to_thread(db_update_scheduled_post, pid, {"status": "publishing"})
+                    job = db_get_job(post["job_id"])
+                    clips = (job or {}).get("clips") or []
+                    idx = int(post["clip_index"])
+                    if not job or not (0 <= idx < len(clips)):
+                        await asyncio.to_thread(db_update_scheduled_post, pid,
+                                                {"status": "error", "error": "Clip no longer exists"})
+                        continue
+                    clip = clips[idx]
+                    if post["platform"] == "youtube":
+                        req_data = {
+                            "title": post.get("title") or clip.get("title") or "Clip",
+                            "description": post.get("description") or "",
+                            "tags": clip.get("tags") or [],
+                            "privacy_status": post.get("privacy") or "public",
+                            "yt_channel_id": post.get("target_id"),
+                        }
+                        await asyncio.to_thread(do_youtube_upload, post["job_id"], idx, req_data, post["user_id"])
+                        job2 = db_get_job(post["job_id"]) or {}
+                        up = ((job2.get("clips") or [{}] * (idx + 1))[idx] or {}).get("yt_upload") or {}
+                    else:
+                        req_data = {
+                            "tt_open_id": post.get("target_id"),
+                            "title": post.get("title") or clip.get("title") or "",
+                            "privacy_level": post.get("privacy"),
+                        }
+                        await asyncio.to_thread(do_tiktok_upload, post["job_id"], idx, req_data, post["user_id"])
+                        job2 = db_get_job(post["job_id"]) or {}
+                        up = ((job2.get("clips") or [{}] * (idx + 1))[idx] or {}).get("tt_upload") or {}
+                    if up.get("status") == "done":
+                        await asyncio.to_thread(db_update_scheduled_post, pid, {"status": "done"})
+                    elif up.get("status") == "error":
+                        await asyncio.to_thread(db_update_scheduled_post, pid,
+                                                {"status": "error", "error": (up.get("error") or "upload failed")[:500]})
+                    else:
+                        # upload still in flight (chunked) — leave as publishing;
+                        # the clip card shows live progress either way.
+                        await asyncio.to_thread(db_update_scheduled_post, pid, {"status": "done"})
+                except Exception as pe:
+                    try:
+                        await asyncio.to_thread(db_update_scheduled_post, pid,
+                                                {"status": "error", "error": str(pe)[:500]})
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[scheduler] publisher error: {e}", flush=True)
+        await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(watchdog())
@@ -4910,6 +4984,7 @@ async def startup_event():
     asyncio.create_task(public_stats_aggregator())
     asyncio.create_task(source_cache_sweeper())
     asyncio.create_task(temp_sweeper())
+    asyncio.create_task(scheduled_post_publisher())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES
@@ -5224,6 +5299,73 @@ async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends
         body, mt, ext = _format_fcpxml(meta, title, src_name), "application/xml", "fcpxml"
     return Response(content=body, media_type=mt,
                     headers={"Content-Disposition": f'attachment; filename="{safe}.{ext}"'})
+
+
+@app.post("/api/schedule")
+@_limiter.limit("20/minute")
+async def create_schedule(request: Request, req: ScheduleRequest, user=Depends(require_pro)):
+    """Queue a rendered clip for publishing at a specific time (Pro).
+    Clips auto-expire from storage ~7 days after the job, so publish_at is
+    capped at 6 days out."""
+    if req.platform not in ("youtube", "tiktok"):
+        raise HTTPException(400, "platform must be youtube or tiktok")
+    job = db_get_job(req.job_id)
+    if not job or job.get("user_id") != user.id:
+        raise HTTPException(404, "Job not found")
+    clips = job.get("clips") or []
+    if not (0 <= req.clip_index < len(clips)):
+        raise HTTPException(404, "clip not found")
+    if job.get("clips_expired"):
+        raise HTTPException(400, "This job's clips have expired from storage")
+    try:
+        when = parse_iso(req.publish_at)
+    except Exception:
+        raise HTTPException(400, "publish_at must be an ISO timestamp")
+    now = datetime.now(timezone.utc)
+    if when <= now:
+        raise HTTPException(400, "publish_at must be in the future")
+    if (when - now).total_seconds() > 6 * 86400:
+        raise HTTPException(400, "Clips expire from storage after ~7 days — schedule at most 6 days out")
+    post = await asyncio.to_thread(db_create_scheduled_post, {
+        "user_id": user.id,
+        "job_id": req.job_id,
+        "clip_index": req.clip_index,
+        "platform": req.platform,
+        "target_id": req.target_id,
+        "title": (req.title or "").strip() or None,
+        "description": req.description,
+        "privacy": req.privacy,
+        "publish_at": when.isoformat(),
+        "status": "scheduled",
+    })
+    return {"id": post["id"]}
+
+
+@app.get("/api/schedule")
+async def list_schedule(user=Depends(require_auth)):
+    posts = await asyncio.to_thread(db_get_user_scheduled_posts, user.id)
+    # decorate with clip titles/thumbnails for the calendar
+    jobs_cache: dict = {}
+    for p in posts:
+        jid = p["job_id"]
+        if jid not in jobs_cache:
+            jobs_cache[jid] = db_get_job(jid) or {}
+        clips = jobs_cache[jid].get("clips") or []
+        c = clips[p["clip_index"]] if 0 <= p["clip_index"] < len(clips) else {}
+        p["clip_title"] = p.get("title") or c.get("title") or f"Clip {p['clip_index'] + 1}"
+        p["thumbnail_url"] = c.get("thumbnail_url")
+    return {"posts": posts}
+
+
+@app.delete("/api/schedule/{post_id}")
+async def cancel_schedule(post_id: str, user=Depends(require_auth)):
+    post = await asyncio.to_thread(db_get_scheduled_post, post_id)
+    if not post or post.get("user_id") != user.id:
+        raise HTTPException(404, "Not found")
+    if post.get("status") not in ("scheduled", "error"):
+        raise HTTPException(400, f"Cannot cancel a post that is {post.get('status')}")
+    await asyncio.to_thread(db_update_scheduled_post, post_id, {"status": "cancelled"})
+    return {"ok": True}
 
 
 @app.get("/api/brand")

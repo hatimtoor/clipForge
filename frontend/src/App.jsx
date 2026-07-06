@@ -34,6 +34,7 @@ import WatchlistPage from "./pages/WatchlistPage";
 import ArchivePage  from "./pages/ArchivePage";
 import DigestPage   from "./pages/DigestPage";
 import ConnectionsPage from "./pages/ConnectionsPage";
+import CalendarPage from "./pages/CalendarPage";
 import UpgradePage   from "./pages/UpgradePage";
 import PrivacyPage  from "./pages/PrivacyPage";
 import TermsPage    from "./pages/TermsPage";
@@ -152,6 +153,7 @@ export default function App() {
           <Route path="/watchlist" element={<PrivateRoute><WatchlistPage /></PrivateRoute>} />
           <Route path="/digest"    element={<PrivateRoute><DigestPage /></PrivateRoute>} />
           <Route path="/connections" element={<PrivateRoute><ConnectionsPage /></PrivateRoute>} />
+          <Route path="/calendar"  element={<PrivateRoute><CalendarPage /></PrivateRoute>} />
           <Route path="/upgrade"   element={<PrivateRoute><UpgradePage /></PrivateRoute>} />
           <Route path="/archive"   element={<PrivateRoute><ArchivePage /></PrivateRoute>} />
           <Route path="/privacy"   element={<PrivacyPage />} />

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES, fmtTime } from "../lib/theme";
 import { useMobile } from "../hooks/useMobile";
@@ -318,9 +319,83 @@ function TikTokUploadModal({ clip, clipIndex, jobId, ttAccounts, onClose, onUplo
 }
 
 // ── ClipCard ───────────────────────────────────────────────────────────────────
+// Schedule-a-post modal (Pro): pick platform/account + a time; the server
+// publishes automatically. Portaled to body (.fade transform breaks fixed).
+function ScheduleModal({ clip, idx, jobId, onClose }) {
+  const { ytStatus, ttStatus } = useApp();
+  const targets = [
+    ...(ytStatus?.channels || []).map(c => ({ key: `yt:${c.yt_channel_id}`, platform: "youtube", id: c.yt_channel_id, label: `> YT: ${c.yt_channel_name || c.yt_channel_id}` })),
+    ...(ttStatus?.accounts || []).map(a => ({ key: `tt:${a.tt_open_id}`, platform: "tiktok", id: a.tt_open_id, label: `# TT: ${a.tt_display_name || a.tt_open_id}` })),
+  ];
+  const [target, setTarget] = useState(targets[0]?.key || "");
+  const [title, setTitle] = useState(clip.title || "");
+  const [when, setWhen] = useState(() => {
+    const d = new Date(Date.now() + 3600e3);
+    d.setMinutes(0, 0, 0);
+    const p = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    const t = targets.find(x => x.key === target);
+    if (!t) { setErr("Connect a YouTube/TikTok account first (Connections page)"); return; }
+    const dt = new Date(when);
+    if (isNaN(dt) || dt <= new Date()) { setErr("Pick a future time"); return; }
+    setBusy(true); setErr("");
+    try {
+      const body = {
+        job_id: jobId, clip_index: idx, platform: t.platform, target_id: t.id,
+        title: title.trim() || undefined,
+        description: t.platform === "youtube"
+          ? [clip.hook, clip.reason, (clip.tags || []).map(x => `#${x}`).join(" ")].filter(Boolean).join("\n\n")
+          : undefined,
+        publish_at: dt.toISOString(),
+      };
+      const res = await authFetch("/api/schedule", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const d = await res.json();
+      if (!res.ok) { setErr(d.detail || "Scheduling failed"); setBusy(false); return; }
+      onClose(true);
+    } catch { setErr("Scheduling failed"); setBusy(false); }
+  };
+
+  return createPortal(
+    <>
+      <div onClick={() => onClose(false)} style={{ position: "fixed", inset: 0, background: "rgba(26,13,46,.7)", zIndex: 299 }} />
+      <div className="pixel" style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+        width: "min(420px, 94vw)", background: C.cream, border: `3px solid ${C.ink}`, boxShadow: SHADOW, padding: 16, zIndex: 300 }}>
+        <div style={{ fontSize: 9, color: C.ink, marginBottom: 10 }}>⏰ SCHEDULE THIS CLIP</div>
+        {targets.length === 0
+          ? <div className="vt" style={{ fontSize: 15, color: C.dim2, marginBottom: 10 }}>No connected accounts — link YouTube or TikTok on the Connections page first.</div>
+          : targets.map(t => (
+            <button key={t.key} onClick={() => setTarget(t.key)} className="pixel" style={{
+              display: "block", width: "100%", textAlign: "left", padding: "8px 10px", marginBottom: 6, fontSize: 9,
+              background: target === t.key ? C.signal : C.cream2, color: C.ink, border: BORDER, cursor: "pointer" }}>
+              {t.label}
+            </button>
+          ))}
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="post title" className="vt"
+          style={{ width: "100%", fontSize: 15, padding: "7px 9px", border: BORDER, margin: "6px 0", background: "#fff", color: C.ink }} />
+        <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} className="mono"
+          style={{ width: "100%", fontSize: 13, padding: "7px 9px", border: BORDER, marginBottom: 8, background: "#fff", color: C.ink }} />
+        <div className="vt" style={{ fontSize: 13, color: C.dim2, marginBottom: 10 }}>max 6 days out — clips expire from storage after ~7</div>
+        {err && <div className="vt" style={{ fontSize: 14, color: C.hotDeep, marginBottom: 8 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 8 }}>
+          <PixelBtn color="signal" size="sm" disabled={busy || !targets.length} onClick={submit}>{busy ? "..." : "⏰ SCHEDULE"}</PixelBtn>
+          <PixelBtn color="cream" size="sm" onClick={() => onClose(false)}>CANCEL</PixelBtn>
+        </div>
+      </div>
+    </>, document.body);
+}
+
 function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTUpload, onEdit, ytConnected, jobId, ttConnected, ttAccounts, isPro }) {
   const [downloading, setDownloading] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduled, setScheduled] = useState(false);
   const navigate = useNavigate();
 
   const handleExport = async (fmt) => {
@@ -524,6 +599,10 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
           {onEdit && <PixelBtn color="lavender" size="sm" onClick={onEdit}>✂ EDIT</PixelBtn>}
           <PixelBtn color="cream" size="sm" onClick={handleDownload} disabled={downloading}>{downloading ? "..." : "v MP4"}</PixelBtn>
           {clip.thumbnail_url && <PixelBtn color="cream" size="sm" onClick={handleDownloadThumb}>v JPG</PixelBtn>}
+          {scheduleOpen && (
+            <ScheduleModal clip={clip} idx={idx} jobId={jobId}
+              onClose={(ok) => { setScheduleOpen(false); if (ok) setScheduled(true); }} />
+          )}
           <div style={{ position: "relative" }}>
             <PixelBtn color="cream" size="sm" onClick={() => setExportOpen(o => !o)}>v MORE</PixelBtn>
             {exportOpen && (
@@ -540,6 +619,12 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
                       {label}{pro && !isPro ? " 🔒" : ""}
                     </button>
                   ))}
+                  <button onClick={() => { setExportOpen(false); if (!isPro) { navigate("/upgrade"); return; } setScheduleOpen(true); }}
+                    className="pixel" style={{
+                      display: "block", width: "100%", textAlign: "left", padding: "7px 9px",
+                      fontSize: 8, background: scheduled ? C.signal : C.cream2, color: C.ink, border: BORDER, cursor: "pointer" }}>
+                    {scheduled ? "✓ SCHEDULED" : "⏰ SCHEDULE POST"}{!isPro ? " 🔒" : ""}
+                  </button>
                 </div>
               </>
             )}

@@ -19,6 +19,7 @@ export default function Header() {
     ["work",      jobActive ? "LIVE" : "WORK"],
     ["watchlist", "WATCHLIST"],
     ["digest",    "DIGEST"],
+    ["calendar",  "CALENDAR"],
     ["archive",   "ARCHIVE"],
   ];
 

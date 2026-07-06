@@ -64,6 +64,18 @@ def test_empty_candidates_returns_none():
     assert _select_crop_center([], CROP_W, {}) is None
 
 
+def test_cluster_spread_recorded_for_group_zoom():
+    # The fill layout's auto zoom-out reads per-sample cluster spreads from the
+    # selector state; solo speakers must record ~0 so they never widen.
+    state = {}
+    cluster = [(850.0, 40000, 5.0), (900.0, 60000, 30.0), (960.0, 50000, 2.0)]
+    _select_crop_center(cluster, CROP_W, state)
+    assert state["spreads"] == [110.0]
+    solo_state = {}
+    _select_crop_center([(500.0, 50000, 10.0)], CROP_W, solo_state)
+    assert solo_state["spreads"] == [0.0]
+
+
 # ── trajectory adaptive hysteresis ────────────────────────────────────────────
 
 def _switch_count(traj):

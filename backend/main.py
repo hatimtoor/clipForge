@@ -1007,8 +1007,13 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
         _tag = "[HIGH ENERGY] " if _hot and _is_hot((seg["start"] + seg["end"]) / 2) else ""
         transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {_tag}{seg['text']}")
 
-    # Split into chunks of ~3000 chars to avoid Ollama timeout
-    CHUNK_SIZE = 3000
+    # Chunk size is sized for the CURRENT model, not the original Ollama-era
+    # 3,000 chars (that relic made a 3h video 75+ sequential LLM calls — fine
+    # when a rate-limit-free primary answered in ~5s each, a 48-minute crawl
+    # on Groq free-tier pacing). gpt-oss-120b has 128k context; ~24k chars
+    # (~6k tokens) per chunk turns 75 calls into ~10 with the same total
+    # tokens and far fewer rate-limit round-trips.
+    CHUNK_SIZE = int(os.getenv("ANALYSIS_CHUNK_CHARS", "24000") or "24000")
     full_text = "\n".join(transcript_lines)
     chunks = []
     while len(full_text) > 0:
@@ -1080,7 +1085,9 @@ Return valid JSON array only, no markdown, no explanation."""
                     model=GROQ_ANALYSIS_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=t,
-                    max_tokens=2000,
+                    # Sized with ANALYSIS_CHUNK_CHARS: each ~24k-char chunk can
+                    # legitimately yield several full clip objects of JSON.
+                    max_tokens=4000,
                 )
                 return r.choices[0].message.content.strip()
             return await groq_with_retry(

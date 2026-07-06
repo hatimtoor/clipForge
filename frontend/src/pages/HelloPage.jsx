@@ -56,6 +56,7 @@ export default function HelloPage() {
   const [facecamBox, setFacecamBox] = useState(null);
   const [camModalOpen, setCamModalOpen] = useState(false);
   const [trimSilence, setTrimSilence] = useState(searchParams.get("trim_silence") === "1");
+  const [removeFillers, setRemoveFillers] = useState(searchParams.get("remove_fillers") === "1");
   const [stylePrompt, setStylePrompt] = useState(searchParams.get("style_prompt") || "");
   const [excludePrompt, setExcludePrompt] = useState(searchParams.get("exclude_prompt") || "");
   const [tfStart, setTfStart] = useState(Number(searchParams.get("tf_start")) || 0);
@@ -153,6 +154,7 @@ export default function HelloPage() {
           aspect_ratio: ["facecam", "split", "screenshare", "auto"].includes(clipStyle) ? "9:16" : aspectRatio,
           facecam_box: facecamBox || undefined,
           trim_silence: trimSilence,
+          remove_fillers: removeFillers,
           style_prompt: stylePrompt.trim() || undefined,
           exclude_prompt: excludePrompt.trim() || undefined,
           timeframe_start_min: !exactOn && tfStart > 0 ? tfStart : undefined,
@@ -324,6 +326,7 @@ export default function HelloPage() {
                 ? <Toggle on={trimSilence} setOn={setTrimSilence} label="TRIM" hint="cut out pauses & dead air" />
                 : <ProToggle label="TRIM" hint="upgrade to cut pauses & dead air" />
               }
+              <Toggle on={removeFillers} setOn={setRemoveFillers} label={isMobile ? "UM/UH" : "FILLERS"} hint="cut um, uh & co out of clips" />
             </div>
 
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>LAYOUT {!isPro && <Tag bg={C.amber} color={C.ink}>PRO</Tag>}</div>

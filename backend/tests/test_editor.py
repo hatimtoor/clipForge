@@ -1,6 +1,7 @@
 """Transcript-editor backend helpers: interval normalization, sentence
-grouping, caption overrides."""
-from main import _normalize_keep, _group_sentences, _apply_caption_overrides
+grouping, caption overrides, filler-word cuts."""
+from main import (_normalize_keep, _group_sentences, _apply_caption_overrides,
+                  _filler_cut_intervals, _subtract_intervals)
 
 
 # ── _normalize_keep ───────────────────────────────────────────────────────────
@@ -60,3 +61,41 @@ def test_override_noop_on_empty():
     segs = [_seg([("a", 0.0, 0.5)])]
     assert _apply_caption_overrides(segs, []) is segs
     assert _apply_caption_overrides(segs, [{"start": 5, "end": 4, "text": "x"}]) is segs
+
+
+# ── filler-word cleanup ───────────────────────────────────────────────────────
+
+def test_filler_detection_padded_and_windowed():
+    segs = [_seg([("So", 10.0, 10.3), ("um,", 10.4, 10.8), ("yeah", 10.9, 11.2),
+                  ("Uh", 20.0, 20.3), ("next", 20.4, 20.8),
+                  ("um", 99.0, 99.3)])]  # outside the clip window
+    cuts = _filler_cut_intervals(segs, clip_start=10.0, clip_end=30.0)
+    assert len(cuts) == 2
+    # clip-relative, padded outward by 0.04
+    assert abs(cuts[0][0] - 0.36) < 1e-6 and abs(cuts[0][1] - 0.84) < 1e-6
+    assert abs(cuts[1][0] - 9.96) < 1e-6
+
+
+def test_filler_ignores_real_words():
+    segs = [_seg([("umbrella", 0.0, 0.5), ("terminal", 0.6, 1.1), ("like", 1.2, 1.5)])]
+    assert _filler_cut_intervals(segs, 0.0, 10.0) == []
+
+
+def test_subtract_intervals_splits_keep():
+    keep = [(0.0, 10.0)]
+    cuts = [(2.0, 3.0), (5.0, 5.5)]
+    assert _subtract_intervals(keep, cuts) == [(0.0, 2.0), (3.0, 5.0), (5.5, 10.0)]
+
+
+def test_subtract_composes_with_editor_cuts():
+    # Editor kept two spans; a filler sits inside the second one.
+    keep = [(0.0, 4.0), (6.0, 12.0)]
+    cuts = [(7.0, 7.4)]
+    assert _subtract_intervals(keep, cuts) == [(0.0, 4.0), (6.0, 7.0), (7.4, 12.0)]
+
+
+def test_subtract_drops_slivers_and_handles_noop():
+    keep = [(0.0, 1.0)]
+    # cut leaves a 0.1s sliver at the front — dropped
+    assert _subtract_intervals(keep, [(0.1, 1.0)]) == []
+    assert _subtract_intervals(keep, []) == keep

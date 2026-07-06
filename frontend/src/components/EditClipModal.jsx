@@ -8,6 +8,12 @@ import { authFetch } from "../lib/supabase";
 // be 1500+ sentences — rendering them all wrecks the DOM).
 const PAGE = 200;
 
+// Mirror of the backend's conservative filler list (main.py _FILLER_WORDS) —
+// used only for the counter shown on the toggle; the backend re-detects.
+const FILLERS = new Set(["um", "uh", "umm", "uhh", "uhm", "erm", "er", "ehm", "hmm", "hm", "mmm"]);
+const countFillers = (text) => String(text || "").toLowerCase().split(/\s+/)
+  .filter(w => FILLERS.has(w.replace(/[.,!?;:…"']/g, ""))).length;
+
 const mergeIntervals = (ivals) => {
   const sorted = [...ivals].sort((a, b) => a[0] - b[0]);
   const out = [];
@@ -78,6 +84,11 @@ export default function EditClipModal({ jobId, clipIndex, clipTitle, onClose, on
     return q ? sentences.filter(s => s.text.toLowerCase().includes(q)).length : sentences.length;
   }, [sentences, isBrowse, search]);
 
+  const [stripFillers, setStripFillers] = useState(false);
+  const fillerCount = useMemo(() =>
+    [...selected].reduce((acc, i) => acc + countFillers(sentences[i]?.text), 0),
+  [selected, sentences]);
+
   const keep = useMemo(() => mergeIntervals(
     [...selected].map(i => sentences[i]).filter(Boolean).map(s => [s.start, s.end])
   ), [selected, sentences]);
@@ -105,6 +116,7 @@ export default function EditClipModal({ jobId, clipIndex, clipTitle, onClose, on
           keep,
           title: title.trim() || undefined,
           caption_overrides: caption_overrides.length ? caption_overrides : undefined,
+          remove_fillers: stripFillers || undefined,
         }),
       });
       const d = await res.json();
@@ -186,6 +198,14 @@ export default function EditClipModal({ jobId, clipIndex, clipTitle, onClose, on
             </div>
           )}
         </div>
+
+        {fillerCount > 0 && (
+          <label className="vt" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8,
+            fontSize: 15, color: C.ink, cursor: "pointer", letterSpacing: 0, textTransform: "none" }}>
+            <input type="checkbox" checked={stripFillers} onChange={e => setStripFillers(e.target.checked)} />
+            ⌫ also cut {fillerCount} filler word{fillerCount > 1 ? "s" : ""} (um, uh…)
+          </label>
+        )}
 
         <input value={title} onChange={e => setTitle(e.target.value)}
           placeholder={isBrowse ? "clip title (blank = AI writes one)" : "clip title"} className="vt"

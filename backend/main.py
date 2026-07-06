@@ -313,6 +313,7 @@ class ClipRequest(BaseModel):
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
     trim_silence: bool = False
+    remove_fillers: bool = False   # cut um/uh/erm... vocal fillers out of clips
     # Exact-clip mode: render exactly this source range as one clip — the AI
     # selection phase is skipped entirely. Both must be set (seconds).
     exact_start_s: Optional[float] = None
@@ -331,6 +332,7 @@ class EditClipRequest(BaseModel):
     keep: list                          # [[start, end], ...] absolute source seconds
     title: Optional[str] = None
     caption_overrides: Optional[list] = None  # [{start, end, text}, ...]
+    remove_fillers: bool = False        # also strip um/uh... from the kept audio
 
 class RepromptRequest(BaseModel):
     find: Optional[str] = None          # new find prompt (defaults to parent's)
@@ -2896,6 +2898,56 @@ def _remap_segments_for_trim(segments: list, clip_start: float, clip_end: float,
     return new_segments, trimmed_dur
 
 
+# Vocal fillers that are safe to cut unconditionally. Deliberately conservative:
+# no "like"/"you know"/"I mean" — those carry meaning often enough that cutting
+# them by string match butchers real sentences.
+_FILLER_WORDS = {"um", "uh", "umm", "uhh", "uhm", "erm", "er", "ehm", "hmm", "hm", "mmm"}
+
+
+def _filler_cut_intervals(segments: list, clip_start: float, clip_end: float,
+                          pad: float = 0.04) -> list:
+    """Clip-relative (start, end) spans of filler words inside the clip window,
+    slightly padded so the cut doesn't clip neighbouring phonemes."""
+    dur = clip_end - clip_start
+    cuts = []
+    for seg in segments or []:
+        for w in _fill_words(seg):
+            word = str(w["word"]).strip().lower().strip(".,!?;:…\"'")
+            if word not in _FILLER_WORDS:
+                continue
+            ws, we = float(w["start"]), float(w["end"])
+            if we <= clip_start or ws >= clip_end:
+                continue
+            a = max(0.0, ws - clip_start - pad)
+            b = min(dur, we - clip_start + pad)
+            if b - a >= 0.08:
+                cuts.append((a, b))
+    return cuts
+
+
+def _subtract_intervals(keep: list, cuts: list) -> list:
+    """Remove `cuts` from `keep` (both [(a, b)] lists); drops slivers <0.15s.
+    Used to strip filler words out of whatever keep-set is already in play
+    (full clip, silence-trimmed, or user-authored editor cuts)."""
+    if not cuts:
+        return keep
+    merged_cuts = _normalize_keep([[a, b] for a, b in cuts])
+    out = []
+    for ka, kb in keep:
+        cursor = ka
+        for ca, cb in merged_cuts:
+            if cb <= cursor or ca >= kb:
+                continue
+            if ca > cursor:
+                out.append((cursor, min(ca, kb)))
+            cursor = max(cursor, cb)
+            if cursor >= kb:
+                break
+        if cursor < kb:
+            out.append((cursor, kb))
+    return [(a, b) for a, b in out if b - a >= 0.15]
+
+
 def _normalize_keep(keep: list, source_dur: Optional[float] = None) -> list:
     """Sanitize user keep-intervals: coerce to floats, clamp, sort, merge
     overlaps/adjacent (<0.05s gap), drop slivers. Returns [(a, b), ...]."""
@@ -3535,6 +3587,7 @@ async def create_clips(
     bg_music_url: Optional[str] = None,
     bg_music_volume: float = 0.15,
     trim_silence: bool = False,
+    remove_fillers: bool = False,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -3708,43 +3761,46 @@ async def create_clips(
         ass_clip_end   = end
         trimmed_file: Optional[Path] = None
 
-        # User-authored mid-clip cuts (transcript editor) reuse the silence-trim
-        # machinery with explicit keep-intervals (clip-relative); they take
-        # precedence over automatic silence trimming.
+        # Unified cut engine: three composable cut sources produce ONE keep-set,
+        # rendered through the same trimmed-intermediate machinery.
+        #   base:     user-authored editor cuts (cut_keep) OR silence trim OR full clip
+        #   subtract: filler words (um/uh/...) when remove_fillers is on
         user_keep = clip.get("cut_keep")
-        if user_keep and len(user_keep) >= 2:
-            keep = _normalize_keep(user_keep, dur)
-            removed = dur - sum(b - a for a, b in keep)
-            if keep:
-                trimmed_file = job_dir / f"clip_{idx}_trimmed.mp4"
-                if await _build_trimmed_clip(video_path, start, dur, keep, trimmed_file):
-                    remapped, trimmed_dur = _remap_segments_for_trim(
-                        caption_segments if caption_segments is not None else segments,
-                        start, end, keep,
-                    )
-                    render_src, render_ss, render_dur = trimmed_file, 0.0, trimmed_dur
-                    ass_segs, ass_clip_start, ass_clip_end = remapped, 0.0, trimmed_dur
-                    log(job_id, f"  Editor cuts: removed {removed:.1f}s ({dur:.1f}s → {trimmed_dur:.1f}s)")
-                else:
-                    trimmed_file = None
-                    log(job_id, "  Editor cut render failed — rendering full clip")
+        if user_keep:
+            base_keep = _normalize_keep(user_keep, dur) or [(0.0, dur)]
+            base_label = "editor cuts"
         elif trim_silence:
             silences = await _detect_silence(video_path, start, dur)
-            keep = _keep_intervals(silences, dur)
-            removed = dur - sum(b - a for a, b in keep)
-            if keep and len(keep) >= 2 and removed >= 0.8:
-                trimmed_file = job_dir / f"clip_{idx}_trimmed.mp4"
-                if await _build_trimmed_clip(video_path, start, dur, keep, trimmed_file):
-                    remapped, trimmed_dur = _remap_segments_for_trim(
-                        caption_segments if caption_segments is not None else segments,
-                        start, end, keep,
-                    )
-                    render_src, render_ss, render_dur = trimmed_file, 0.0, trimmed_dur
-                    ass_segs, ass_clip_start, ass_clip_end = remapped, 0.0, trimmed_dur
-                    log(job_id, f"  Silence trimmed: removed {removed:.1f}s ({dur:.1f}s → {trimmed_dur:.1f}s)")
-                else:
-                    trimmed_file = None
-                    log(job_id, "  Silence trim failed — rendering full clip")
+            base_keep = _keep_intervals(silences, dur)
+            base_label = "silence trim"
+        else:
+            base_keep, base_label = [(0.0, dur)], ""
+        if remove_fillers:
+            fillers = _filler_cut_intervals(segments, start, end)
+            keep = _subtract_intervals(base_keep, fillers)
+            if fillers:
+                base_label = f"{base_label} + " if base_label else ""
+                base_label += f"{len(fillers)} fillers"
+        else:
+            keep = base_keep
+
+        removed = dur - sum(b - a for a, b in keep)
+        # Only worth a re-encode pass when the cuts are real: any mid-clip cut,
+        # or ≥0.8s shaved off in total.
+        needs_trim = keep and keep != [(0.0, dur)] and (len(keep) >= 2 or removed >= 0.8)
+        if needs_trim:
+            trimmed_file = job_dir / f"clip_{idx}_trimmed.mp4"
+            if await _build_trimmed_clip(video_path, start, dur, keep, trimmed_file):
+                remapped, trimmed_dur = _remap_segments_for_trim(
+                    caption_segments if caption_segments is not None else segments,
+                    start, end, keep,
+                )
+                render_src, render_ss, render_dur = trimmed_file, 0.0, trimmed_dur
+                ass_segs, ass_clip_start, ass_clip_end = remapped, 0.0, trimmed_dur
+                log(job_id, f"  Cuts ({base_label}): removed {removed:.1f}s ({dur:.1f}s → {trimmed_dur:.1f}s)")
+            else:
+                trimmed_file = None
+                log(job_id, f"  Cut render failed ({base_label}) — rendering full clip")
 
         # Get video dimensions (assume 16:9 source → crop to 9:16 for shorts)
         probe_cmd = [
@@ -4340,6 +4396,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 bg_music_url=req.bg_music_url,
                 bg_music_volume=req.bg_music_volume,
                 trim_silence=req.trim_silence,
+                remove_fillers=req.remove_fillers,
             )
         finally:
             _render_sem.release()
@@ -4786,6 +4843,7 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             "aspect_ratio": req.aspect_ratio,
             "facecam_box": req.facecam_box,
             "trim_silence": req.trim_silence,
+            "remove_fillers": req.remove_fillers,
             "exact_start_s": req.exact_start_s,
             "exact_end_s": req.exact_end_s,
         },
@@ -4936,6 +4994,7 @@ async def edit_clip(request: Request, job_id: str, req: EditClipRequest, user=De
         edit_keep=[[a, b] for a, b in keep],
         edit_title=(req.title or "").strip() or (f"{base_title} (edited)" if base_title else None),
         caption_overrides=req.caption_overrides,
+        remove_fillers=req.remove_fillers,
     )
 
     child = db_create_job({
@@ -4967,6 +5026,7 @@ async def edit_clip(request: Request, job_id: str, req: EditClipRequest, user=De
             "facecam_box": child_req.facecam_box,
             "edit_keep": child_req.edit_keep,
             "edit_of_clip": req.clip_index,
+            "remove_fillers": child_req.remove_fillers,
         },
     })
     child_id = child["id"]
@@ -5011,6 +5071,7 @@ async def reprompt_job(request: Request, job_id: str, req: RepromptRequest, user
         aspect_ratio=(popt.get("aspect_ratio") or "9:16") if plan == "pro" else "9:16",
         facecam_box=req.facecam_box if req.facecam_box is not None else popt.get("facecam_box"),
         trim_silence=bool(popt.get("trim_silence")) and plan == "pro",
+        remove_fillers=bool(popt.get("remove_fillers")),
         style_prompt=(req.find if req.find is not None else parent.get("style_prompt")) or None,
         exclude_prompt=(req.exclude if req.exclude is not None else popt.get("exclude_prompt")) or None,
         timeframe_start_min=req.timeframe_start_min if req.timeframe_start_min is not None else popt.get("timeframe_start_min"),
@@ -5057,6 +5118,7 @@ async def reprompt_job(request: Request, job_id: str, req: RepromptRequest, user
             "aspect_ratio": child_req.aspect_ratio,
             "facecam_box": child_req.facecam_box,
             "trim_silence": child_req.trim_silence,
+            "remove_fillers": child_req.remove_fillers,
         },
     })
     child_id = child["id"]

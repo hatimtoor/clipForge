@@ -105,7 +105,7 @@ YOUTUBE_API_KEY       = os.getenv("YOUTUBE_API_KEY", "")
 from groq import Groq
 from supabase import create_client as _sb_create_client
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Header, Request, File, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
@@ -206,6 +206,7 @@ app.add_middleware(_SecurityHeadersMiddleware)
 # ── paths ────────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).parent.parent
 OUTPUT_DIR    = BASE_DIR / "output"
+BRAND_DIR     = BASE_DIR / "brand"   # per-user watermark logos (brand kit)
 TEMP_DIR      = BASE_DIR / "temp"
 MUSIC_CACHE_DIR = BASE_DIR / "music_cache"
 # Finished sources are kept here briefly so "reprompt" (find more clips in the
@@ -215,6 +216,7 @@ SOURCE_RETENTION_HOURS = int(os.getenv("SOURCE_RETENTION_HOURS", "48") or "48")
 SOURCE_CACHE_MAX_GB = float(os.getenv("SOURCE_CACHE_MAX_GB", "100") or "100")
 OUTPUT_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
+BRAND_DIR.mkdir(exist_ok=True)
 MUSIC_CACHE_DIR.mkdir(exist_ok=True)
 SOURCE_CACHE_DIR.mkdir(exist_ok=True)
 _oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ..., "_ts": monotonic()}
@@ -333,6 +335,13 @@ class EditClipRequest(BaseModel):
     title: Optional[str] = None
     caption_overrides: Optional[list] = None  # [{start, end, text}, ...]
     remove_fillers: bool = False        # also strip um/uh... from the kept audio
+
+class BrandSettings(BaseModel):
+    enabled: bool = False
+    position: str = "br"                # tl | tr | bl | br
+    opacity: float = 0.5                # 0.1 - 1.0
+    size: float = 0.15                  # logo width as a fraction of clip width
+    color: Optional[str] = None         # brand hex — default caption highlight
 
 class RepromptRequest(BaseModel):
     find: Optional[str] = None          # new find prompt (defaults to parent's)
@@ -1486,6 +1495,36 @@ async def _apply_emoji_overlays(clip_path: Path, placements: list, job_id: str) 
     else:
         tmp.unlink(missing_ok=True)
         log(job_id, f"  Emoji overlay skipped (ffmpeg exit {code}): {err[-200:] if err else ''}")
+
+async def _apply_watermark(clip_path: Path, brand: dict, out_w: int, out_h: int,
+                           job_id: str) -> None:
+    """Post-pass: composite the user's brand logo onto the rendered clip —
+    same pattern as the emoji pass so it works identically for every layout.
+    brand = {"logo": Path, "position": tl|tr|bl|br, "opacity": float, "size": float}.
+    Failure is non-fatal (the clip ships without the watermark)."""
+    logo = brand.get("logo")
+    if not logo or not Path(logo).exists():
+        return
+    w = max(24, int(out_w * float(brand.get("size") or 0.15)))
+    op = min(1.0, max(0.05, float(brand.get("opacity") or 0.5)))
+    m = max(12, int(out_w * 0.03))
+    pos = {"tl": f"{m}:{m}", "tr": f"W-w-{m}:{m}",
+           "bl": f"{m}:H-h-{m}", "br": f"W-w-{m}:H-h-{m}"}.get(brand.get("position") or "br", f"W-w-{m}:H-h-{m}")
+    tmp = clip_path.with_name(clip_path.stem + "_wm.mp4")
+    fc = (f"[1:v]scale={w}:-1,format=rgba,colorchannelmixer=aa={op}[wm];"
+          f"[0:v][wm]overlay={pos}[v]")
+    cmd = [FFMPEG, "-y", "-i", str(clip_path), "-i", str(logo),
+           "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
+           "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+           "-c:a", "copy", "-movflags", "+faststart", str(tmp)]
+    code, _, err = await run_cmd_async(cmd)
+    if code == 0 and tmp.exists() and tmp.stat().st_size > 0:
+        tmp.replace(clip_path)
+        log(job_id, "  Watermark applied")
+    else:
+        tmp.unlink(missing_ok=True)
+        log(job_id, f"  Watermark skipped (ffmpeg exit {code}): {err[-200:] if err else ''}")
+
 
 _LANGUAGE_NAMES: dict[str, str] = {
     "en": "English", "es": "Spanish", "fr": "French", "de": "German",
@@ -3666,6 +3705,7 @@ async def create_clips(
     bg_music_volume: float = 0.15,
     trim_silence: bool = False,
     remove_fillers: bool = False,
+    brand_overlay: Optional[dict] = None,
 ) -> list:
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
@@ -4016,6 +4056,14 @@ async def create_clips(
                 await _apply_emoji_overlays(clip_path, placements, job_id)
             except Exception as _ee:
                 log(job_id, f"  Emoji overlay skipped: {_ee}")
+
+        # Brand watermark post-pass (Pro brand kit) — after emoji so the logo
+        # sits on top of everything.
+        if brand_overlay:
+            try:
+                await _apply_watermark(clip_path, brand_overlay, out_w, out_h, job_id)
+            except Exception as _we:
+                log(job_id, f"  Watermark skipped: {_we}")
 
         log(job_id, f"  Clip {idx+1} done → {clip_path.name}")
 
@@ -4455,6 +4503,24 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         # 5. Cut + subtitle — gated by the render semaphore so only N jobs render
         #    concurrently; the rest queue here (heart-beating) instead of dogpiling.
         log(job_id, "--- PHASE 4: CLIP ---")
+        # Brand kit (Pro): watermark overlay + brand color as the default
+        # caption highlight when the user left the color on AUTO.
+        brand_overlay = None
+        if user_id:
+            try:
+                _bprof = await asyncio.to_thread(db_get_profile, user_id)
+                _brand = ((_bprof or {}).get("options") or {}).get("brand") or {}
+                if _brand.get("enabled") and (_bprof or {}).get("plan") == "pro":
+                    _logo = BRAND_DIR / f"{user_id}.png"
+                    if _logo.exists():
+                        brand_overlay = {"logo": _logo,
+                                         "position": _brand.get("position") or "br",
+                                         "opacity": _brand.get("opacity") or 0.5,
+                                         "size": _brand.get("size") or 0.15}
+                    if _brand.get("color") and not req.caption_highlight_color:
+                        req.caption_highlight_color = _brand["color"]
+            except Exception as _be:
+                log(job_id, f"  Brand kit skipped: {_be}")
         log(job_id, f"  caption_style={req.caption_style!r} lang={req.caption_language} font_size={req.caption_font_size} highlight={req.caption_highlight_color} reframe={req.reframe}")
         await _acquire_render_slot(job_id)
         try:
@@ -4475,6 +4541,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 bg_music_volume=req.bg_music_volume,
                 trim_silence=req.trim_silence,
                 remove_fillers=req.remove_fillers,
+                brand_overlay=brand_overlay,
             )
         finally:
             _render_sem.release()
@@ -5157,6 +5224,68 @@ async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends
         body, mt, ext = _format_fcpxml(meta, title, src_name), "application/xml", "fcpxml"
     return Response(content=body, media_type=mt,
                     headers={"Content-Disposition": f'attachment; filename="{safe}.{ext}"'})
+
+
+@app.get("/api/brand")
+async def get_brand(user=Depends(require_auth)):
+    """The user's brand kit settings (+ whether a logo is uploaded)."""
+    profile = db_get_profile(user.id) or {}
+    brand = ((profile.get("options") or {}).get("brand")) or {}
+    return {
+        "enabled": bool(brand.get("enabled")),
+        "position": brand.get("position") or "br",
+        "opacity": brand.get("opacity") if brand.get("opacity") is not None else 0.5,
+        "size": brand.get("size") if brand.get("size") is not None else 0.15,
+        "color": brand.get("color"),
+        "has_logo": (BRAND_DIR / f"{user.id}.png").exists(),
+    }
+
+
+@app.put("/api/brand")
+async def put_brand(req: BrandSettings, user=Depends(require_pro)):
+    """Save brand kit settings into profiles.options.brand (requires the
+    profiles.options JSONB column — see sql/profiles_options.sql)."""
+    if req.position not in ("tl", "tr", "bl", "br"):
+        raise HTTPException(400, "position must be tl/tr/bl/br")
+    if not (0.05 <= req.opacity <= 1.0):
+        raise HTTPException(400, "opacity must be 0.05-1.0")
+    if not (0.05 <= req.size <= 0.35):
+        raise HTTPException(400, "size must be 0.05-0.35")
+    if req.color and not re.fullmatch(r"#[0-9a-fA-F]{6}", req.color):
+        raise HTTPException(400, "color must be a #rrggbb hex")
+    profile = db_get_profile(user.id) or {}
+    options = profile.get("options") or {}
+    options["brand"] = {"enabled": req.enabled, "position": req.position,
+                        "opacity": req.opacity, "size": req.size, "color": req.color}
+    await asyncio.to_thread(db_update_profile, user.id, {"options": options})
+    return {"ok": True}
+
+
+@app.post("/api/brand/logo")
+async def upload_brand_logo(file: UploadFile = File(...), user=Depends(require_pro)):
+    """Upload the watermark logo (PNG with transparency, max 2 MB)."""
+    data = await file.read()
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(400, "Logo must be under 2 MB")
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(400, "Logo must be a PNG (transparency supported)")
+    (BRAND_DIR / f"{user.id}.png").write_bytes(data)
+    return {"ok": True}
+
+
+@app.get("/api/brand/logo")
+async def get_brand_logo(user=Depends(require_auth)):
+    p = BRAND_DIR / f"{user.id}.png"
+    if not p.exists():
+        raise HTTPException(404, "No logo uploaded")
+    return Response(content=p.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=60"})
+
+
+@app.delete("/api/brand/logo")
+async def delete_brand_logo(user=Depends(require_pro)):
+    (BRAND_DIR / f"{user.id}.png").unlink(missing_ok=True)
+    return {"ok": True}
 
 
 @app.get("/api/jobs/{job_id}/transcript")

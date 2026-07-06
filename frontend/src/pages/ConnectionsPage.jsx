@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { C, BORDER, SHADOW_SM, KEYFRAMES } from "../lib/theme";
 import { PixelBtn, PixelCard } from "../components/ui";
 import Header from "../components/Header";
@@ -6,6 +6,125 @@ import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
 import OnboardingTour from "../components/OnboardingTour";
+
+// ── Brand kit (Pro): watermark logo + brand color for all rendered clips ─────
+function BrandKitCard({ isMobile }) {
+  const [brand, setBrand] = useState(null);   // {enabled, position, opacity, size, color, has_logo}
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const fileRef = useRef(null);
+
+  const loadLogo = async () => {
+    try {
+      const res = await authFetch("/api/brand/logo");
+      if (!res.ok) { setLogoUrl(null); return; }
+      setLogoUrl(URL.createObjectURL(await res.blob()));
+    } catch { setLogoUrl(null); }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authFetch("/api/brand");
+        const d = await res.json();
+        if (res.ok) { setBrand(d); if (d.has_logo) loadLogo(); }
+      } catch { /* card stays hidden */ }
+    })();
+  }, []);
+
+  const save = async (patch) => {
+    const next = { ...brand, ...patch };
+    setBrand(next);
+    try {
+      const res = await authFetch("/api/brand", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next.enabled, position: next.position,
+          opacity: next.opacity, size: next.size, color: next.color || null }),
+      });
+      if (!res.ok) setMsg((await res.json()).detail || "Save failed — did you run profiles_options.sql?");
+      else setMsg("");
+    } catch { setMsg("Save failed"); }
+  };
+
+  const uploadLogo = async (file) => {
+    if (!file) return;
+    setBusy(true); setMsg("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await authFetch("/api/brand/logo", { method: "POST", body: fd });
+      if (!res.ok) { setMsg((await res.json()).detail || "Upload failed"); }
+      else { setBrand(b => ({ ...b, has_logo: true })); loadLogo(); }
+    } catch { setMsg("Upload failed"); }
+    setBusy(false);
+  };
+
+  if (!brand) return null;
+  const chip = (on) => ({
+    padding: "7px 10px", fontSize: 8, cursor: "pointer",
+    background: on ? C.signal : C.cream2, color: C.ink,
+    border: on ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
+    boxShadow: on ? `2px 2px 0 ${C.ink}` : "none",
+  });
+  const SWATCHES = [null, "#FFD400", "#00FFFF", "#FF4500", "#FF69B4", "#00FF88", "#FFFFFF"];
+
+  return (
+    <PixelCard color={C.cream} padding={isMobile ? 16 : 22} style={{ marginTop: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <span className="pixel" style={{ fontSize: 11, background: C.peach, color: C.ink, padding: "8px 12px", border: BORDER }}>◆ BRAND KIT</span>
+        <button onClick={() => save({ enabled: !brand.enabled })} className="pixel" style={chip(brand.enabled)}>
+          {brand.enabled ? "✓ ON — applied to every clip" : "OFF"}
+        </button>
+      </div>
+      <div className="vt" style={{ fontSize: 15, color: C.dim2, marginBottom: 12 }}>
+        your logo watermarked on every rendered clip · brand color becomes the default caption highlight
+      </div>
+      {msg && <div className="vt" style={{ fontSize: 14, color: C.hotDeep, marginBottom: 8 }}>{msg}</div>}
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ width: 120 }}>
+          <div onClick={() => fileRef.current?.click()} title="upload PNG logo"
+            style={{ width: 120, height: 120, border: BORDER, background: "#ffffff", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+            {logoUrl ? <img src={logoUrl} alt="logo" style={{ maxWidth: "100%", maxHeight: "100%" }} />
+              : <span className="pixel" style={{ fontSize: 8, color: C.dim2, textAlign: "center" }}>{busy ? "..." : "+ PNG LOGO"}</span>}
+          </div>
+          <input ref={fileRef} type="file" accept="image/png" style={{ display: "none" }}
+            onChange={e => uploadLogo(e.target.files?.[0])} />
+        </div>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>POSITION</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {[["tl", "↖"], ["tr", "↗"], ["bl", "↙"], ["br", "↘"]].map(([id, icon]) => (
+              <button key={id} onClick={() => save({ position: id })} className="pixel" style={chip(brand.position === id)}>{icon}</button>
+            ))}
+          </div>
+          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>SIZE</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {[[0.10, "S"], [0.15, "M"], [0.22, "L"]].map(([v, l]) => (
+              <button key={l} onClick={() => save({ size: v })} className="pixel" style={chip(Math.abs(brand.size - v) < 0.01)}>{l}</button>
+            ))}
+          </div>
+          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>OPACITY</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {[[0.25, "25%"], [0.5, "50%"], [0.85, "85%"]].map(([v, l]) => (
+              <button key={l} onClick={() => save({ opacity: v })} className="pixel" style={chip(Math.abs(brand.opacity - v) < 0.01)}>{l}</button>
+            ))}
+          </div>
+          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>BRAND COLOR (default caption highlight)</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {SWATCHES.map(col => (
+              <button key={col || "none"} onClick={() => save({ color: col })} title={col || "none"} className="pixel"
+                style={{ ...chip(brand.color === col || (!brand.color && !col)), width: 34, height: 30,
+                  background: col || C.cream2 }}>{col ? "" : "–"}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </PixelCard>
+  );
+}
 
 export default function ConnectionsPage() {
   const { isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus } = useApp();
@@ -130,6 +249,9 @@ export default function ConnectionsPage() {
           <PixelBtn color="tt" size="md" onClick={() => connect("tiktok")}>+ CONNECT TIKTOK ACCOUNT</PixelBtn>
         </PixelCard>
         </div>
+
+        {/* Brand kit */}
+        <BrandKitCard isMobile={isMobile} />
 
         <PixelCard color={C.lavender} padding={16} style={{ marginTop: 18, boxShadow: isMobile ? "none" : undefined }}>
           <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 6 }}>HOW IT WORKS</div>

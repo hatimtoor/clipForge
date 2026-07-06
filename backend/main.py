@@ -23,14 +23,6 @@ load_dotenv(_env if _env.exists() else "/home/ubuntu/.env")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 set_groq_keys([GROQ_API_KEY or ""] + [os.getenv(f"GROQ_API_KEY_{i}", "") for i in range(2, 6)])
 
-# Optional OpenRouter primary model for virality analysis (falls back to Groq llama).
-# Set OPENROUTER_API_KEY + OPENROUTER_MODEL in .env to enable; leave unset to stay on Groq.
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-# openai/gpt-oss-120b = the same model as the Groq primary, hosted on
-# OpenRouter — fallback output matches primary output. (The old default
-# openrouter/owl-alpha was a rotating stealth model OpenRouter retired → 404.)
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b")
-OPENROUTER_ENABLED = bool(OPENROUTER_API_KEY)
 
 # Groq chat model for virality analysis + caption translation. llama-3.3-70b was
 # deprecated (decommissioned 2026-08-16); default to its recommended replacement,
@@ -919,54 +911,7 @@ async def transcribe(video_path: Path, job_id: str) -> dict:
     return all_segments
 
 
-# Stealth-model self-healing: OPENROUTER_MODEL may be a rotating slug like
-# openrouter/owl-alpha that 404s between rotations. When the primary 404s we
-# fall through to this stable slug and remember the outage for an hour, so a
-# 75-chunk analysis doesn't re-404 once per chunk (that grind previously ate
-# the whole 90-min watchdog budget when Groq was also rate-limited).
-OPENROUTER_FALLBACK_MODEL = os.getenv("OPENROUTER_FALLBACK_MODEL", "openai/gpt-oss-120b")
-_OPENROUTER_DEAD_UNTIL: dict = {}   # model slug -> epoch seconds
-
-
-async def _call_openrouter(prompt: str, temp: float = 0.3, max_tokens: int = 2000) -> Optional[str]:
-    """Call the OpenRouter primary analysis model, self-healing across dead
-    stealth slugs. Returns content, or None on any failure."""
-    if not OPENROUTER_ENABLED:
-        return None
-    import httpx
-    import time as _t
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": _APP_URL,
-        "X-Title": "ClipForge",
-    }
-    models = [OPENROUTER_MODEL]
-    if OPENROUTER_FALLBACK_MODEL and OPENROUTER_FALLBACK_MODEL != OPENROUTER_MODEL:
-        models.append(OPENROUTER_FALLBACK_MODEL)
-    async with httpx.AsyncClient(timeout=90) as client:
-        for i, model in enumerate(models):
-            if _OPENROUTER_DEAD_UNTIL.get(model, 0) > _t.time():
-                continue
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json={"model": model, "messages": [{"role": "user", "content": prompt}],
-                      "temperature": temp, "max_tokens": max_tokens},
-            )
-            if resp.status_code == 404 and i < len(models) - 1:
-                # Model slug currently dead (stealth rotation gap) — skip it
-                # for an hour and try the stable fallback.
-                _OPENROUTER_DEAD_UNTIL[model] = _t.time() + 3600
-                print(f"[openrouter] {model} → 404 (rotation gap?) — using {models[i + 1]} for the next hour", flush=True)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-            return (data["choices"][0]["message"]["content"] or "").strip()
-    return None
-
-
-# ── virality analysis (OpenRouter primary, Groq Llama fallback) ───────────────
+# ── virality analysis (Groq) ─────────────────────────────────────────────────
 async def _describe_energy_clips(clips: list, job_id: str) -> None:
     """One LLM call to give synthesized energy clips real titles, hooks,
     descriptions, and tags — grounded ONLY in what was actually spoken inside
@@ -1077,7 +1022,7 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
     clips_per_chunk = max(2, max_clips // len(chunks) + 1)
     all_clips = []
 
-    _analysis_provider = f"OpenRouter ({OPENROUTER_MODEL})" if OPENROUTER_ENABLED else f"Groq ({GROQ_ANALYSIS_MODEL})"
+    _analysis_provider = f"Groq ({GROQ_ANALYSIS_MODEL})"
     log(job_id, f"Transcript split into {len(chunks)} chunk(s) for {_analysis_provider} analysis")
     for chunk_idx, transcript_text in enumerate(chunks):
         # analyzing: 66-77 spread across chunks
@@ -1145,15 +1090,6 @@ Return valid JSON array only, no markdown, no explanation."""
             )
 
         async def _call_analysis(temp=0.3):
-            # OpenRouter primary, automatic fallback to Groq llama on any failure
-            if OPENROUTER_ENABLED:
-                try:
-                    out = await _call_openrouter(prompt, temp=temp, max_tokens=2000)
-                    if out:
-                        return out
-                    log(job_id, "  OpenRouter returned empty — falling back to Groq llama")
-                except Exception as e:
-                    log(job_id, f"  OpenRouter error ({e}) — falling back to Groq llama")
             return await _call_groq(temp)
 
         def _parse_raw(raw: str):

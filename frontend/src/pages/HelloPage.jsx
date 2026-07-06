@@ -60,6 +60,10 @@ export default function HelloPage() {
   const [excludePrompt, setExcludePrompt] = useState(searchParams.get("exclude_prompt") || "");
   const [tfStart, setTfStart] = useState(Number(searchParams.get("tf_start")) || 0);
   const [tfEnd, setTfEnd] = useState(Number(searchParams.get("tf_end")) || 0);
+  // Exact-clip mode: cut precisely this range as ONE clip (AI selection skipped).
+  const [exactOn, setExactOn] = useState(false);
+  const [exactStart, setExactStart] = useState("");
+  const [exactEnd, setExactEnd] = useState("");
   const [captionStyle, setCaptionStyle] = useState(searchParams.get("caption_style") || "bold_bottom");
   const [fontSizeOverride, setFontSizeOverride] = useState(searchParams.get("font_size") ? Number(searchParams.get("font_size")) : null);
   const [highlightColor, setHighlightColor] = useState(searchParams.get("highlight_color") || null);
@@ -116,8 +120,27 @@ export default function HelloPage() {
   const valid = /youtu\.?be/.test(url);
   const isMobile = useMobile();
 
+  // "1:23", "01:02:03", or plain seconds → seconds (null = unparseable)
+  const parseTime = (s) => {
+    const t = String(s || "").trim();
+    if (!t) return null;
+    if (/^\d+(\.\d+)?$/.test(t)) return parseFloat(t);
+    const parts = t.split(":").map(Number);
+    if (parts.some(isNaN) || parts.length > 3) return null;
+    return parts.reduce((acc, p) => acc * 60 + p, 0);
+  };
+  const exactS = parseTime(exactStart), exactE = parseTime(exactEnd);
+  const exactSpan = exactS != null && exactE != null ? exactE - exactS : null;
+  const exactValid = !exactOn || (exactSpan != null && exactSpan >= 3 && exactSpan <= 180);
+
   const handleSubmit = async () => {
     if (!url.trim()) { setError("Paste a YouTube URL first."); return; }
+    if (exactOn && !exactValid) {
+      setError(exactSpan == null ? "Exact clip needs a start and end time (like 14:20)."
+        : exactSpan < 3 ? "Exact clip must be at least 3 seconds."
+        : "Exact clip can be at most 3 minutes.");
+      return;
+    }
     setError(""); setLoading(true);
     try {
       const res = await authFetch("/api/clip", {
@@ -132,8 +155,10 @@ export default function HelloPage() {
           trim_silence: trimSilence,
           style_prompt: stylePrompt.trim() || undefined,
           exclude_prompt: excludePrompt.trim() || undefined,
-          timeframe_start_min: tfStart > 0 ? tfStart : undefined,
-          timeframe_end_min: tfEnd > 0 ? tfEnd : undefined,
+          timeframe_start_min: !exactOn && tfStart > 0 ? tfStart : undefined,
+          timeframe_end_min: !exactOn && tfEnd > 0 ? tfEnd : undefined,
+          exact_start_s: exactOn ? exactS : undefined,
+          exact_end_s: exactOn ? exactE : undefined,
           caption_style: captionStyle,
           caption_font_size: (captionCustomizable && fontSizeOverride) || undefined,
           caption_highlight_color: (captionCustomizable && highlightColor) || undefined,
@@ -254,9 +279,38 @@ export default function HelloPage() {
               })}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 14, marginBottom: 24 }}>
-              <NumField label="CLIP FROM" suffix="min" value={tfStart} setValue={setTfStart} min={0} max={600} step={1} bg={C.cream2} />
-              <NumField label="CLIP UNTIL" suffix="min" value={tfEnd} setValue={setTfEnd} min={0} max={600} step={1} bg={C.cream2} />
+            {!exactOn && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 14, marginBottom: 10 }}>
+                <NumField label="CLIP FROM" suffix="min" value={tfStart} setValue={setTfStart} min={0} max={600} step={1} bg={C.cream2} />
+                <NumField label="CLIP UNTIL" suffix="min" value={tfEnd} setValue={setTfEnd} min={0} max={600} step={1} bg={C.cream2} />
+              </div>
+            )}
+            <div style={{ marginBottom: 24 }}>
+              <button onClick={() => setExactOn(o => !o)} className="pixel" style={{
+                textAlign: "left", width: "100%", padding: "10px 14px", cursor: "pointer",
+                background: exactOn ? C.signal : C.cream2, color: C.ink,
+                border: BORDER, boxShadow: SHADOW_SM,
+              }}>
+                <span style={{ fontSize: 10 }}>{exactOn ? "✓" : "✂"} EXACT CLIP</span>
+                <span className="vt" style={{ fontSize: 14, color: exactOn ? C.ink : C.dim2, marginLeft: 10, letterSpacing: 0, textTransform: "none" }}>
+                  {exactOn ? "cutting exactly this range as one clip — AI selection off" : "know the moment? cut an exact start–end range"}
+                </span>
+              </button>
+              {exactOn && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 14, marginTop: 10 }}>
+                  {[["START AT", exactStart, setExactStart, "14:20"], ["END AT", exactEnd, setExactEnd, "15:05"]].map(([label, val, set, ph]) => (
+                    <div key={label} className="pixel" style={{ padding: "10px 14px", background: C.cream2, border: BORDER, boxShadow: SHADOW_SM }}>
+                      <div style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>{label}</div>
+                      <input value={val} onChange={e => set(e.target.value)} placeholder={ph}
+                        className="mono" style={{ width: "100%", fontSize: 16, padding: "4px 2px", border: "none", outline: "none", background: "transparent", color: C.ink }} />
+                    </div>
+                  ))}
+                  <div className="vt" style={{ gridColumn: "1 / -1", fontSize: 13, color: exactValid ? C.dim2 : C.hotDeep, letterSpacing: 0, textTransform: "none" }}>
+                    {exactSpan != null && exactValid ? `clip length: ${Math.round(exactSpan)}s — fine-tune it with ✂ EDIT after it renders`
+                      : "times as mm:ss (or h:mm:ss) · 3s to 3min · one clip, rendered exactly"}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 10, marginBottom: 28 }}>

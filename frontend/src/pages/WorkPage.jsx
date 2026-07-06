@@ -8,6 +8,7 @@ import {
   Row, PhaseSteps, SegmentedProgressBar, PHASE_RANGES,
 } from "../components/ui";
 import Header from "../components/Header";
+import EditClipModal from "../components/EditClipModal";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
 
@@ -317,7 +318,7 @@ function TikTokUploadModal({ clip, clipIndex, jobId, ttAccounts, onClose, onUplo
 }
 
 // ── ClipCard ───────────────────────────────────────────────────────────────────
-function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTUpload, ytConnected, jobId, ttConnected, ttAccounts }) {
+function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTUpload, onEdit, ytConnected, jobId, ttConnected, ttAccounts }) {
   const [downloading, setDownloading] = useState(false);
   const [analytics, setAnalytics] = useState(clip.yt_analytics || null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -501,6 +502,7 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
         </div>
         <div style={{ padding: "22px 18px", borderLeft: BORDER, display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", background: `${C.paper}88` }}>
           <PixelBtn color="cream" size="sm" onClick={onPreview}>{isActive ? "||" : ">"} {isActive ? "HIDE" : "PLAY"}</PixelBtn>
+          {onEdit && <PixelBtn color="lavender" size="sm" onClick={onEdit}>✂ EDIT</PixelBtn>}
           <PixelBtn color="cream" size="sm" onClick={handleDownload} disabled={downloading}>{downloading ? "..." : "v MP4"}</PixelBtn>
           {clip.thumbnail_url && <PixelBtn color="cream" size="sm" onClick={handleDownloadThumb}>v JPG</PixelBtn>}
           {ytConnected && (
@@ -528,6 +530,9 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
   const [repromptExclude, setRepromptExclude] = useState("");
   const [reprompting, setReprompting] = useState(false);
   const [repromptError, setRepromptError] = useState("");
+  // Transcript editor: {clipIndex, title} = edit that clip; {clipIndex: null} =
+  // create-from-scratch over the whole transcript.
+  const [editTarget, setEditTarget] = useState(null);
   // Manual cam-box picker: draw a rectangle on a source frame; sent normalized.
   const [camOpen, setCamOpen] = useState(false);
   const [camFrameUrl, setCamFrameUrl] = useState(null);
@@ -778,6 +783,9 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
                 </>
               )}
             </div>
+            <PixelBtn color="peach" size={isMobile ? "sm" : "md"} onClick={() => setEditTarget({ clipIndex: null })}>
+              {isMobile ? "✂ CREATE" : "✂ CREATE CLIP"}
+            </PixelBtn>
             <PixelBtn color="hot" size="md" onClick={onNew}>+ NEW CLIP</PixelBtn>
           </div>
         </div>
@@ -796,6 +804,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
               onPreview={() => setActive(prev => prev?.path === c.path ? null : c)}
               onYTUpload={() => onYTUpload(c, i)}
               onTTUpload={() => onTTUpload(c, i)}
+              onEdit={() => setEditTarget({ clipIndex: i, title: c.title })}
               jobId={job.job_id}
             />
           ))}
@@ -805,6 +814,16 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
             </PixelCard>
           )}
         </div>
+
+        {editTarget && (
+          <EditClipModal
+            jobId={job.job_id}
+            clipIndex={editTarget.clipIndex}
+            clipTitle={editTarget.title}
+            onClose={() => setEditTarget(null)}
+            onRendered={(childId) => { navigate(`/work?job=${childId}`); window.location.reload(); }}
+          />
+        )}
 
         {!isMobile && active && (
           <div ref={previewRef} style={{ position: "sticky", top: 24 }}>

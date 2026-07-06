@@ -26,7 +26,10 @@ set_groq_keys([GROQ_API_KEY or ""] + [os.getenv(f"GROQ_API_KEY_{i}", "") for i i
 # Optional OpenRouter primary model for virality analysis (falls back to Groq llama).
 # Set OPENROUTER_API_KEY + OPENROUTER_MODEL in .env to enable; leave unset to stay on Groq.
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "openrouter/owl-alpha")
+# openai/gpt-oss-120b = the same model as the Groq primary, hosted on
+# OpenRouter — fallback output matches primary output. (The old default
+# openrouter/owl-alpha was a rotating stealth model OpenRouter retired → 404.)
+OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b")
 OPENROUTER_ENABLED = bool(OPENROUTER_API_KEY)
 
 # Groq chat model for virality analysis + caption translation. llama-3.3-70b was
@@ -310,9 +313,24 @@ class ClipRequest(BaseModel):
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
     trim_silence: bool = False
+    # Exact-clip mode: render exactly this source range as one clip — the AI
+    # selection phase is skipped entirely. Both must be set (seconds).
+    exact_start_s: Optional[float] = None
+    exact_end_s: Optional[float] = None
+    # Editor internals (set by the /edit endpoint, not the Hello page):
+    # keep-intervals in absolute source seconds and caption text overrides.
+    edit_keep: Optional[list] = None            # [[start, end], ...]
+    edit_title: Optional[str] = None
+    caption_overrides: Optional[list] = None    # [{start, end, text}, ...]
 
 class PromoRedeemRequest(BaseModel):
     code: str
+
+class EditClipRequest(BaseModel):
+    clip_index: Optional[int] = None    # which clip's window/settings to base on (None = from-scratch)
+    keep: list                          # [[start, end], ...] absolute source seconds
+    title: Optional[str] = None
+    caption_overrides: Optional[list] = None  # [{start, end, text}, ...]
 
 class RepromptRequest(BaseModel):
     find: Optional[str] = None          # new find prompt (defaults to parent's)
@@ -2878,6 +2896,101 @@ def _remap_segments_for_trim(segments: list, clip_start: float, clip_end: float,
     return new_segments, trimmed_dur
 
 
+def _normalize_keep(keep: list, source_dur: Optional[float] = None) -> list:
+    """Sanitize user keep-intervals: coerce to floats, clamp, sort, merge
+    overlaps/adjacent (<0.05s gap), drop slivers. Returns [(a, b), ...]."""
+    ivals = []
+    for pair in (keep or []):
+        try:
+            a, b = float(pair[0]), float(pair[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if source_dur is not None:
+            a, b = max(0.0, min(a, source_dur)), max(0.0, min(b, source_dur))
+        if b - a >= 0.25:
+            ivals.append((a, b))
+    ivals.sort()
+    merged: list = []
+    for a, b in ivals:
+        if merged and a - merged[-1][1] < 0.05:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def _group_sentences(segments: list, t0: Optional[float] = None,
+                     t1: Optional[float] = None) -> list:
+    """Group transcript words into sentence-ish units for the clip editor:
+    split on terminal punctuation or a speech gap >0.8s, cap 15s per sentence.
+    Returns [{start, end, text, words: [{word, start, end}]}] within [t0, t1)."""
+    out, cur = [], []
+
+    def _flush():
+        if cur:
+            out.append({
+                "start": round(cur[0]["start"], 3),
+                "end": round(cur[-1]["end"], 3),
+                "text": " ".join(w["word"].strip() for w in cur),
+                "words": [dict(w) for w in cur],
+            })
+            cur.clear()
+
+    for seg in segments or []:
+        for w in _fill_words(seg):
+            ws, we = float(w["start"]), float(w["end"])
+            if (t1 is not None and ws >= t1) or (t0 is not None and we <= t0):
+                continue
+            if cur and (ws - cur[-1]["end"] > 0.8 or ws - cur[0]["start"] > 15.0):
+                _flush()
+            cur.append({"word": str(w["word"]), "start": ws, "end": we})
+            if str(w["word"]).strip().endswith((".", "!", "?")):
+                _flush()
+    _flush()
+    return out
+
+
+def _apply_caption_overrides(segments: list, overrides: list) -> list:
+    """Replace the transcript text inside each override's [start, end] window
+    with the user's edited text, redistributing word timings across the window
+    weighted by word length. Returns NEW segments; the input is not mutated."""
+    if not overrides:
+        return segments
+    windows = []
+    for o in overrides:
+        try:
+            a, b, txt = float(o["start"]), float(o["end"]), str(o.get("text", "")).strip()
+        except (TypeError, ValueError, KeyError):
+            continue
+        if b > a:
+            windows.append((a, b, txt))
+    if not windows:
+        return segments
+
+    # Flatten to words, drop originals inside any window, then inject the
+    # edited words as one synthetic segment per window.
+    kept_words = []
+    for seg in segments or []:
+        for w in _fill_words(seg):
+            mid = (float(w["start"]) + float(w["end"])) / 2
+            if not any(a <= mid <= b for a, b, _ in windows):
+                kept_words.append({"word": str(w["word"]), "start": float(w["start"]), "end": float(w["end"])})
+    for a, b, txt in windows:
+        words = txt.split()
+        if not words:
+            continue
+        weights = [max(1, len(x)) for x in words]
+        total_w = sum(weights)
+        t = a
+        for x, wt in zip(words, weights):
+            d = max(0.12, (b - a) * wt / total_w)
+            kept_words.append({"word": x, "start": round(t, 3), "end": round(min(b, t + d), 3)})
+            t = min(b, t + d)
+    kept_words.sort(key=lambda w: w["start"])
+    return [{"start": w["start"], "end": w["end"], "text": w["word"], "words": [w]}
+            for w in kept_words]
+
+
 async def _build_trimmed_clip(video_path: Path, start: float, dur: float, keep: list, out_path: Path) -> bool:
     """Render an intermediate clip with silent gaps cut out, preserving source resolution."""
     parts_v, parts_a, labels = [], [], []
@@ -3595,7 +3708,27 @@ async def create_clips(
         ass_clip_end   = end
         trimmed_file: Optional[Path] = None
 
-        if trim_silence:
+        # User-authored mid-clip cuts (transcript editor) reuse the silence-trim
+        # machinery with explicit keep-intervals (clip-relative); they take
+        # precedence over automatic silence trimming.
+        user_keep = clip.get("cut_keep")
+        if user_keep and len(user_keep) >= 2:
+            keep = _normalize_keep(user_keep, dur)
+            removed = dur - sum(b - a for a, b in keep)
+            if keep:
+                trimmed_file = job_dir / f"clip_{idx}_trimmed.mp4"
+                if await _build_trimmed_clip(video_path, start, dur, keep, trimmed_file):
+                    remapped, trimmed_dur = _remap_segments_for_trim(
+                        caption_segments if caption_segments is not None else segments,
+                        start, end, keep,
+                    )
+                    render_src, render_ss, render_dur = trimmed_file, 0.0, trimmed_dur
+                    ass_segs, ass_clip_start, ass_clip_end = remapped, 0.0, trimmed_dur
+                    log(job_id, f"  Editor cuts: removed {removed:.1f}s ({dur:.1f}s → {trimmed_dur:.1f}s)")
+                else:
+                    trimmed_file = None
+                    log(job_id, "  Editor cut render failed — rendering full clip")
+        elif trim_silence:
             silences = await _detect_silence(video_path, start, dur)
             keep = _keep_intervals(silences, dur)
             removed = dur - sum(b - a for a, b in keep)
@@ -4122,17 +4255,59 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         except Exception as _xe:
             log(job_id, f"  Excitement signals skipped: {_xe}")
 
-        # 3. Virality analysis
-        log(job_id, "--- PHASE 3: ANALYZE ---")
-        clips = await analyze_virality(
-            segments, job_id,
-            req.max_clips, req.min_duration, req.max_duration,
-            style_prompt=req.style_prompt or "",
-            exclude_prompt=req.exclude_prompt or "",
-            timeframe_start=(req.timeframe_start_min * 60) if req.timeframe_start_min else None,
-            timeframe_end=(req.timeframe_end_min * 60) if req.timeframe_end_min else None,
-            excitement=excitement,
-        )
+        # 3. Clip selection: predefined (exact-clip mode / transcript editor —
+        #    deterministic, no LLM selection) or the normal virality analysis.
+        predefined = None
+        if req.edit_keep:
+            keep_abs = _normalize_keep(req.edit_keep)
+            if keep_abs:
+                c_start, c_end = keep_abs[0][0], keep_abs[-1][1]
+                clip_def = {"start": c_start, "end": c_end,
+                            "title": (req.edit_title or "").strip() or "Edited Clip"}
+                if len(keep_abs) >= 2:  # mid-clip cuts → clip-relative intervals
+                    clip_def["cut_keep"] = [[a - c_start, b - c_start] for a, b in keep_abs]
+                predefined = [clip_def]
+        elif req.exact_start_s is not None and req.exact_end_s is not None:
+            predefined = [{"start": max(0.0, float(req.exact_start_s)),
+                           "end": float(req.exact_end_s), "title": ""}]
+
+        if predefined:
+            log(job_id, "--- PHASE 3: PREDEFINED CLIP (selection skipped) ---")
+            await update_job(job_id, status="analyzing", progress=76, message="Preparing your clip...")
+            for c in predefined:
+                spoken = " ".join(
+                    w["word"].strip() for seg in segments for w in _fill_words(seg)
+                    if c["start"] <= float(w["start"]) < c["end"])
+                c.setdefault("description", "")
+                c["_spoken"] = spoken
+                # Grounded title/hook/tags via the shared describe pass — the
+                # clip keeps a timestamp title if the LLM call fails (non-fatal).
+                if not c.get("title"):
+                    c["title"] = f"Clip {int(c['start'] // 60)}:{int(c['start'] % 60):02d}–{int(c['end'] // 60)}:{int(c['end'] % 60):02d}"
+                    c["_energy"] = True
+            try:
+                await _describe_energy_clips(predefined, job_id)
+            except Exception as _de:
+                log(job_id, f"  describe pass skipped: {_de}")
+            for c in predefined:
+                c.pop("_energy", None)
+                c.pop("_spoken", None)
+            clips = predefined
+            # Deterministic renders carry no AI keyword/emoji metadata — the
+            # overlays would point at content the model never scored.
+            if req.caption_overrides:
+                segments = _apply_caption_overrides(segments, req.caption_overrides)
+        else:
+            log(job_id, "--- PHASE 3: ANALYZE ---")
+            clips = await analyze_virality(
+                segments, job_id,
+                req.max_clips, req.min_duration, req.max_duration,
+                style_prompt=req.style_prompt or "",
+                exclude_prompt=req.exclude_prompt or "",
+                timeframe_start=(req.timeframe_start_min * 60) if req.timeframe_start_min else None,
+                timeframe_end=(req.timeframe_end_min * 60) if req.timeframe_end_min else None,
+                excitement=excitement,
+            )
         log(job_id, f"Analysis done → {len(clips)} clips selected")
 
         # 4. Optionally translate captions (clip selection always uses source language)
@@ -4558,6 +4733,21 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
         if req.trim_silence:
             raise HTTPException(403, "Trim silence requires a Pro plan. Upgrade to unlock.")
     req.max_clips = min(req.max_clips, max_clips_per_job)
+    # Exact-clip mode: user picked a precise source range — validate it here so
+    # a bad range fails fast instead of after a full download.
+    req.edit_keep = None          # editor internals are never accepted from this endpoint
+    req.caption_overrides = None
+    if (req.exact_start_s is None) != (req.exact_end_s is None):
+        raise HTTPException(400, "Exact clip needs both a start and an end time.")
+    if req.exact_start_s is not None:
+        if req.exact_start_s < 0 or req.exact_end_s <= req.exact_start_s:
+            raise HTTPException(400, "Exact clip end must be after its start.")
+        span = req.exact_end_s - req.exact_start_s
+        if span < 3.0:
+            raise HTTPException(400, "Exact clip must be at least 3 seconds.")
+        if span > 180.0:
+            raise HTTPException(400, "Exact clip can be at most 3 minutes.")
+        req.max_clips = 1
     if plan != "pro":
         # Count one JOB against the monthly free quota (each job yields up to 3 clips).
         claimed = db_claim_clips_atomic(user.id, 1, FREE_MONTHLY_JOB_LIMIT)
@@ -4596,6 +4786,8 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             "aspect_ratio": req.aspect_ratio,
             "facecam_box": req.facecam_box,
             "trim_silence": req.trim_silence,
+            "exact_start_s": req.exact_start_s,
+            "exact_end_s": req.exact_end_s,
         },
     })
     job_id = job["id"]
@@ -4643,6 +4835,144 @@ async def job_frame(job_id: str, t: float = 2.0, user=Depends(require_auth)):
     out.unlink(missing_ok=True)
     return Response(content=data, media_type="image/jpeg",
                     headers={"Cache-Control": "private, max-age=300"})
+
+
+@app.get("/api/jobs/{job_id}/transcript")
+async def job_transcript(job_id: str, clip: Optional[int] = None, user=Depends(require_auth)):
+    """Sentence-grouped transcript for the clip editor. With ?clip=N, returns a
+    window spanning that clip ±60s (edit an existing clip); without it, the
+    whole video (transcript browser / create-from-scratch)."""
+    job = db_get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    tr = OUTPUT_DIR / job_id / "transcript.json"
+    if not tr.exists():
+        raise HTTPException(404, "Transcript not available for this job")
+    try:
+        segments = json.loads(tr.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(500, "Transcript unreadable")
+
+    clip_info, t0, t1 = None, None, None
+    if clip is not None:
+        clips = job.get("clips") or []
+        if not (0 <= clip < len(clips)):
+            raise HTTPException(400, "clip index out of range")
+        c = clips[clip]
+        clip_info = {"start": c.get("start"), "end": c.get("end"), "title": c.get("title", "")}
+        t0 = max(0.0, float(c.get("start", 0)) - 60.0)
+        t1 = float(c.get("end", 0)) + 60.0
+    sentences = _group_sentences(segments, t0, t1)
+    last_end = 0.0
+    for seg in segments or []:
+        if seg.get("end"):
+            last_end = max(last_end, float(seg["end"]))
+    return {"clip": clip_info, "source_duration": round(last_end, 3),
+            "cached_source": (SOURCE_CACHE_DIR / f"{job_id}.mp4").exists(),
+            "sentences": sentences}
+
+
+@app.post("/api/jobs/{job_id}/edit")
+@_limiter.limit("10/minute")
+async def edit_clip(request: Request, job_id: str, req: EditClipRequest, user=Depends(require_auth)):
+    """Render a user-authored cut of an already-processed video: keep-intervals
+    chosen in the transcript editor (trim/extend/mid-cuts) + optional caption
+    text fixes. Deterministic child job — no AI selection phase."""
+    parent = db_get_job(job_id)
+    if not parent:
+        raise HTTPException(404, "Job not found")
+    if parent.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    if parent.get("status") != "done":
+        raise HTTPException(400, "Editing is only available for finished jobs")
+
+    keep = _normalize_keep(req.keep)
+    if not keep:
+        raise HTTPException(400, "No valid keep intervals")
+    if len(keep) > 20:
+        raise HTTPException(400, "Too many segments (max 20)")
+    total = sum(b - a for a, b in keep)
+    if total < 3.0:
+        raise HTTPException(400, "Edited clip must be at least 3 seconds")
+    if total > 180.0:
+        raise HTTPException(400, "Edited clip can be at most 3 minutes")
+
+    profile = db_check_and_reset_quota(user.id)
+    plan = profile.get("plan", "free")
+    if plan != "pro":
+        claimed = db_claim_clips_atomic(user.id, 1, FREE_MONTHLY_JOB_LIMIT)
+        if not claimed:
+            raise HTTPException(403, f"Monthly free limit reached ({FREE_MONTHLY_JOB_LIMIT} jobs). Upgrade to Pro for unlimited.")
+
+    popt = parent.get("options") or {}
+    base_title = None
+    if req.clip_index is not None:
+        pclips = parent.get("clips") or []
+        if 0 <= req.clip_index < len(pclips):
+            base_title = pclips[req.clip_index].get("title")
+    child_req = ClipRequest(
+        url=parent.get("url", ""),
+        max_clips=1,
+        min_duration=3,
+        max_duration=180,
+        # Visual settings carry over from the parent; Pro features are stripped
+        # (not errored) if the plan no longer allows them — mirrors reprompt.
+        reframe=bool(parent.get("reframe")) and plan == "pro",
+        clip_style=((popt.get("layout") or popt.get("clip_style") or "reframe")
+                    if plan == "pro" else "reframe"),
+        aspect_ratio=(popt.get("aspect_ratio") or "9:16") if plan == "pro" else "9:16",
+        facecam_box=popt.get("facecam_box"),
+        caption_style=parent.get("caption_style") or "bold_bottom",
+        caption_font_size=parent.get("caption_font_size"),
+        caption_highlight_color=parent.get("caption_highlight_color"),
+        caption_position=popt.get("caption_position"),
+        caption_keywords=popt.get("caption_keywords", True) is not False,
+        caption_emoji=False,  # emoji were LLM-placed against the old cut
+        caption_language=parent.get("caption_language") or "source",
+        bg_music_url=parent.get("bg_music_url"),
+        bg_music_volume=parent.get("bg_music_volume") or 0.15,
+        edit_keep=[[a, b] for a, b in keep],
+        edit_title=(req.title or "").strip() or (f"{base_title} (edited)" if base_title else None),
+        caption_overrides=req.caption_overrides,
+    )
+
+    child = db_create_job({
+        "user_id": user.id,
+        "status": "queued",
+        "progress": 0,
+        "message": "Queued (edit)...",
+        "clips": [],
+        "error": None,
+        "url": child_req.url,
+        "reframe": child_req.reframe,
+        "max_clips": 1,
+        "min_duration": 3,
+        "max_duration": 180,
+        "style_prompt": "",
+        "caption_style": child_req.caption_style,
+        "caption_font_size": child_req.caption_font_size,
+        "caption_highlight_color": child_req.caption_highlight_color,
+        "caption_language": child_req.caption_language,
+        "bg_music_url": child_req.bg_music_url,
+        "bg_music_volume": child_req.bg_music_volume,
+        "parent_job_id": job_id,
+        "options": {
+            "caption_position": child_req.caption_position,
+            "caption_keywords": child_req.caption_keywords,
+            "caption_emoji": False,
+            "clip_style": child_req.clip_style,
+            "aspect_ratio": child_req.aspect_ratio,
+            "facecam_box": child_req.facecam_box,
+            "edit_keep": child_req.edit_keep,
+            "edit_of_clip": req.clip_index,
+        },
+    })
+    child_id = child["id"]
+    task = asyncio.create_task(run_pipeline(child_id, child_req, user_id=user.id, reprompt_parent_id=job_id))
+    _running_tasks[child_id] = task
+    return {"job_id": child_id}
 
 
 @app.post("/api/jobs/{job_id}/reprompt")

@@ -4428,6 +4428,43 @@ async def source_cache_sweeper():
         await asyncio.sleep(3600)
 
 
+async def temp_sweeper():
+    """Delete stale job dirs (and stray files) from TEMP_DIR. Jobs clean up
+    after themselves on success, but a crashed pipeline leaks its whole temp
+    dir — 48 leaked dirs (~5 GB) filled the root disk on 2026-07-06. Anything
+    older than TEMP_RETENTION_HOURS is garbage: no pipeline runs remotely that
+    long (the download watchdog alone kills at 20 min)."""
+    retention_s = float(os.getenv("TEMP_RETENTION_HOURS", "24") or "24") * 3600
+    await asyncio.sleep(240)  # let startup settle
+    while True:
+        try:
+            def _sweep():
+                import time as _t
+                now, removed = _t.time(), 0
+                for p in TEMP_DIR.iterdir():
+                    try:
+                        if p.is_dir():
+                            # Newest mtime inside decides: an active job keeps
+                            # touching its files; a leaked dir goes cold.
+                            newest = max([p.stat().st_mtime]
+                                         + [f.stat().st_mtime for f in p.rglob("*")])
+                            if now - newest > retention_s:
+                                shutil.rmtree(p, ignore_errors=True)
+                                removed += 1
+                        elif now - p.stat().st_mtime > retention_s:
+                            p.unlink(missing_ok=True)  # stray frame_*.jpg etc.
+                            removed += 1
+                    except OSError:
+                        continue
+                return removed
+            removed = await asyncio.to_thread(_sweep)
+            if removed:
+                print(f"[temp] swept {removed} stale job dirs/files", flush=True)
+        except Exception as e:
+            print(f"[temp] sweeper error: {e}", flush=True)
+        await asyncio.sleep(6 * 3600)
+
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(watchdog())
@@ -4437,6 +4474,7 @@ async def startup_event():
     asyncio.create_task(clip_cleanup_scheduler())
     asyncio.create_task(public_stats_aggregator())
     asyncio.create_task(source_cache_sweeper())
+    asyncio.create_task(temp_sweeper())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ROUTES

@@ -2168,9 +2168,12 @@ def _yunet_detector():
 
 
 def _detect_face_clusters(video_path: Path, src_w: int, src_h: int,
-                          duration: float, n_samples: int = 48) -> tuple:
-    """Sample frames across the whole video and cluster EVERY detected face by
-    position. Returns (clusters, n_ok) where each cluster is
+                          duration: float, n_samples: int = 48,
+                          t0: Optional[float] = None,
+                          t1: Optional[float] = None) -> tuple:
+    """Sample frames across the video — or just the [t0, t1] window when given
+    (per-clip auto layout) — and cluster EVERY detected face by position.
+    Returns (clusters, n_ok) where each cluster is
     {"fcx","fcy","fw","fh","hits","frames"} (frames = set of sample indices the
     cluster appeared in, for co-presence checks), sorted most-persistent first.
     Shared by the facecam-region detector (small persistent face = webcam) and
@@ -2186,10 +2189,13 @@ def _detect_face_clusters(video_path: Path, src_w: int, src_h: int,
     if duration <= 0:
         cnt = cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0
         duration = cnt / fps if fps else 0.0
+    win_a = max(0.0, t0) if t0 is not None else 0.0
+    win_b = min(duration, t1) if t1 is not None else duration
+    span = max(0.0, win_b - win_a)
     n = max(8, n_samples)
     hits, n_ok = [], 0
     for i in range(n):
-        t = duration * (i + 0.5) / n if duration > 0 else 0.0
+        t = win_a + span * (i + 0.5) / n if span > 0 else 0.0
         cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000.0)
         ret, frame = cap.read()
         if not ret:
@@ -2377,12 +2383,15 @@ def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
 
 def _probe_motion_edges(video_path: Path, duration: float,
                         exclude_box: Optional[tuple] = None,
-                        n_samples: int = 24) -> tuple:
+                        n_samples: int = 24,
+                        t0: Optional[float] = None,
+                        t1: Optional[float] = None) -> tuple:
     """Motion + edge statistics of the non-cam region, for the auto-layout
-    discriminator. Samples are ~seconds apart, computed on ~320px grayscale:
-    slides/code barely change between samples and are edge-dense; gameplay and
-    camera footage change a lot. Returns (motion, edge_density) on a 0-255-ish
-    scale, or (None, None) if unreadable."""
+    discriminator — over the whole video or just the [t0, t1] window when
+    given (per-clip auto). Samples are ~seconds apart, computed on ~320px
+    grayscale: slides/code barely change between samples and are edge-dense;
+    gameplay and camera footage change a lot. Returns (motion, edge_density)
+    on a 0-255-ish scale, or (None, None) if unreadable."""
     try:
         import cv2 as _cv2
         import numpy as _np
@@ -2393,9 +2402,12 @@ def _probe_motion_edges(video_path: Path, duration: float,
     if duration <= 0:
         cnt = cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0
         duration = cnt / fps if fps else 0.0
+    win_a = max(0.0, t0) if t0 is not None else 0.0
+    win_b = min(duration, t1) if t1 is not None else duration
+    span = max(0.0, win_b - win_a)
     frames = []
     for i in range(max(8, n_samples)):
-        t = duration * (i + 0.5) / max(8, n_samples) if duration > 0 else 0.0
+        t = win_a + span * (i + 0.5) / max(8, n_samples) if span > 0 else 0.0
         cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000.0)
         ret, frame = cap.read()
         if not ret:
@@ -3567,6 +3579,66 @@ async def _build_layout_plan(ctx: ClipRenderCtx, clip_style: str) -> LayoutPlan:
 
 
 # ── cut clips + burn subtitles ────────────────────────────────────────────────
+async def _resolve_auto_layout(video_path: Path, src_w: int, src_h: int,
+                               duration: float, job_id: str,
+                               t0: Optional[float] = None,
+                               t1: Optional[float] = None,
+                               n_samples: int = 48,
+                               label: str = "") -> tuple:
+    """The AUTO layout decision tree over the whole video (default) or a
+    [t0, t1] clip window (per-clip auto). One cluster pass feeds every
+    decision; a motion/edge probe of the non-cam region separates screenshare
+    (static, edge-dense) from gameplay (high motion). Ambiguity always
+    resolves to fill — a wrong fill is watchable, a wrong split is not.
+    Returns (layout, facecam_region, split_speakers). Thresholds measured on
+    the 12-video calibration corpus (tests/layout_corpus.json, 2026-07-06)."""
+    _clusters, _n_ok = await asyncio.to_thread(
+        _detect_face_clusters, video_path, src_w, src_h, duration, n_samples, t0, t1)
+    split_speakers = _pick_split_speakers(_clusters, _n_ok, src_w)
+    if split_speakers:
+        log(job_id, f"  Auto layout{label} → split")
+        return "split", None, split_speakers
+
+    _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
+    _e_high = float(os.getenv("AUTO_EDGE_HIGH", "5.0"))
+    _m_high = float(os.getenv("AUTO_MOTION_HIGH", "9.0"))
+    facecam_region = _facecam_region_from_clusters(_clusters, _n_ok, src_w, src_h)
+    if facecam_region:
+        _motion, _edges = await asyncio.to_thread(
+            _probe_motion_edges, video_path, duration, facecam_region["box"], 24, t0, t1)
+        # Streamer cams sit in the left/right corners or the bottom band
+        # (bottom-center webcam bars are common); top/center faces are subjects
+        # or logos, never cams — confirmed across the calibration corpus.
+        _corner = (facecam_region["fcx"] < src_w * 0.33
+                   or facecam_region["fcx"] > src_w * 0.67
+                   or facecam_region["fcy"] > src_h * 0.75)
+        log(job_id, f"  Auto probe{label}: motion={_motion if _motion is None else round(_motion, 1)} "
+                    f"edges={_edges if _edges is None else round(_edges, 1)} corner_cam={_corner}")
+        if _motion is not None and _motion < _m_low and _edges > _e_high:
+            layout = "screenshare"
+        elif _motion is not None and _motion >= _m_high and _corner:
+            layout = "gameplay"
+        else:
+            layout = "fill"
+        log(job_id, f"  Auto layout{label} → {layout}")
+        return layout, facecam_region, None
+
+    # No cam found. A no-facecam screencast (pure code/slides — near-zero face
+    # evidence, static frame, edge-dense) must NOT be center-cropped by fill;
+    # letterbox it with Fit so the content stays legible.
+    layout = "fill"
+    _face_evidence = sum(c["hits"] for c in _clusters)
+    if _face_evidence <= 0.25 * max(1, _n_ok):
+        _motion, _edges = await asyncio.to_thread(
+            _probe_motion_edges, video_path, duration, None, 24, t0, t1)
+        log(job_id, f"  Auto probe{label} (no cam): motion={_motion if _motion is None else round(_motion, 1)} "
+                    f"edges={_edges if _edges is None else round(_edges, 1)}")
+        if _motion is not None and _motion < _m_low and (_edges or 0) > _e_high:
+            layout = "fit"
+    log(job_id, f"  Auto layout{label} → {layout}")
+    return layout, None, None
+
+
 async def create_clips(
     video_path: Path,
     clip_defs: list,
@@ -3633,6 +3705,8 @@ async def create_clips(
     facecam_region = None
     split_speakers = None
     layout_resolved = None
+    _manual_cam = False        # user-drawn box beats ALL detection, incl. per-clip auto
+    _auto_src_dims = None      # (w, h, dur) — set when the auto video-level probe ran
     _probe_layout = _LAYOUT_ALIASES.get(clip_style, clip_style)
 
     # A user-drawn cam box (normalized 0-1) beats detection entirely — this is
@@ -3658,6 +3732,7 @@ async def create_clips(
                         "fcx": bx + bw / 2.0,
                         "fcy": by + bh * 0.40,
                     }
+                    _manual_cam = True
                     log(job_id, f"  Manual facecam box: {facecam_region['box']}")
         except Exception as _me:
             log(job_id, f"  Manual facecam box ignored: {_me}")
@@ -3679,59 +3754,12 @@ async def create_clips(
                     log(job_id, f"  Split speakers (video-level): "
                                 f"{[int(s['fcx']) for s in split_speakers] if split_speakers else 'none — will fall back to Fill'}")
                 else:
-                    # AUTO: one cluster pass feeds every decision; a motion/edge
-                    # probe of the non-cam region separates screenshare (static,
-                    # edge-dense) from gameplay (high motion). Ambiguity always
-                    # resolves to fill — a wrong fill is watchable, a wrong split
-                    # is not.
-                    _clusters, _n_ok = await asyncio.to_thread(_detect_face_clusters, video_path, _fw, _fh, _fd)
-                    split_speakers = _pick_split_speakers(_clusters, _n_ok, _fw)
-                    if split_speakers:
-                        layout_resolved = "split"
-                    else:
-                        facecam_region = _facecam_region_from_clusters(_clusters, _n_ok, _fw, _fh)
-                        if facecam_region:
-                            _motion, _edges = await asyncio.to_thread(
-                                _probe_motion_edges, video_path, _fd, facecam_region["box"])
-                            # Defaults measured on the 12-video calibration corpus
-                            # (tests/layout_corpus.json, 2026-07-06): 4.0/5.0/9.0
-                            # scored 9/12 vs 7/12 for the old guesses 4.0/8.0/10.0.
-                            _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
-                            _e_high = float(os.getenv("AUTO_EDGE_HIGH", "5.0"))
-                            _m_high = float(os.getenv("AUTO_MOTION_HIGH", "9.0"))
-                            # Streamer cams sit in the left/right corners or the
-                            # bottom band (bottom-center webcam bars are common);
-                            # top/center faces are subjects or logos, never cams —
-                            # confirmed across the calibration corpus (fill videos'
-                            # phantom "cams" all sit top/center, fcy ≤ 0.43).
-                            _corner = (facecam_region["fcx"] < _fw * 0.33
-                                       or facecam_region["fcx"] > _fw * 0.67
-                                       or facecam_region["fcy"] > _fh * 0.75)
-                            log(job_id, f"  Auto probe: motion={_motion if _motion is None else round(_motion, 1)} "
-                                        f"edges={_edges if _edges is None else round(_edges, 1)} corner_cam={_corner}")
-                            if _motion is not None and _motion < _m_low and _edges > _e_high:
-                                layout_resolved = "screenshare"
-                            elif _motion is not None and _motion >= _m_high and _corner:
-                                layout_resolved = "gameplay"
-                            else:
-                                layout_resolved = "fill"
-                        else:
-                            # No cam found. A no-facecam screencast (pure code/
-                            # slides — near-zero face evidence, static frame,
-                            # edge-dense) must NOT be center-cropped by fill;
-                            # letterbox it with Fit so the content stays legible.
-                            _face_evidence = sum(c["hits"] for c in _clusters)
-                            layout_resolved = "fill"
-                            if _face_evidence <= 0.25 * _n_ok:
-                                _motion, _edges = await asyncio.to_thread(
-                                    _probe_motion_edges, video_path, _fd, None)
-                                _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
-                                _e_high = float(os.getenv("AUTO_EDGE_HIGH", "5.0"))
-                                log(job_id, f"  Auto probe (no cam): motion={_motion if _motion is None else round(_motion, 1)} "
-                                            f"edges={_edges if _edges is None else round(_edges, 1)}")
-                                if _motion is not None and _motion < _m_low and (_edges or 0) > _e_high:
-                                    layout_resolved = "fit"
-                    log(job_id, f"  Auto layout → {layout_resolved}")
+                    # AUTO, video-level pass: the fallback answer when a
+                    # per-clip probe fails, and the source of the video dims
+                    # for the per-clip passes below.
+                    layout_resolved, facecam_region, split_speakers = await _resolve_auto_layout(
+                        video_path, _fw, _fh, _fd, job_id, label=" (video)")
+                    _auto_src_dims = (_fw, _fh, _fd)
         except Exception as _fe:
             log(job_id, f"  Layout probe skipped: {_fe}")
     if _probe_layout == "auto":
@@ -3750,6 +3778,25 @@ async def create_clips(
         # clipping: 78-98 spread across clips
         progress = 78 + int((idx / len(clip_defs)) * 20)
         await update_job(job_id, progress=progress, message=f"Rendering clip {idx+1}/{len(clip_defs)}: {clip['title']}")
+
+        # Per-clip AUTO: each clip's window gets its own layout decision — a
+        # 2h stream can yield podcast (fill) + gameplay + slides (fit) clips,
+        # and a montage's cams move between segments. The video-level result
+        # is the fallback; a user-drawn cam box wins upstream (it forces a
+        # cam layout before auto is ever probed). Explicit layouts are
+        # untouched: one layout for all clips, exactly as the user asked.
+        clip_layout, clip_reframe = clip_style, reframe
+        clip_cam, clip_split = facecam_region, split_speakers
+        if _probe_layout == "auto" and _auto_src_dims and not _manual_cam:
+            try:
+                _aw, _ah, _ad = _auto_src_dims
+                _l, _cam, _spl = await _resolve_auto_layout(
+                    video_path, _aw, _ah, _ad, job_id,
+                    t0=start, t1=end, n_samples=24, label=f" (clip {idx+1})")
+                clip_layout, clip_cam, clip_split = _l, _cam, _spl
+                clip_reframe = (True if _REFRAME_AVAILABLE else reframe) if _l == "fill" else reframe
+            except Exception as _pe:
+                log(job_id, f"  Per-clip auto probe failed (clip {idx+1}) — using video-level '{clip_style}': {_pe}")
 
         # Render source defaults to the original video; silence trimming may swap
         # it for a pre-trimmed intermediate with gaps cut out.
@@ -3820,7 +3867,7 @@ async def create_clips(
 
         # Output resolution from the requested aspect ratio; multi-region
         # layouts (gameplay/split/screenshare) are portrait-only in V1.
-        _layout_resolved = _LAYOUT_ALIASES.get(clip_style, clip_style)
+        _layout_resolved = _LAYOUT_ALIASES.get(clip_layout, clip_layout)
         _ar = aspect_ratio if aspect_ratio in _ASPECT_RATIOS else "9:16"
         if _layout_resolved in _PORTRAIT_ONLY_LAYOUTS and _ar != "9:16":
             log(job_id, f"  {_layout_resolved} layout is 9:16-only — ignoring aspect_ratio={_ar}")
@@ -3839,7 +3886,7 @@ async def create_clips(
         # For blur_bg, compute where the foreground video ends so captions land
         # in the bottom blurred zone rather than on top of the main video.
         blur_bg_margin_v = None
-        if clip_style == "blur_bg":
+        if clip_layout == "blur_bg":
             fg_h = int(src_h * out_w / src_w)
             fg_h = max(2, fg_h - (fg_h % 2))  # ensure even
             fg_h = min(fg_h, out_h)
@@ -3852,7 +3899,7 @@ async def create_clips(
         # Caption position preset → alignment/MarginV pair. blur_bg wins (its
         # captions must land in the bottom blur zone regardless of preset).
         pos_align, pos_mv = None, None
-        if caption_position and caption_position != "default" and clip_style != "blur_bg":
+        if caption_position and caption_position != "default" and clip_layout != "blur_bg":
             pos_align, pos_mv = _CAPTION_POSITIONS.get(caption_position, (None, None))
 
         # Build ASS subtitle
@@ -3867,10 +3914,10 @@ async def create_clips(
             caption_style=caption_style,
             font_size=font_size,
             highlight_color=highlight_color,
-            margin_v_override=blur_bg_margin_v if clip_style == "blur_bg" else pos_mv,
+            margin_v_override=blur_bg_margin_v if clip_layout == "blur_bg" else pos_mv,
             # Force bottom-center alignment in blur_bg so captions land in the
             # bottom blur zone even for center-aligned styles like POP.
-            alignment_override=2 if clip_style == "blur_bg" else pos_align,
+            alignment_override=2 if clip_layout == "blur_bg" else pos_align,
             keywords=clip.get("keywords") if caption_keywords else None,
         )
 
@@ -3890,11 +3937,11 @@ async def create_clips(
             src_w=src_w, src_h=src_h, out_w=out_w, out_h=out_h,
             crop_w=crop_w, crop_h=crop_h, center_crop_x=center_crop_x,
             clip_fps=clip_fps, job_dir=job_dir, idx=idx, job_id=job_id,
-            reframe=reframe, n_clips=len(clip_defs),
-            clip_title=clip.get("title", ""), facecam_region=facecam_region,
-            split_speakers=split_speakers,
+            reframe=clip_reframe, n_clips=len(clip_defs),
+            clip_title=clip.get("title", ""), facecam_region=clip_cam,
+            split_speakers=clip_split,
         )
-        plan = await _build_layout_plan(ctx, clip_style)
+        plan = await _build_layout_plan(ctx, clip_layout)
         # One sendcmd-driven crop per graph — more cross-talk (sendcmd hits
         # every crop instance). Layouts needing more use pre-pass inputs.
         assert plan.filter_complex.count("sendcmd") <= 1, "layout plan violates one-sendcmd-per-graph"
@@ -3967,9 +4014,9 @@ async def create_clips(
             "path": f"/clips/{job_id}/{clip_filename}",
             "thumbnail": thumb_filename if thumb_ok else None,
             "duration": round(render_dur, 1),
-            # What auto-layout actually chose (equals the requested layout when
-            # the user picked one explicitly).
-            "layout": _LAYOUT_ALIASES.get(clip_style, clip_style),
+            # What auto-layout actually chose FOR THIS CLIP (equals the
+            # requested layout when the user picked one explicitly).
+            "layout": _LAYOUT_ALIASES.get(clip_layout, clip_layout),
         })
 
     return results

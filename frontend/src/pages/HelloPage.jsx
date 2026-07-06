@@ -332,7 +332,7 @@ export default function HelloPage() {
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>LAYOUT {!isPro && <Tag bg={C.amber} color={C.ink}>PRO</Tag>}</div>
             <div id="tour-layout" style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
               {[
-                { id: "auto",    label: "AUTO ✨",  hint: "AI picks the best layout per video", pro: true },
+                { id: "auto",    label: "AUTO ✨",  hint: "AI picks the best layout per clip", pro: true },
                 { id: "reframe", label: "FILL",     hint: "9:16 crop (tracked with REFRAME)", pro: false },
                 { id: "fit",     label: "FIT",      hint: "whole frame, letterboxed",          pro: true },
                 { id: "blur_bg", label: "BLUR BG",  hint: "centered on blurred fill",          pro: true },

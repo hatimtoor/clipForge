@@ -19,7 +19,8 @@ function BrandKitCard({ isMobile }) {
     try {
       const res = await authFetch("/api/brand/logo");
       if (!res.ok) { setLogoUrl(null); return; }
-      setLogoUrl(URL.createObjectURL(await res.blob()));
+      const url = URL.createObjectURL(await res.blob());
+      setLogoUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url; });
     } catch { setLogoUrl(null); }
   };
 
@@ -32,10 +33,14 @@ function BrandKitCard({ isMobile }) {
       } catch { /* card stays hidden */ }
     })();
   }, []);
+  // Revoke the last blob URL on unmount (the loader revokes prior ones).
+  useEffect(() => () => setLogoUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; }), []);
 
   const save = async (patch) => {
-    const next = { ...brand, ...patch };
-    setBrand(next);
+    // Functional update so rapid clicks on different settings each read the
+    // latest committed state instead of a stale closure (dropped-change race).
+    let next;
+    setBrand(prev => { next = { ...prev, ...patch }; return next; });
     try {
       const res = await authFetch("/api/brand", {
         method: "PUT", headers: { "Content-Type": "application/json" },

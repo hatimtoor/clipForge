@@ -45,11 +45,11 @@ export default function CalendarPage() {
   // Group by calendar day, upcoming first; past/settled posts sink below.
   const upcoming = (posts || []).filter(p => ["scheduled", "publishing"].includes(p.status));
   const settled = (posts || []).filter(p => !["scheduled", "publishing"].includes(p.status)).reverse();
-  const groups = upcoming.reduce((acc, p) => {
-    const k = dayLabel(p.publish_at);
-    (acc[acc.length - 1]?.[0] === k ? acc[acc.length - 1][1] : acc[acc.push([k, []]) - 1][1]).push(p);
-    return acc;
-  }, []);
+  // Group by day label — order-independent (don't assume the API sorted),
+  // then order the day groups by their earliest post.
+  const groups = Object.entries(
+    upcoming.reduce((acc, p) => { (acc[dayLabel(p.publish_at)] ??= []).push(p); return acc; }, {})
+  ).sort((a, b) => new Date(a[1][0].publish_at) - new Date(b[1][0].publish_at));
 
   const Row = ({ p, showCancel }) => (
     <div style={{ display: "flex", alignItems: "stretch", border: BORDER, boxShadow: SHADOW_SM, background: C.paper, marginBottom: 8 }}>

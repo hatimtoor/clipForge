@@ -101,6 +101,18 @@ def test_subtract_drops_slivers_and_handles_noop():
     assert _subtract_intervals(keep, []) == keep
 
 
+def test_subtract_keeps_short_filler_cuts():
+    # Regression: a padded "um" is ~0.18s. It must be cut, not dropped by a
+    # keep-style min-duration gate (that silently left ~30-50% of fillers in).
+    keep = [(0.0, 10.0)]
+    short_filler = [(5.0, 5.18)]
+    assert _subtract_intervals(keep, short_filler) == [(0.0, 5.0), (5.18, 10.0)]
+    # several sub-0.25s fillers all removed
+    fillers = [(1.0, 1.15), (3.0, 3.2), (7.0, 7.12)]
+    out = _subtract_intervals(keep, fillers)
+    assert out == [(0.0, 1.0), (1.15, 3.0), (3.2, 7.0), (7.12, 10.0)]
+
+
 # ── exports: SRT / Premiere XML / FCPXML ─────────────────────────────────────
 
 from main import _format_srt, _format_xmeml, _format_fcpxml, _export_segments  # noqa: E402

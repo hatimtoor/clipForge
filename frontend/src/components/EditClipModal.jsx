@@ -116,7 +116,7 @@ export default function EditClipModal({ jobId, clipIndex, clipTitle, onClose, on
           keep,
           title: title.trim() || undefined,
           caption_overrides: caption_overrides.length ? caption_overrides : undefined,
-          remove_fillers: stripFillers || undefined,
+          remove_fillers: stripFillers,
         }),
       });
       const d = await res.json();

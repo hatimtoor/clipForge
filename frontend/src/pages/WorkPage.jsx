@@ -663,6 +663,8 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
   const [camBox, setCamBox] = useState(null);        // {x,y,w,h} normalized
   const [camDrag, setCamDrag] = useState(null);
   const camImgRef = useRef(null);
+  // Free the cam-frame blob URL when Results unmounts (navigating away).
+  useEffect(() => () => setCamFrameUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; }), []);
 
   const openCamPicker = async () => {
     setCamOpen(o => !o);
@@ -962,7 +964,7 @@ function Results({ job, ytStatus, ttStatus, isPro, onYTUpload, onTTUpload, onNew
               </div>
             </div>
             <div style={{ marginTop: 14 }}>
-              <Tag bg={C.cream}>CLIP {String((clips.indexOf(active)) + 1).padStart(2, "0")}</Tag>
+              <Tag bg={C.cream}>CLIP {String((clips.findIndex(c => c.path === active?.path)) + 1).padStart(2, "0")}</Tag>
               <p className="vt" style={{ fontSize: 18, color: C.ink, marginTop: 10, lineHeight: 1.35 }}>{active.hook || active.title}</p>
             </div>
           </div>

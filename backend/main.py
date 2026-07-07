@@ -201,6 +201,12 @@ app.add_middleware(_SecurityHeadersMiddleware)
 BASE_DIR   = Path(__file__).parent.parent
 OUTPUT_DIR    = BASE_DIR / "output"
 BRAND_DIR     = BASE_DIR / "brand"   # per-user watermark logos (brand kit)
+
+# Defense-in-depth for any endpoint that derives a filesystem path from a URL
+# param: validate the job_id shape before it touches the disk (the DB lookup
+# already rejects non-UUIDs, but don't rely on an external type constraint).
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+_SAFE_FILENAME_RE = re.compile(r'^[a-zA-Z0-9_\-\.]+$')
 TEMP_DIR      = BASE_DIR / "temp"
 MUSIC_CACHE_DIR = BASE_DIR / "music_cache"
 # Finished sources are kept here briefly so "reprompt" (find more clips in the
@@ -2957,13 +2963,28 @@ def _filler_cut_intervals(segments: list, clip_start: float, clip_end: float,
     return cuts
 
 
+def _merge_spans(ivals: list) -> list:
+    """Sort + merge overlapping/adjacent (<0.05s gap) spans. NO minimum-duration
+    gate — unlike _normalize_keep, which is for KEEP intervals. Cuts must keep
+    sub-0.25s spans: a padded 'um' is ~0.18-0.28s, and _normalize_keep was
+    silently dropping ~30-50% of real fillers before they were ever subtracted."""
+    spans = sorted((float(a), float(b)) for a, b in ivals if float(b) > float(a))
+    merged: list = []
+    for a, b in spans:
+        if merged and a - merged[-1][1] < 0.05:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
 def _subtract_intervals(keep: list, cuts: list) -> list:
-    """Remove `cuts` from `keep` (both [(a, b)] lists); drops slivers <0.15s.
-    Used to strip filler words out of whatever keep-set is already in play
-    (full clip, silence-trimmed, or user-authored editor cuts)."""
+    """Remove `cuts` from `keep` (both [(a, b)] lists); drops resulting slivers
+    <0.15s. Used to strip filler words out of whatever keep-set is already in
+    play (full clip, silence-trimmed, or user-authored editor cuts)."""
     if not cuts:
         return keep
-    merged_cuts = _normalize_keep([[a, b] for a, b in cuts])
+    merged_cuts = _merge_spans(cuts)
     out = []
     for ka, kb in keep:
         cursor = ka
@@ -3043,7 +3064,7 @@ def _apply_caption_overrides(segments: list, overrides: list) -> list:
     windows = []
     for o in overrides:
         try:
-            a, b, txt = float(o["start"]), float(o["end"]), str(o.get("text", "")).strip()
+            a, b, txt = float(o["start"]), float(o["end"]), str(o.get("text", "")).strip()[:300]
         except (TypeError, ValueError, KeyError):
             continue
         if b > a:
@@ -4923,13 +4944,17 @@ async def scheduled_post_publisher():
                         await asyncio.to_thread(db_update_scheduled_post, pid,
                                                 {"status": "error", "error": (up.get("error") or "upload failed")[:500]})
                     else:
-                        # upload still in flight (chunked) — leave as publishing;
-                        # the clip card shows live progress either way.
+                        # do_*_upload are synchronous, so status is terminal by
+                        # now; mark done to avoid a stuck 'publishing' row. (If
+                        # uploads ever go async, revisit — leaving 'publishing'
+                        # would re-poll instead of prematurely marking done.)
                         await asyncio.to_thread(db_update_scheduled_post, pid, {"status": "done"})
                 except Exception as pe:
+                    # User-facing error is generic; the detail is logged server-side.
+                    print(f"[scheduler] publish {pid} failed: {pe}", flush=True)
                     try:
                         await asyncio.to_thread(db_update_scheduled_post, pid,
-                                                {"status": "error", "error": str(pe)[:500]})
+                                                {"status": "error", "error": "Publishing failed — check the account connection and try again."})
                     except Exception:
                         pass
         except Exception as e:
@@ -5055,14 +5080,18 @@ async def cancel_job(job_id: str, user=Depends(require_auth)):
 
 
 @app.get("/api/jobs/{job_id}/frame")
-async def job_frame(job_id: str, t: float = 2.0, user=Depends(require_auth)):
+@_limiter.limit("30/minute")
+async def job_frame(request: Request, job_id: str, t: float = 2.0, user=Depends(require_auth)):
     """A single JPEG frame from the job's cached source video, for the manual
     facecam-box picker. 404s once the source cache has expired."""
+    if not _UUID_RE.match(job_id):
+        raise HTTPException(400, "Invalid job ID")
     job = db_get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
+    job_id = job["id"]   # trust the DB row, not the URL, for the filesystem path
     src = SOURCE_CACHE_DIR / f"{job_id}.mp4"
     if not src.exists():
         raise HTTPException(404, "Source video no longer cached — run the job again first")
@@ -5169,7 +5198,10 @@ def _format_xmeml(meta: dict, title: str, src_name: str) -> str:
 def _format_fcpxml(meta: dict, title: str, src_name: str) -> str:
     """FCPXML 1.9 for Final Cut Pro / DaVinci Resolve: asset-clips on a spine
     reproducing the clip's cuts. Times snapped to frame boundaries."""
-    from xml.sax.saxutils import escape
+    from xml.sax.saxutils import escape as _esc
+    # Titles land in ATTRIBUTE context — escape quotes too, or a title with a
+    # double-quote injects stray attributes into the export.
+    escape = lambda s: _esc(s, {'"': "&quot;"})
     fps = float(meta.get("fps") or 30)
     num, den = _fps_rational(fps)
     w, h = int(meta.get("src_w") or 1920), int(meta.get("src_h") or 1080)
@@ -5212,6 +5244,8 @@ async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends
     (Pro). Uses the render-time snapshot (captions_{idx}.json) so timings match
     the rendered video exactly, including editor/filler/silence cuts; falls
     back to the raw transcript window for pre-snapshot jobs (uncut only)."""
+    if not _UUID_RE.match(job_id):
+        raise HTTPException(400, "Invalid job ID")
     job = db_get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
@@ -5219,6 +5253,7 @@ async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends
         raise HTTPException(403, "Forbidden")
     if fmt not in ("srt", "xml", "fcpxml"):
         raise HTTPException(400, "fmt must be srt, xml, or fcpxml")
+    job_id = job["id"]   # trust the DB row, not the URL, for the filesystem path
     clips = job.get("clips") or []
     if not (0 <= clip_idx < len(clips)):
         raise HTTPException(404, "clip not found")
@@ -5398,11 +5433,14 @@ async def job_transcript(job_id: str, clip: Optional[int] = None, user=Depends(r
     """Sentence-grouped transcript for the clip editor. With ?clip=N, returns a
     window spanning that clip ±60s (edit an existing clip); without it, the
     whole video (transcript browser / create-from-scratch)."""
+    if not _UUID_RE.match(job_id):
+        raise HTTPException(400, "Invalid job ID")
     job = db_get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
+    job_id = job["id"]   # trust the DB row, not the URL, for the filesystem path
     tr = OUTPUT_DIR / job_id / "transcript.json"
     if not tr.exists():
         raise HTTPException(404, "Transcript not available for this job")
@@ -5660,6 +5698,8 @@ async def get_status(job_id: str, user=Depends(require_auth)):
 
 @app.get("/api/jobs")
 async def list_jobs(user=Depends(require_auth), limit: int = 20, offset: int = 0):
+    limit = max(1, min(limit, 100))   # bound the page so a caller can't dump the whole table
+    offset = max(0, offset)
     return [_j(j) for j in await asyncio.to_thread(db_get_user_jobs, user.id, limit=limit, offset=offset)]
 
 
@@ -5790,10 +5830,6 @@ async def billing_webhook(request: Request):
         print(f"[billing] webhook db update failed for {user_id}: {e}", flush=True)
         raise HTTPException(500, "Update failed")
     return {"ok": True}
-
-
-_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-_SAFE_FILENAME_RE = re.compile(r'^[a-zA-Z0-9_\-\.]+$')
 
 
 @app.get("/api/clip-token/{job_id}/{filename}")

@@ -160,7 +160,7 @@ export default function HelloPage() {
         <div className="t-label" style={{ marginBottom: 10 }}>
           Settings
         </div>
-        <div id="tour-chips" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div id="tour-chips" className="chip-strip">
           <SettingsChip
             icon="🎬"
             value={`${form.maxClips} clips · ${form.minDur}–${form.maxDur}s`}

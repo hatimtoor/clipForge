@@ -468,6 +468,27 @@ select.input {
 }
 
 /* ── SettingsChip ───────────────────────────────────────────────────────── */
+/* Chip strip: uniform grid so chips align in tidy columns in both skins
+   (retro's pixel font makes free-flowing flex rows ragged) and stack
+   full-width on phones. */
+.chip-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+}
+[data-theme="retro"] .chip-strip {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 10px;
+}
+.chip-strip .chip {
+  width: 100%;
+  min-width: 0;
+}
+.chip-strip .chip__value {
+  flex: 1;
+  text-align: left;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

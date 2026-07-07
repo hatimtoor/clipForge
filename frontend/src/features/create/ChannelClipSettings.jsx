@@ -152,7 +152,7 @@ export function ChannelSettingsChips({ settings, videoId, minDurMax = 120, idPre
 
   return (
     <>
-      <div id={idPrefix ? `${idPrefix}-chips` : undefined} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div id={idPrefix ? `${idPrefix}-chips` : undefined} className="chip-strip">
         <SettingsChip
           icon="🎬"
           value={`${form.maxClips} clips · ${form.minDur}–${form.maxDur}s`}

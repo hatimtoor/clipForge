@@ -225,7 +225,7 @@ export default function HelloPage() {
       >
         <div style={{ display: "grid", gap: 18 }}>
           {!form.exactOn && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
               <Field label="Clip from" hint="Minutes into the video (0 = start)">
                 <StepperInput
                   value={form.tfStart}
@@ -259,7 +259,7 @@ export default function HelloPage() {
           />
           {form.exactOn && (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
                 <Field label="Start at">
                   <TextInput
                     value={form.exactStart}

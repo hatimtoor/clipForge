@@ -86,6 +86,14 @@
 .btn--full {
   width: 100%;
 }
+/* Phones: long labels (esp. retro's wide pixel font) wrap instead of pushing
+   the button past its container. */
+@media (max-width: 767px) {
+  .btn {
+    white-space: normal;
+    max-width: 100%;
+  }
+}
 
 /* ── Card ───────────────────────────────────────────────────────────────── */
 .card {
@@ -374,6 +382,7 @@ select.input {
   border-radius: var(--radius-md);
   padding: 3px;
   max-width: 100%;
+  min-width: 0;
   flex-wrap: wrap;
 }
 [data-theme="retro"] .seg {

@@ -105,7 +105,7 @@ export default function KitPage() {
           <Field label="Find">
             <TextArea placeholder="e.g. every moment about pricing" rows={2} />
           </Field>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
             <Field label="Max clips">
               <StepperInput value={n} onChange={setN} min={1} max={10} />
             </Field>

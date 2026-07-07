@@ -1013,13 +1013,14 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
         _tag = "[HIGH ENERGY] " if _hot and _is_hot((seg["start"] + seg["end"]) / 2) else ""
         transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {_tag}{seg['text']}")
 
-    # Chunk size is sized for the CURRENT model, not the original Ollama-era
-    # 3,000 chars (that relic made a 3h video 75+ sequential LLM calls — fine
-    # when a rate-limit-free primary answered in ~5s each, a 48-minute crawl
-    # on Groq free-tier pacing). gpt-oss-120b has 128k context; ~24k chars
-    # (~6k tokens) per chunk turns 75 calls into ~10 with the same total
-    # tokens and far fewer rate-limit round-trips.
-    CHUNK_SIZE = int(os.getenv("ANALYSIS_CHUNK_CHARS", "24000") or "24000")
+    # Chunk size is bounded by Groq's FREE-TIER 8,000 tokens-per-MINUTE limit,
+    # which applies PER REQUEST (input + max_tokens). A single request must fit:
+    #   ~1.6k prompt boilerplate + chunk_tokens + max_tokens(2k) < 8k
+    # → chunk_tokens must stay under ~4k (~16k chars). 11k chars (~2.7k tokens)
+    # keeps a full request near ~6.3k tokens — safely under the ceiling with
+    # margin — while still being ~3.5x the old 3k-char relic (fewer calls).
+    # (24k chars was over the limit → hard 413s → 0 clips. Env-overridable.)
+    CHUNK_SIZE = int(os.getenv("ANALYSIS_CHUNK_CHARS", "11000") or "11000")
     full_text = "\n".join(transcript_lines)
     chunks = []
     while len(full_text) > 0:
@@ -1091,9 +1092,10 @@ Return valid JSON array only, no markdown, no explanation."""
                     model=GROQ_ANALYSIS_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=t,
-                    # Sized with ANALYSIS_CHUNK_CHARS: each ~24k-char chunk can
-                    # legitimately yield several full clip objects of JSON.
-                    max_tokens=4000,
+                    # Kept modest so (input + max_tokens) stays under Groq's
+                    # 8k TPM per-request ceiling and the model doesn't ramble
+                    # past valid JSON. 2k comfortably fits 5-10 clip objects.
+                    max_tokens=2000,
                 )
                 return r.choices[0].message.content.strip()
             return await groq_with_retry(

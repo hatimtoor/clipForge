@@ -499,8 +499,10 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
           <h3 className="pixel" style={{ fontSize: 10, color: C.ink, lineHeight: 1.5, marginBottom: 12 }}>{clip.title || `Clip ${idx + 1}`}</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <PixelBtn color="cream" size="sm" onClick={onPreview}>{isActive ? "|| HIDE" : "> PLAY"}</PixelBtn>
+            {onEdit && <PixelBtn color="lavender" size="sm" onClick={onEdit}>✂ EDIT</PixelBtn>}
             <PixelBtn color="cream" size="sm" onClick={handleDownload} disabled={downloading}>{downloading ? "..." : "v MP4"}</PixelBtn>
             {clip.thumbnail_url && <PixelBtn color="cream" size="sm" onClick={handleDownloadThumb}>v JPG</PixelBtn>}
+            <PixelBtn color="cream" size="sm" onClick={() => setExportOpen(o => !o)}>v MORE</PixelBtn>
             {ytConnected && (
               ytUp?.status === "done"
                 ? <a href={ytUp.url} target="_blank" rel="noreferrer" className="pixel" style={{ padding: "6px 12px", fontSize: 9, color: C.ink, background: C.yt, border: BORDER, boxShadow: SHADOW_SM, textAlign: "center", textDecoration: "none", textTransform: "uppercase" }}>{`>`} YT ^</a>
@@ -530,6 +532,30 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
             <video src={videoSrc} poster={clip.thumbnail_url || undefined} controls autoPlay preload="auto"
               style={{ width: "100%", display: "block" }} />
           </div>
+        )}
+        {exportOpen && (
+          <>
+            <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(26,13,46,.6)", zIndex: 199 }} />
+            <div className="pixel" style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 200,
+              background: C.cream, border: BORDER, boxShadow: SHADOW, padding: 10, width: "min(300px,92vw)" }}>
+              {[["srt", "CC SRT CAPTIONS", false], ["xml", "PREMIERE XML", true], ["fcpxml", "FINAL CUT XML", true]].map(([fmt, label, pro]) => (
+                <button key={fmt} onClick={() => handleExport(fmt)} className="pixel" style={{
+                  display: "block", width: "100%", textAlign: "left", padding: "10px 10px", marginBottom: 5,
+                  fontSize: 8, background: C.cream2, color: C.ink, border: BORDER, cursor: "pointer" }}>
+                  {label}{pro && !isPro ? " 🔒" : ""}
+                </button>
+              ))}
+              <button onClick={() => { setExportOpen(false); if (!isPro) { navigate("/upgrade"); return; } setScheduleOpen(true); }}
+                className="pixel" style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 10px",
+                  fontSize: 8, background: scheduled ? C.signal : C.cream2, color: C.ink, border: BORDER, cursor: "pointer" }}>
+                {scheduled ? "✓ SCHEDULED" : "⏰ SCHEDULE POST"}{!isPro ? " 🔒" : ""}
+              </button>
+            </div>
+          </>
+        )}
+        {scheduleOpen && (
+          <ScheduleModal clip={clip} idx={idx} jobId={jobId}
+            onClose={(ok) => { setScheduleOpen(false); if (ok) setScheduled(true); }} />
         )}
       </div>
     );
@@ -607,9 +633,12 @@ function ClipCard({ clip, idx, cardColor, isActive, onPreview, onYTUpload, onTTU
             <PixelBtn color="cream" size="sm" onClick={() => setExportOpen(o => !o)}>v MORE</PixelBtn>
             {exportOpen && (
               <>
-                <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 199 }} />
-                <div className="pixel" style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 200,
-                  background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: 8, width: 190 }}>
+                <div onClick={() => setExportOpen(false)} style={{ position: "fixed", inset: 0, background: isMobile ? "rgba(26,13,46,.6)" : "transparent", zIndex: 199 }} />
+                <div className="pixel" style={{ zIndex: 200,
+                  background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: 8,
+                  ...(isMobile
+                    ? { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: "min(300px,92vw)" }
+                    : { position: "absolute", right: 0, top: "calc(100% + 6px)", width: 190 }) }}>
                   {[["srt", "CC SRT CAPTIONS", false],
                     ["xml", "PREMIERE XML", true],
                     ["fcpxml", "FINAL CUT XML", true]].map(([fmt, label, pro]) => (

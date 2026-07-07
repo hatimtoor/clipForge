@@ -397,8 +397,8 @@ function Footer({ isMobile }) {
           <span style={{ color: C.hot }}>CLIP</span>FORGE
         </div>
         <div style={{ display: "flex", gap: 20 }}>
-          <button onClick={() => navigate("/privacy")} className="pixel" style={{ background: "transparent", color: `${C.cream}88`, fontSize: 7, cursor: "pointer" }}>PRIVACY</button>
-          <button onClick={() => navigate("/terms")} className="pixel" style={{ background: "transparent", color: `${C.cream}88`, fontSize: 7, cursor: "pointer" }}>TERMS</button>
+          <button onClick={() => navigate("/privacy")} className="pixel" style={{ background: "transparent", color: `${C.cream}88`, fontSize: 7, cursor: "pointer", padding: "8px 6px" }}>PRIVACY</button>
+          <button onClick={() => navigate("/terms")} className="pixel" style={{ background: "transparent", color: `${C.cream}88`, fontSize: 7, cursor: "pointer", padding: "8px 6px" }}>TERMS</button>
         </div>
         <div className="vt" style={{ fontSize: 16, color: `${C.cream}66` }}>© 2025 ClipForge</div>
       </div>

@@ -17,7 +17,7 @@ function DeleteButton({ onDelete }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={(e) => { e.stopPropagation(); onDelete(); }}
-      style={{ background: hover ? C.ytDeep : C.cream2, color: hover ? C.cream : C.ink, padding: "6px 11px", fontSize: 13, lineHeight: 1 }}>
+      style={{ background: hover ? C.ytDeep : C.cream2, color: hover ? C.cream : C.ink, padding: "9px 13px", fontSize: 13, lineHeight: 1 }}>
       ×
     </PixelBtn>
   );

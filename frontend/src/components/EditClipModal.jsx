@@ -189,7 +189,7 @@ export default function EditClipModal({ jobId, clipIndex, clipTitle, onClose, on
             );
           })}
           {isBrowse && totalHits > PAGE && (
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", padding: 8 }}>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", padding: 8, flexWrap: "wrap" }}>
               <PixelBtn color="cream" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹ PREV</PixelBtn>
               <span className="vt" style={{ fontSize: 13, color: C.dim2, alignSelf: "center" }}>
                 {page * PAGE + 1}–{Math.min((page + 1) * PAGE, totalHits)} of {totalHits}

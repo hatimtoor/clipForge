@@ -162,7 +162,7 @@ export default function UpgradePage() {
         )}
 
         <div style={{ textAlign: "center", marginTop: 20 }}>
-          <button onClick={() => navigate("/hello")} className="pixel" style={{ background: "transparent", color: C.dim2, fontSize: 9, cursor: "pointer" }}>
+          <button onClick={() => navigate("/hello")} className="pixel" style={{ background: "transparent", color: C.dim2, fontSize: 9, cursor: "pointer", padding: "8px 12px" }}>
             ← BACK
           </button>
         </div>

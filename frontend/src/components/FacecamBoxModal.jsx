@@ -79,7 +79,7 @@ export default function FacecamBoxModal({ videoId, value, onSave, onClose }) {
               border: "2px solid #2BFF00", background: "#2BFF0022", pointerEvents: "none" }} />
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <PixelBtn color="signal" size="sm" disabled={!usable}
             onClick={() => { onSave([box.x, box.y, box.w, box.h]); onClose(); }}>
             ✓ SAVE BOX

@@ -227,7 +227,7 @@ export default function HelloPage() {
                 onKeyDown={e => e.key === "Enter" && valid && handleSubmit()}
                 placeholder="https://youtube.com/watch?v="
                 className="mono" style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 15, fontWeight: 500, minWidth: 0 }} />
-              {url && <button onClick={() => setUrl("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
+              {url && <button onClick={() => setUrl("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer", padding: "6px 8px" }}>x</button>}
               {valid && <Tag color={C.signalDeep} bg={C.signal}>v OK</Tag>}
             </div>
 
@@ -240,7 +240,7 @@ export default function HelloPage() {
                 className="mono"
                 style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 14, minWidth: 0 }}
               />
-              {stylePrompt && <button onClick={() => setStylePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
+              {stylePrompt && <button onClick={() => setStylePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer", padding: "6px 8px" }}>x</button>}
             </div>
 
             <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>EXCLUDE <span style={{ color: C.dim, fontWeight: 400 }}>(optional — topics to never clip)</span></div>
@@ -252,7 +252,7 @@ export default function HelloPage() {
                 className="mono"
                 style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 14, minWidth: 0 }}
               />
-              {excludePrompt && <button onClick={() => setExcludePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer" }}>x</button>}
+              {excludePrompt && <button onClick={() => setExcludePrompt("")} className="pixel" style={{ background: "transparent", color: C.dim, fontSize: 9, cursor: "pointer", padding: "6px 8px" }}>x</button>}
             </div>
 
             <div id="tour-durations" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 14, marginBottom: 12 }}>

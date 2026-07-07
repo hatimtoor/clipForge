@@ -56,6 +56,11 @@ export const KEYFRAMES = `
   ::-webkit-scrollbar-track{background:#e8d8b8;border-left:3px solid ${C.ink}}
   ::-webkit-scrollbar-thumb{background:${C.lavenderDeep};border:3px solid ${C.ink};border-radius:0}
   button,input,textarea,select{font-family:inherit;outline:none;border:none;color:inherit}
+  /* iOS zooms the whole viewport when a focused input's font is <16px — force
+     16px on touch widths so focusing a field never shifts/breaks the layout. */
+  @media (max-width:768px){
+    input,textarea,select{font-size:16px !important}
+  }
   .pixel{font-family:'Press Start 2P',monospace;letter-spacing:0;line-height:1.4}
   .vt{font-family:'VT323',monospace;letter-spacing:.02em}
   .mono{font-family:'JetBrains Mono',monospace}

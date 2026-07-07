@@ -1964,10 +1964,6 @@ def _select_crop_center(cands: list, crop_w: int, state: dict) -> Optional[float
 
     # 2. GROUP mode: cluster fits in the crop → weighted centroid
     spread = kept[-1][0] - kept[0][0]
-    # Record the cluster spread regardless of branch — the fill layout uses the
-    # distribution to decide auto zoom-out (wide crop + blur bars) for group
-    # scenes that never quite fit a tight 9:16 window.
-    state.setdefault("spreads", []).append(spread)
     if len(kept) == 1 or spread <= 0.75 * crop_w:
         tw = sum(c[1] for c in kept) or 1.0
         center = sum(c[0] * c[1] for c in kept) / tw
@@ -2012,16 +2008,12 @@ def _select_crop_center(cands: list, crop_w: int, state: dict) -> Optional[float
     return target
 
 
-def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int,
-                                      stats: Optional[dict] = None) -> list:
+def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -> list:
     """
     Sample frames SEQUENTIALLY from a pre-extracted clip (no random seeking).
     Sequential reading is reliable across all codecs; time-based seeking in the
     source video can silently land on wrong/corrupt frames for yt-dlp merges.
     Returns [(rel_time, crop_x), ...] compatible with smooth_crop_trajectory.
-    If `stats` is passed, it is filled with "spreads" (per-sample person-cluster
-    widths) and "centers" ([(t, cx), ...] raw centres) so the caller can re-derive
-    crop positions for a different (wider) crop window.
     """
     if not _REFRAME_AVAILABLE:
         return []
@@ -2066,14 +2058,10 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int,
                     t = frame_idx / fps
                     crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
                     results.append((round(t, 3), crop_x))
-                    if stats is not None:
-                        stats.setdefault("centers", []).append((round(t, 3), float(cx)))
             prev_frame = frame  # update regardless so motion diff stays consistent
         frame_idx += 1
 
     cap.release()
-    if stats is not None:
-        stats["spreads"] = sel_state.get("spreads", [])
     print(f"[reframe] {len(results)}/{frames_tried} speech-frame samples detected a person (audio-gated)", flush=True)
     return results
 
@@ -3236,64 +3224,18 @@ async def _plan_fill(ctx: ClipRenderCtx) -> LayoutPlan:
             await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
                                  "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
                                  "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(temp_yolo)])
-            track_stats: dict = {}
-            detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, ctx.src_w, ctx.src_h, track_stats)
+            detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, ctx.src_w, ctx.src_h)
             temp_yolo.unlink(missing_ok=True)
             log(ctx.job_id, f"  YOLO detections: {len(detections)} samples, source: {ctx.src_w}x{ctx.src_h}, crop: {ctx.crop_w}x{ctx.crop_h}")
             if len(detections) == 0:
                 await update_job(ctx.job_id, message=f"Rendering clip {ctx.idx+1}/{ctx.n_clips}: {ctx.clip_title} (no person detected — using center crop)")
-    else:
-        detections = None
-
-    # Auto zoom-out for group scenes: when the people-cluster is persistently
-    # wider than the tight 9:16 window, widen the visible crop (up to 1.6x,
-    # bounded by the source) and letterbox it over a blurred fill. Solo
-    # speakers keep the classic tight crop. FILL_GROUP_ZOOM=0 disables.
-    fg_w, fg_scaled_h = ctx.crop_w, ctx.out_h
-    if (ctx.reframe and detections and float(os.getenv("FILL_GROUP_ZOOM", "1") or "1")
-            and ctx.crop_w < ctx.src_w):
-        spreads = sorted(track_stats.get("spreads", []))
-        if spreads:
-            p70 = spreads[min(len(spreads) - 1, int(0.7 * len(spreads)))]
-            if p70 > 0.75 * ctx.crop_w:
-                want = int(p70 + 0.35 * ctx.crop_w)
-                fg_w = max(ctx.crop_w, min(want, int(1.6 * ctx.crop_w), ctx.src_w))
-                fg_w -= fg_w % 2
-    if fg_w > ctx.crop_w:
-        # Re-derive crop x from the raw centres for the wider window.
-        detections = [(t, max(0, min(int(cx - fg_w / 2), ctx.src_w - fg_w)))
-                      for t, cx in track_stats.get("centers", [])]
-        fg_scaled_h = int(ctx.out_w * ctx.src_h / fg_w); fg_scaled_h -= fg_scaled_h % 2
-        log(ctx.job_id, f"  Group zoom-out: crop {ctx.crop_w} → {fg_w}px wide "
-                        f"(cluster p70 spread {int(p70)}px), fg height {fg_scaled_h}/{ctx.out_h}")
-
-    if ctx.reframe:
-        fallback_x = ctx.center_crop_x if fg_w == ctx.crop_w else (ctx.src_w - fg_w) // 2
-        trajectory = smooth_crop_trajectory(detections or [], ctx.render_dur, fallback_crop_x=fallback_x, crop_w=fg_w, src_w=ctx.src_w)
+        trajectory = smooth_crop_trajectory(detections, ctx.render_dur, fallback_crop_x=ctx.center_crop_x, crop_w=ctx.crop_w, src_w=ctx.src_w)
     else:
         trajectory = [(0.0, ctx.center_crop_x), (round(ctx.render_dur, 3), ctx.center_crop_x)]
     is_dynamic = len(set(x for _, x in trajectory)) > 1
     log(ctx.job_id, f"  Crop mode: {'dynamic pan' if is_dynamic else 'static'} (x={trajectory[0][1]})")
 
-    if fg_w > ctx.crop_w:
-        # Wide (zoomed-out) group render: tracked wide crop centred over a
-        # blurred squash-to-fill background. The bg chain deliberately has NO
-        # crop filter — sendcmd targets every `crop` instance in the graph
-        # (see the facecam cross-talk lesson), so the single crop lives in
-        # the fg chain only. The bg's aspect distortion vanishes under blur.
-        half_w, half_h = ctx.out_w // 2, ctx.out_h // 2
-        bg = (f"[0:v]scale={half_w}:{half_h},boxblur=10:2,"
-              f"scale={ctx.out_w}:{ctx.out_h}[bg];")
-        if is_dynamic:
-            sendcmd_path = ctx.job_dir / f"clip_{ctx.idx}_crop.txt"
-            write_sendcmd_file(trajectory, sendcmd_path, fps=ctx.clip_fps)
-            fg = (f"[0:v]sendcmd=f={sendcmd_path.name},"
-                  f"crop={fg_w}:{ctx.src_h}:0:0,scale={ctx.out_w}:{fg_scaled_h}[fg];")
-        else:
-            fg = (f"[0:v]crop={fg_w}:{ctx.src_h}:{trajectory[0][1]}:0,"
-                  f"scale={ctx.out_w}:{fg_scaled_h}[fg];")
-        fc = bg + fg + "[bg][fg]overlay=(W-w)/2:(H-h)/2[vmain]"
-    elif is_dynamic:
+    if is_dynamic:
         sendcmd_path = ctx.job_dir / f"clip_{ctx.idx}_crop.txt"
         write_sendcmd_file(trajectory, sendcmd_path, fps=ctx.clip_fps)
         fc = (

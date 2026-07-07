@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { C, SHADOW_SM, BORDER, KEYFRAMES } from "../lib/theme";
+import { C, SHADOW_SM, BORDER } from "../lib/theme";
 import { PixelSprite, ANVIL, ANVIL_PAL, PixelBtn, Field, Tag } from "../components/ui";
 import { supabase } from "../lib/supabase";
 
@@ -78,7 +78,6 @@ export default function LoginPage() {
 
   return (
     <>
-      <style>{KEYFRAMES}</style>
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", padding: 24 }}>
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 80, background: `repeating-linear-gradient(90deg,${C.signalDeep} 0 8px,${C.signal} 8px 16px)`, borderTop: BORDER, zIndex: 0 }} />
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 80, height: 8, background: `repeating-linear-gradient(90deg,#5a3a1a 0 8px,#7a4a2a 8px 16px)`, borderTop: BORDER, zIndex: 0 }} />

@@ -1,0 +1,269 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ClipForge design tokens — one component rule, two skins.
+   Components consume ONLY these semantic tokens; never raw hex values.
+
+   Mobile breakpoint is 768 (matches useMobile). var() does not work inside
+   @media, so media queries hardcode (max-width: 767px) — keep in sync.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── MODERN (default; :root doubles as fallback so an unset attribute is
+      never unstyled) — "the forge, refined": warm bone, graphite ink,
+      molten-ember accent ──────────────────────────────────────────────────── */
+:root,
+[data-theme="modern"] {
+  color-scheme: light;
+
+  /* primitives */
+  --ink: #1c1917;
+  --paper: #ffffff;
+  --bg-app: #f4f1eb;
+  --surface-1: #ffffff;
+  --surface-2: #faf8f4;
+  --surface-3: #f0ede6;
+  --text-1: #1c1917;
+  --text-2: #6b645c;
+  --text-3: #a39c92;
+  --accent: #e0521a;          /* molten ember */
+  --accent-strong: #bc3f0d;
+  --accent-soft: #fbe9df;
+  --success: #1f9d61;
+  --success-soft: #e2f5eb;
+  --danger: #d4384e;
+  --danger-soft: #fbe6e9;
+  --warning: #b98a12;
+  --warning-soft: #faf1d8;
+  --line: #e7e2d8;
+  --line-strong: #d5cfc2;
+  --yt: #e04141;
+  --yt-soft: #fceaea;
+  --tt: #12889f;
+  --tt-soft: #e3f3f6;
+
+  /* borders / radii / shadows */
+  --border-w: 1px;
+  --border-w-sm: 1px;
+  --border-color: var(--line-strong);
+  --card-border-color: var(--line);
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(28, 25, 23, 0.04), 0 6px 20px rgba(28, 25, 23, 0.05);
+  --shadow-btn: 0 1px 2px rgba(28, 25, 23, 0.08);
+  --shadow-pop: 0 8px 16px rgba(28, 25, 23, 0.08), 0 20px 56px rgba(28, 25, 23, 0.18);
+  --shadow-fab: 0 4px 10px rgba(28, 25, 23, 0.14), 0 12px 32px rgba(28, 25, 23, 0.16);
+
+  /* typography roles (sizes are PER THEME — never share across skins) */
+  --font-display: "Bricolage Grotesque", "Schibsted Grotesk", system-ui, sans-serif;
+  --font-body: "Schibsted Grotesk", system-ui, sans-serif;
+  --font-ui: "Schibsted Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --fs-display: clamp(28px, 4vw, 38px);
+  --fs-h1: 24px;
+  --fs-h2: 18px;
+  --fs-h3: 15px;
+  --fs-body: 14.5px;
+  --fs-sm: 13px;
+  --fs-btn: 14px;
+  --fs-label: 12px;
+  --fs-tag: 11.5px;
+  --fw-display: 700;
+  --fw-heading: 650;
+  --fw-ui: 600;
+  --fw-body: 450;
+  --tt-ui: none;
+  --tt-label: none;
+  --ls-ui: -0.01em;
+  --ls-label: 0.01em;
+  --lh-ui: 1.3;
+  --lh-body: 1.55;
+
+  /* interaction */
+  --press-transform: scale(0.98);
+  --press-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  --focus-ring: 0 0 0 3px rgba(224, 82, 26, 0.22);
+  --ease-ui: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --dur-fast: 0.15s;
+  --dur-med: 0.25s;
+
+  /* spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* buttons */
+  --btn-primary-bg: var(--accent);
+  --btn-primary-fg: #fff8f4;
+  --btn-primary-border: transparent;
+  --btn-secondary-bg: var(--surface-1);
+  --btn-secondary-fg: var(--text-1);
+  --btn-secondary-border: var(--line-strong);
+  --btn-ghost-fg: var(--text-2);
+  --btn-danger-bg: var(--danger);
+  --btn-danger-fg: #fff;
+  --btn-yt-bg: var(--yt-soft);
+  --btn-yt-fg: #a72f2f;
+  --btn-yt-border: #ecc6c6;
+  --btn-tt-bg: var(--tt-soft);
+  --btn-tt-fg: #0d6172;
+  --btn-tt-border: #bfe0e6;
+
+  /* inputs */
+  --input-bg: var(--surface-1);
+  --input-border: var(--line-strong);
+  --input-border-focus: var(--accent);
+  --input-border-valid: var(--success);
+  --input-border-error: var(--danger);
+
+  /* overlays */
+  --modal-backdrop: rgba(28, 25, 23, 0.42);
+  --backdrop-blur: 4px;
+
+  /* scrollbar */
+  --scrollbar-w: 12px;
+  --scrollbar-track: transparent;
+  --scrollbar-track-border: none;
+  --scrollbar-thumb: #d5cfc2;
+  --scrollbar-thumb-border: 3px solid var(--bg-app);
+  --scrollbar-radius: 999px;
+
+  /* processing phases (Work page) */
+  --phase-download: #e0521a;
+  --phase-merge: #d98324;
+  --phase-transcribe: #b98a12;
+  --phase-analyze: #7a63d8;
+  --phase-clip: #1f9d61;
+
+  /* score ring */
+  --score-track: var(--surface-3);
+  --score-fill: var(--accent);
+  --score-hi: var(--success);
+}
+
+/* ── RETRO — the original pixel forge, verbatim from lib/theme.js ─────────── */
+[data-theme="retro"] {
+  color-scheme: light;
+
+  --ink: #1a0d2e;
+  --paper: #fef7e4;
+  --bg-app: transparent; /* real sky painted by retro.css on body */
+  --surface-1: #f4ecd6;
+  --surface-2: #ebe1c4;
+  --surface-3: #e8d8b8;
+  --text-1: #1a0d2e;
+  --text-2: #4a3d68;
+  --text-3: #6b5b8a;
+  --accent: #d4669a;          /* hotDeep — the CLIP in CLIPFORGE */
+  --accent-strong: #b04a7e;
+  --accent-soft: #f5a3c7;
+  --success: #3aa86a;
+  --success-soft: #7ddca0;
+  --danger: #cc4444;
+  --danger-soft: #ff8888;
+  --warning: #d4ad3a;
+  --warning-soft: #f5d76e;
+  --line: #1a0d2e;
+  --line-strong: #1a0d2e;
+  --yt: #d44a4a;
+  --yt-soft: #ff7a7a;
+  --tt: #3a9ac4;
+  --tt-soft: #7ec8e3;
+
+  --border-w: 3px;
+  --border-w-sm: 2px;
+  --border-color: var(--ink);
+  --card-border-color: var(--ink);
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-pill: 0;
+  --shadow-card: 5px 5px 0 var(--ink);
+  --shadow-btn: 4px 4px 0 var(--ink);
+  --shadow-pop: 8px 8px 0 var(--ink);
+  --shadow-fab: 5px 5px 0 var(--ink);
+
+  --font-display: "Press Start 2P", monospace;
+  --font-body: "JetBrains Mono", ui-monospace, monospace;
+  --font-ui: "Press Start 2P", monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --fs-display: clamp(18px, 3vw, 26px);
+  --fs-h1: 16px;
+  --fs-h2: 12px;
+  --fs-h3: 10px;
+  --fs-body: 14px;
+  --fs-sm: 12px;
+  --fs-btn: 10px;
+  --fs-label: 8px;
+  --fs-tag: 8px;
+  --fw-display: 400;
+  --fw-heading: 400;
+  --fw-ui: 400;
+  --fw-body: 400;
+  --tt-ui: uppercase;
+  --tt-label: uppercase;
+  --ls-ui: 0;
+  --ls-label: 0;
+  --lh-ui: 1.4;
+  --lh-body: 1.5;
+
+  --press-transform: translate(4px, 4px);
+  --press-shadow: 0 0 0 var(--ink);
+  --focus-ring: 0 0 0 3px #c8b3ec;
+  --ease-ui: steps(2, end);
+  --dur-fast: 0.05s;
+  --dur-med: 0.1s;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  --btn-primary-bg: #7ddca0;
+  --btn-primary-fg: var(--ink);
+  --btn-primary-border: var(--ink);
+  --btn-secondary-bg: #f4ecd6;
+  --btn-secondary-fg: var(--ink);
+  --btn-secondary-border: var(--ink);
+  --btn-ghost-fg: var(--ink);
+  --btn-danger-bg: #ff8888;
+  --btn-danger-fg: var(--ink);
+  --btn-yt-bg: #ff7a7a;
+  --btn-yt-fg: var(--ink);
+  --btn-yt-border: var(--ink);
+  --btn-tt-bg: #7ec8e3;
+  --btn-tt-fg: var(--ink);
+  --btn-tt-border: var(--ink);
+
+  --input-bg: #fef7e4;
+  --input-border: var(--ink);
+  --input-border-focus: var(--ink);
+  --input-border-valid: #3aa86a;
+  --input-border-error: #cc4444;
+
+  --modal-backdrop: rgba(26, 13, 46, 0.55);
+  --backdrop-blur: 0px;
+
+  --scrollbar-w: 14px;
+  --scrollbar-track: #e8d8b8;
+  --scrollbar-track-border: 3px solid var(--ink);
+  --scrollbar-thumb: #9b7ed4;
+  --scrollbar-thumb-border: 3px solid var(--ink);
+  --scrollbar-radius: 0;
+
+  --phase-download: #f5a3c7;
+  --phase-merge: #ffc4a3;
+  --phase-transcribe: #f5d76e;
+  --phase-analyze: #c8b3ec;
+  --phase-clip: #7ddca0;
+
+  --score-track: #ebe1c4;
+  --score-fill: #d4669a;
+  --score-hi: #3aa86a;
+}

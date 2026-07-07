@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { C, BORDER, SHADOW, SHADOW_SM, KEYFRAMES } from "../lib/theme";
+import { C, BORDER, SHADOW, SHADOW_SM } from "../lib/theme";
 import { PixelBtn, PixelCard, Tag } from "../components/ui";
 import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
@@ -68,7 +68,6 @@ export default function UpgradePage() {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "40px 32px 64px", maxWidth: 720, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>

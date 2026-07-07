@@ -26,17 +26,22 @@ export const SHADOW_SM = `3px 3px 0 ${C.ink}`;
 export const BORDER    = `3px solid ${C.ink}`;
 export const BORDER_SM = `2px solid ${C.ink}`;
 
+/* KEYFRAMES is now injected ONCE per legacy page by <LegacyPage> (App.jsx wraps
+   not-yet-redesigned routes with it). Global rules (box-sizing, body reset,
+   input reset, iOS input size) moved to src/styles/base.css; the sky/clouds/
+   scanlines are scoped to .legacy-retro so legacy pages keep their exact look
+   without repainting <body> and fighting the v2 theme system. */
 export const KEYFRAMES = `
-  *,*::before,*::after{box-sizing:border-box;image-rendering:pixelated}
-  html,body,#root{min-height:100vh}
-  html{overflow-x:hidden}
-  body{
-    margin:0; color:${C.ink}; overflow-x:hidden;
+  .legacy-retro{
+    position:relative; min-height:100vh; overflow-x:hidden;
+    color:${C.ink};
     font-family:'JetBrains Mono',ui-monospace,monospace;
+    font-size:16px; font-weight:400; line-height:normal;
     background:linear-gradient(180deg,#b8a5e8 0%,#d8b6e0 30%,#f4c4d8 55%,#ffd2b8 80%,#ffe8c8 100%);
     background-attachment:fixed;
   }
-  body::before{
+  .legacy-retro *,.legacy-retro *::before,.legacy-retro *::after{image-rendering:pixelated}
+  .legacy-retro::before{
     content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     background-image:
       radial-gradient(circle at 12% 18%, #fff 0 6px, transparent 7px),
@@ -48,19 +53,11 @@ export const KEYFRAMES = `
       radial-gradient(circle at 45% 8%, #fff 0 4px, transparent 5px);
     opacity:.7;
   }
-  body::after{
+  .legacy-retro::after{
     content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
     background-image:repeating-linear-gradient(0deg,rgba(26,13,46,0.04) 0 1px,transparent 1px 4px);
   }
-  ::-webkit-scrollbar{width:14px;height:14px}
-  ::-webkit-scrollbar-track{background:#e8d8b8;border-left:3px solid ${C.ink}}
-  ::-webkit-scrollbar-thumb{background:${C.lavenderDeep};border:3px solid ${C.ink};border-radius:0}
-  button,input,textarea,select{font-family:inherit;outline:none;border:none;color:inherit}
-  /* iOS zooms the whole viewport when a focused input's font is <16px — force
-     16px on touch widths so focusing a field never shifts/breaks the layout. */
-  @media (max-width:768px){
-    input,textarea,select{font-size:16px !important}
-  }
+  .legacy-retro-inner{position:relative;z-index:1;min-height:100vh}
   .pixel{font-family:'Press Start 2P',monospace;letter-spacing:0;line-height:1.4}
   .vt{font-family:'VT323',monospace;letter-spacing:.02em}
   .mono{font-family:'JetBrains Mono',monospace}
@@ -73,7 +70,6 @@ export const KEYFRAMES = `
   @keyframes spark{0%{opacity:0;transform:scale(0)}30%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.5)}}
   @keyframes drift{from{transform:translateX(-30px)}to{transform:translateX(calc(100vw + 30px))}}
   .fade{animation:pop .25s ease both}
-  #root{position:relative;z-index:1}
 `;
 
 export const fmtTime = (s) => {

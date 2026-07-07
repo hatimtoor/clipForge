@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { C, BORDER, SHADOW_SM, KEYFRAMES } from "../lib/theme";
+import { C, BORDER, SHADOW_SM } from "../lib/theme";
 import { PixelBtn, PixelCard, Tag } from "../components/ui";
 import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
@@ -78,7 +78,6 @@ export default function CalendarPage() {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 900, margin: "0 auto" }}>
         <div style={{ marginBottom: 24 }}>

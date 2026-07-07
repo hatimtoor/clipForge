@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { C, BORDER, SHADOW_SM, KEYFRAMES } from "../lib/theme";
+import { C, BORDER, SHADOW_SM } from "../lib/theme";
 import { PixelBtn, PixelCard } from "../components/ui";
 import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
@@ -181,7 +181,6 @@ export default function ConnectionsPage() {
   if (!isPro) {
     return (
       <div style={{ minHeight: "100vh" }}>
-        <style>{KEYFRAMES}</style>
         <Header />
         <div className="fade" style={{ padding: isMobile ? "16px 12px" : "64px 32px", maxWidth: 1320, margin: "0 auto", textAlign: "center" }}>
           <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 16 }}>PRO ONLY</div>
@@ -204,7 +203,6 @@ export default function ConnectionsPage() {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 900, margin: "0 auto" }}>
         <div style={{ marginBottom: 24 }}>

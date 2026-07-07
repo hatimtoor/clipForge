@@ -25,9 +25,19 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <script>
+      /* Set the UI theme before first paint to avoid a flash of the wrong skin.
+         Kept inline and tiny; localStorage can throw in private mode. */
+      (function () {
+        var t = "modern";
+        try { t = localStorage.getItem("cf_theme") || "modern"; } catch (e) {}
+        if (t !== "retro") t = "modern";
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=JetBrains+Mono:wght@400;500;600;700&family=Montserrat:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=JetBrains+Mono:wght@400;500;600;700&family=Montserrat:wght@400;600&family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Schibsted+Grotesk:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
     <style>
       /* The exact caption fonts the renderer burns in — used for live template previews */
       @font-face {

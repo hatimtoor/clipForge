@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { C, BORDER, SHADOW_SM, KEYFRAMES, timeAgo } from "../lib/theme";
+import { C, BORDER, SHADOW_SM, timeAgo } from "../lib/theme";
 import { PixelBtn, PixelCard, Tag } from "../components/ui";
 import Header from "../components/Header";
 import { authFetch } from "../lib/supabase";
@@ -106,7 +106,6 @@ export default function ArchivePage() {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 20, gap: 18, flexWrap: "wrap" }}>

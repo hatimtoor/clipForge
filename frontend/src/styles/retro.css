@@ -1,0 +1,44 @@
+/* Retro-only decorative atmosphere for REDESIGNED pages.
+   (Legacy pages paint their own sky via the .legacy-retro wrapper.)
+
+   The sky + clouds live on a fixed body::before layer instead of
+   background-attachment: fixed, which iOS Safari ignores/janks. */
+
+[data-theme="retro"] body {
+  background: #b8a5e8; /* fallback while the fixed layer paints */
+}
+
+[data-theme="retro"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle at 12% 18%, #fff 0 6px, transparent 7px),
+    radial-gradient(circle at 14% 16%, #fff 0 8px, transparent 9px),
+    radial-gradient(circle at 16% 18%, #fff 0 6px, transparent 7px),
+    radial-gradient(circle at 78% 12%, #fff 0 5px, transparent 6px),
+    radial-gradient(circle at 80% 13%, #fff 0 7px, transparent 8px),
+    radial-gradient(circle at 82% 12%, #fff 0 5px, transparent 6px),
+    radial-gradient(circle at 45% 8%, #fff 0 4px, transparent 5px),
+    linear-gradient(180deg, #b8a5e8 0%, #d8b6e0 30%, #f4c4d8 55%, #ffd2b8 80%, #ffe8c8 100%);
+}
+
+[data-theme="retro"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(26, 13, 46, 0.04) 0 1px,
+    transparent 1px 4px
+  );
+}
+
+/* Pixel-crisp rendering for retro decorative elements only (not media). */
+[data-theme="retro"] .px-crisp {
+  image-rendering: pixelated;
+}

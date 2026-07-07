@@ -1,0 +1,27 @@
+/* Go Retro pixel-dissolve overlay. A grid of blocks stagger-fills the screen
+   from the bottom-right corner (Manhattan-distance delays), the data-theme
+   attribute flips underneath while fully covered, then the blocks dissolve
+   out from the same corner. */
+
+.tt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: auto; /* swallow clicks mid-swap */
+  display: grid;
+  overflow: hidden;
+}
+
+.tt-block {
+  opacity: 0;
+  will-change: opacity, transform;
+}
+
+.tt-block--in {
+  animation: cf-block-in 240ms steps(3) forwards;
+}
+
+.tt-block--out {
+  opacity: 1;
+  animation: cf-block-out 240ms steps(3) forwards;
+}

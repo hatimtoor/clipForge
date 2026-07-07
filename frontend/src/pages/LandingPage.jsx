@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES } from "../lib/theme";
+import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM } from "../lib/theme";
 import { PixelSprite, ANVIL, ANVIL_PAL, HAMMER, HAMMER_PAL, PixelBtn, PixelCard, Tag } from "../components/ui";
 import { useMobile } from "../hooks/useMobile";
 
@@ -415,7 +415,6 @@ export default function LandingPage() {
 
   return (
     <div style={{ minHeight: "100vh", overflowX: "clip" }}>
-      <style>{KEYFRAMES}</style>
       <LandingHeader onLogin={onLogin} onSignup={onSignup} isMobile={isMobile} />
       <HeroSection onSignup={onSignup} isMobile={isMobile} />
       <LiveStats isMobile={isMobile} />

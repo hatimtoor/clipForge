@@ -1,0 +1,125 @@
+/* Global reset + body — applies under BOTH themes.
+   These rules were extracted from the legacy KEYFRAMES string in lib/theme.js;
+   legacy (not-yet-redesigned) pages depend on them staying global. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  overflow-x: hidden;
+}
+
+html,
+body,
+#root {
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+  color: var(--text-1);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-body);
+  line-height: var(--lh-body);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Legacy pages style form controls entirely inline and expect this reset. */
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+  outline: none;
+  border: none;
+  color: inherit;
+}
+
+/* iOS zooms the whole viewport when a focused input's font is <16px — force
+   16px on touch widths so focusing a field never shifts/breaks the layout. */
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-w);
+  height: var(--scrollbar-w);
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-left: var(--scrollbar-track-border);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: var(--scrollbar-thumb-border);
+  border-radius: var(--scrollbar-radius);
+}
+
+/* ── shared text roles ─────────────────────────────────────────────────── */
+.t-display {
+  font-family: var(--font-display);
+  font-size: var(--fs-display);
+  font-weight: var(--fw-display);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+}
+[data-theme="retro"] .t-display {
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+.t-h2 {
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-heading);
+  color: var(--text-1);
+}
+[data-theme="retro"] .t-h2 {
+  text-transform: uppercase;
+}
+.t-label {
+  font-family: var(--font-ui);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-ui);
+  text-transform: var(--tt-label);
+  letter-spacing: var(--ls-label);
+  color: var(--text-2);
+}
+.t-sm {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.t-mono {
+  font-family: var(--font-mono);
+}
+
+/* ── responsive utilities (breakpoint 768 — keep in sync with useMobile) ── */
+.hide-sm {
+}
+.show-sm {
+  display: none !important;
+}
+@media (max-width: 767px) {
+  .hide-sm {
+    display: none !important;
+  }
+  .show-sm {
+    display: revert !important;
+  }
+}

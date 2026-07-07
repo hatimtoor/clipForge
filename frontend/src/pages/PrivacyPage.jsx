@@ -1,4 +1,4 @@
-import { C, KEYFRAMES } from "../lib/theme";
+import { C } from "../lib/theme";
 import { PixelCard } from "../components/ui";
 import { useNavigate } from "react-router-dom";
 import { useMobile } from "../hooks/useMobile";
@@ -8,7 +8,6 @@ export default function PrivacyPage() {
   const isMobile = useMobile();
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#b8a5e8 0%,#d8b6e0 30%,#f4c4d8 55%,#ffd2b8 80%,#ffe8c8 100%)", backgroundAttachment: "fixed" }}>
-      <style>{KEYFRAMES}</style>
       <div style={{ maxWidth: 860, margin: "0 auto", padding: isMobile ? "24px 16px 48px" : "40px 32px 80px" }}>
 
         {/* Header */}

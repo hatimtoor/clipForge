@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES, timeAgo } from "../lib/theme";
+import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, timeAgo } from "../lib/theme";
 import { PixelBtn, PixelCard } from "../components/ui";
 import Header from "../components/Header";
 import { authFetch } from "../lib/supabase";
@@ -500,7 +500,6 @@ export default function DigestPage() {
   if (!isPro) {
     return (
       <div style={{ minHeight: "100vh", overflowX: "clip" }}>
-        <style>{KEYFRAMES}</style>
         <Header />
         <div className="fade" style={{ padding: isMobile ? "24px 16px 48px" : "64px 32px", maxWidth: 760, margin: "0 auto" }}>
           <PixelCard color={C.amber} padding={isMobile ? 24 : 40} style={{ textAlign: "center" }}>
@@ -520,7 +519,6 @@ export default function DigestPage() {
 
   return (
     <div style={{ minHeight: "100vh" }}>
-      <style>{KEYFRAMES}</style>
       <Header />
       <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
 

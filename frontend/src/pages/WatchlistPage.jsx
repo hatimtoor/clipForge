@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, KEYFRAMES } from "../lib/theme";
+import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM } from "../lib/theme";
 import { PixelBtn, PixelCard, Tag } from "../components/ui";
 import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
@@ -585,7 +585,6 @@ export default function WatchlistPage() {
   const { isPro } = useApp();
   return (
     <div style={{ minHeight: "100vh", overflowX: "clip" }}>
-      <style>{KEYFRAMES}</style>
       <Header />
       {isPro ? <WatchlistContent /> : <UpgradeGate />}
     </div>

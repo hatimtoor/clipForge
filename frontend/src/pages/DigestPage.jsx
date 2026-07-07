@@ -1,451 +1,371 @@
 import { useState, useEffect } from "react";
-import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM, timeAgo } from "../lib/theme";
-import { PixelBtn, PixelCard } from "../components/ui";
-import Header from "../components/Header";
-import { authFetch } from "../lib/supabase";
+import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
+import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
+import {
+  Button, Card, Tag, ProBadge, Banner, EmptyState,
+  Field, TextInput, Select, StepperInput, SwitchRow, SegmentedControl,
+  CollapsibleSection, ProgressBar, Tour,
+} from "../components/kit";
 import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
 import FacecamBoxModal from "../components/FacecamBoxModal";
-import OnboardingTour from "../components/OnboardingTour";
+import {
+  LAYOUTS, FORMATS, VERTICAL_ONLY_LAYOUTS, CAM_BOX_LAYOUTS,
+  CAPTION_POSITIONS, HIGHLIGHT_SWATCHES, MUSIC_VOLUMES,
+} from "../features/create/constants";
 
 const DAY_OPTIONS = [
-  { value: 30,  label: "30 days back" },
-  { value: 60,  label: "60 days back" },
-  { value: 90,  label: "90 days back" },
+  { value: 30, label: "30 days back" },
+  { value: 60, label: "60 days back" },
+  { value: 90, label: "90 days back" },
   { value: 180, label: "6 months back" },
   { value: 365, label: "1 year back" },
 ];
-const VPD_OPTIONS = [
-  { value: 1, color: C.signal },
-  { value: 2, color: C.amber },
-  { value: 3, color: C.peach },
-  { value: 5, color: C.hot },
-];
+const VPD_OPTIONS = [1, 2, 3, 5].map((n) => ({ id: n, label: String(n) }));
 const CAPTION_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56, simple: 56 };
-const LAYOUT_CHOICES = [
-  { id: "auto",        label: "AUTO ✨" },
-  { id: "reframe",     label: "FILL" },
-  { id: "fit",         label: "FIT" },
-  { id: "blur_bg",     label: "BLUR" },
-  { id: "split",       label: "SPLIT" },
-  { id: "screenshare", label: "SCREEN" },
-  { id: "facecam",     label: "GAMEPLAY" },
-];
-const HIGHLIGHT_SWATCHES = [
-  { color: null,      label: "AUTO", bg: C.cream2,  fg: C.dim2 },
-  { color: "#FFD400", label: "YLW",  bg: "#FFD400", fg: "#222" },
-  { color: "#00FFFF", label: "CYN",  bg: "#00FFFF", fg: "#222" },
-  { color: "#FF4500", label: "ORG",  bg: "#FF4500", fg: "#fff" },
-  { color: "#FF69B4", label: "PNK",  bg: "#FF69B4", fg: "#222" },
-  { color: "#00FF88", label: "GRN",  bg: "#00FF88", fg: "#222" },
-  { color: "#FFFFFF", label: "WHT",  bg: "#FFFFFF", fg: "#555" },
-];
 const CAPTION_LANGUAGES = [
   { code: "source", label: "Source (no translation)" },
   { code: "en", label: "English" }, { code: "es", label: "Spanish" },
-  { code: "fr", label: "French" },  { code: "de", label: "German" },
+  { code: "fr", label: "French" }, { code: "de", label: "German" },
   { code: "pt", label: "Portuguese" }, { code: "it", label: "Italian" },
-  { code: "hi", label: "Hindi" },   { code: "ar", label: "Arabic" },
+  { code: "hi", label: "Hindi" }, { code: "ar", label: "Arabic" },
   { code: "zh", label: "Chinese" }, { code: "ja", label: "Japanese" },
-  { code: "ko", label: "Korean" },  { code: "ru", label: "Russian" },
+  { code: "ko", label: "Korean" }, { code: "ru", label: "Russian" },
 ];
 
-function ProgressBar({ value, max }) {
-  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ flex: 1, height: 10, background: C.cream2, border: BORDER, position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: C.signal, transition: "width .4s" }} />
-      </div>
-      <span className="pixel" style={{ fontSize: 8, color: C.dim2, flexShrink: 0 }}>{value}/{max}</span>
-    </div>
-  );
-}
+const TOUR_STEPS = [
+  {
+    target: "#tour-dg-add",
+    title: "Clip the back-catalog",
+    text: "Digest works through a channel's whole history, a few videos per day, hands-free. Add a channel, pick how far back to look and the daily pace on its card.",
+  },
+];
 
-function Stepper({ label, val, onAdj, min, max, step, suffix = "" }) {
-  return (
-    <div>
-      <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 5 }}>{label}</div>
-      <div style={{ display: "flex", border: BORDER_SM, boxShadow: `2px 2px 0 ${C.ink}`, background: C.paper }}>
-        <button onClick={() => onAdj(-step)} className="pixel"
-          style={{ width: 26, padding: "6px 0", background: "transparent", borderRight: `2px solid ${C.ink}`, fontSize: 12, cursor: val > min ? "pointer" : "not-allowed", color: val > min ? C.ink : C.dim }}>-</button>
-        <div className="pixel" style={{ flex: 1, textAlign: "center", padding: "6px 4px", fontSize: 10, color: C.ink, minWidth: 36 }}>{val}{suffix}</div>
-        <button onClick={() => onAdj(+step)} className="pixel"
-          style={{ width: 26, padding: "6px 0", background: "transparent", borderLeft: `2px solid ${C.ink}`, fontSize: 12, cursor: val < max ? "pointer" : "not-allowed", color: val < max ? C.ink : C.dim }}>+</button>
-      </div>
-    </div>
-  );
-}
-
-function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMobile }) {
-  const isCompleted = bf.status === "completed";
-  const processed   = (bf.processed_video_ids || []).length;
-  const total       = bf.total_videos || 0;
-
-  const [daysBack,       setDaysBack]       = useState(bf.days_back ?? 30);
-  const [videosPerDay,   setVideosPerDay]   = useState(bf.videos_per_day ?? 2);
-  const [ytChannelId,    setYtChannelId]    = useState(bf.yt_upload_channel_id ?? "");
-  const [ttAccountId,    setTtAccountId]    = useState(bf.tt_open_id ?? "");
-  const [autoUpload,     setAutoUpload]     = useState(bf.auto_upload ?? false);
-  const [maxClips,       setMaxClips]       = useState(bf.max_clips ?? 3);
-  const [minDur,         setMinDur]         = useState(bf.min_duration ?? 30);
-  const [maxDur,         setMaxDur]         = useState(bf.max_duration ?? 90);
-  const [captionOpen,    setCaptionOpen]    = useState(false);
-  const [captionStyle,   setCaptionStyle]   = useState(bf.caption_style ?? "bold_bottom");
-  const [fontSize,       setFontSize]       = useState(bf.caption_font_size ?? null);
-  const [highlightColor, setHighlightColor] = useState(bf.caption_highlight_color ?? null);
-  const [captionLang,    setCaptionLang]    = useState(bf.caption_language ?? "source");
-  const [bgMusicUrl,     setBgMusicUrl]     = useState(bf.bg_music_url ?? "");
-  const [bgMusicVolume,  setBgMusicVolume]  = useState(bf.bg_music_volume ?? 0.15);
-  const [trimSilence,    setTrimSilence]    = useState(bf.trim_silence ?? false);
-  const [clipStyle,      setClipStyle]      = useState(bf.clip_style ?? "reframe");
+/* Per-card caption / layout / prompt settings — the same fields the create
+   flow exposes, persisted per digest channel via PATCH. */
+function DigestSettings({ bf, patch }) {
+  const isMobile = useMobile();
   const bfOpt = bf.options || {};
-  const [removeFillers,   setRemoveFillers]   = useState(bfOpt.remove_fillers ?? false);
-  const [aspectRatio,     setAspectRatio]     = useState(bfOpt.aspect_ratio ?? "9:16");
+  const [captionStyle, setCaptionStyle] = useState(bf.caption_style ?? "bold_bottom");
+  const [fontSize, setFontSize] = useState(bf.caption_font_size ?? null);
+  const [highlightColor, setHighlightColor] = useState(bf.caption_highlight_color ?? null);
+  const [captionLang, setCaptionLang] = useState(bf.caption_language ?? "source");
+  const [bgMusicUrl, setBgMusicUrl] = useState(bf.bg_music_url ?? "");
+  const [bgMusicVolume, setBgMusicVolume] = useState(bf.bg_music_volume ?? 0.15);
+  const [trimSilence, setTrimSilence] = useState(bf.trim_silence ?? false);
+  const [clipStyle, setClipStyle] = useState(bf.clip_style ?? "reframe");
+  const [removeFillers, setRemoveFillers] = useState(bfOpt.remove_fillers ?? false);
+  const [aspectRatio, setAspectRatio] = useState(bfOpt.aspect_ratio ?? "9:16");
   const [captionPosition, setCaptionPosition] = useState(bfOpt.caption_position ?? "default");
   const [captionKeywords, setCaptionKeywords] = useState(bfOpt.caption_keywords !== false);
-  const [captionEmoji,    setCaptionEmoji]    = useState(bfOpt.caption_emoji !== false);
-  const [findPrompt,      setFindPrompt]      = useState(bfOpt.style_prompt ?? "");
-  const [excludePrompt,   setExcludePrompt]   = useState(bfOpt.exclude_prompt ?? "");
-  const [facecamBox,      setFacecamBox]      = useState(bfOpt.facecam_box ?? null);
-  const [camModalOpen,    setCamModalOpen]    = useState(false);
+  const [captionEmoji, setCaptionEmoji] = useState(bfOpt.caption_emoji !== false);
+  const [findPrompt, setFindPrompt] = useState(bfOpt.style_prompt ?? "");
+  const [excludePrompt, setExcludePrompt] = useState(bfOpt.exclude_prompt ?? "");
+  const [facecamBox, setFacecamBox] = useState(bfOpt.facecam_box ?? null);
+  const [camModalOpen, setCamModalOpen] = useState(false);
+
+  const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
+  const captionCustomizable = CUSTOMIZABLE_CAPTION_STYLES.includes(captionStyle);
+  const verticalOnly = VERTICAL_ONLY_LAYOUTS.includes(clipStyle);
+
+  return (
+    <CollapsibleSection title="Caption settings" hint="Style, language, layout, prompts">
+      <div style={{ display: "grid", gap: 18 }}>
+        <Field label="Style">
+          <CaptionStyleGrid
+            value={captionStyle}
+            onChange={(id) => {
+              setCaptionStyle(id);
+              const fields = { caption_style: id };
+              if (!CUSTOMIZABLE_CAPTION_STYLES.includes(id)) {
+                setFontSize(null); setHighlightColor(null);
+                fields.caption_font_size = null; fields.caption_highlight_color = null;
+              }
+              patch(fields);
+            }}
+            highlightColor={highlightColor}
+            isMobile={isMobile}
+          />
+        </Field>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          <SwitchRow label="AI keywords" hint="Color the words that carry the clip"
+            on={captionKeywords}
+            onChange={(v) => { setCaptionKeywords(v); patch({ caption_keywords: v }); }} />
+          <SwitchRow label="AI emoji" hint="Drop a fitting emoji on big moments"
+            on={captionEmoji}
+            onChange={(v) => { setCaptionEmoji(v); patch({ caption_emoji: v }); }} />
+        </div>
+
+        <Field label="Position">
+          <SegmentedControl value={captionPosition} options={CAPTION_POSITIONS}
+            onChange={(id) => { setCaptionPosition(id); patch({ caption_position: id === "default" ? null : id }); }} />
+        </Field>
+
+        <Field label="Language">
+          <Select value={captionLang}
+            onChange={(e) => { setCaptionLang(e.target.value); patch({ caption_language: e.target.value }); }}>
+            {CAPTION_LANGUAGES.map(({ code, label }) => (
+              <option key={code} value={code}>{label}</option>
+            ))}
+          </Select>
+        </Field>
+
+        {captionCustomizable && (
+          <>
+            <Field label="Font size">
+              <div style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
+                <div style={{ flex: 1 }}>
+                  <StepperInput value={effectiveFontSize} min={40} max={120} step={4} suffix="px"
+                    onChange={(v) => { setFontSize(v); patch({ caption_font_size: v }); }} />
+                </div>
+                <Button variant={fontSize === null ? "primary" : "secondary"}
+                  onClick={() => { setFontSize(null); patch({ caption_font_size: null }); }}>
+                  Auto
+                </Button>
+              </div>
+            </Field>
+            <Field label="Highlight color">
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => {
+                  const active = highlightColor === color;
+                  return (
+                    <button key={label} type="button"
+                      onClick={() => { setHighlightColor(color); patch({ caption_highlight_color: color }); }}
+                      style={{
+                        padding: "8px 13px", background: bg, color: fg,
+                        fontFamily: "var(--font-ui)", fontSize: "var(--fs-tag)",
+                        fontWeight: 700, textTransform: "var(--tt-label)",
+                        border: active ? "2px solid var(--text-1)" : "2px solid var(--line)",
+                        borderRadius: "var(--radius-sm)",
+                        boxShadow: active ? "var(--shadow-btn)" : "none",
+                        cursor: "pointer",
+                      }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+          </>
+        )}
+
+        <Field label="Background music" hint="Optional — a YouTube music URL, ducked under the voice">
+          <TextInput value={bgMusicUrl} placeholder="paste a YouTube music URL"
+            onChange={(e) => setBgMusicUrl(e.target.value)}
+            onBlur={() => patch({ bg_music_url: bgMusicUrl.trim() || null })} />
+        </Field>
+        {bgMusicUrl.trim() && (
+          <Field label="Music volume">
+            <SegmentedControl value={bgMusicVolume} options={MUSIC_VOLUMES}
+              onChange={(id) => { setBgMusicVolume(id); patch({ bg_music_volume: id }); }} />
+          </Field>
+        )}
+
+        <Field label="Layout" hint="How each clip is framed for vertical viewing">
+          <SegmentedControl value={clipStyle}
+            options={LAYOUTS.map((l) => ({ id: l.id, label: l.label }))}
+            onChange={(id) => { setClipStyle(id); patch({ clip_style: id }); }} />
+        </Field>
+
+        {CAM_BOX_LAYOUTS.includes(clipStyle) && (
+          <Button variant="secondary" onClick={() => setCamModalOpen(true)}>
+            {facecamBox ? "✓ Cam box set — click to adjust" : "▦ Mark the facecam (optional)"}
+          </Button>
+        )}
+        {camModalOpen && (
+          <FacecamBoxModal
+            videoId={(bf.processed_video_ids || [])[0] || null}
+            value={facecamBox ? { x: facecamBox[0], y: facecamBox[1], w: facecamBox[2], h: facecamBox[3] } : null}
+            onSave={(b) => { setFacecamBox(b); patch({ facecam_box: b }); }}
+            onClose={() => setCamModalOpen(false)}
+          />
+        )}
+
+        <Field label="Format" hint={verticalOnly ? "This layout renders vertical-only (9:16)." : undefined}>
+          <SegmentedControl value={verticalOnly ? "9:16" : aspectRatio}
+            options={FORMATS.map((f) => ({
+              id: f.id, label: f.label, disabled: verticalOnly && f.id !== "9:16",
+            }))}
+            onChange={(id) => { setAspectRatio(id); patch({ aspect_ratio: id }); }} />
+        </Field>
+
+        <Field label="Find" hint="Optional — what should the AI clip?">
+          <TextInput value={findPrompt} placeholder="e.g. every moment about pricing"
+            onChange={(e) => setFindPrompt(e.target.value)}
+            onBlur={() => patch({ style_prompt: findPrompt.trim() || null })} />
+        </Field>
+        <Field label="Exclude" hint="Optional — topics to never clip">
+          <TextInput value={excludePrompt} placeholder="e.g. intros, sponsor reads"
+            onChange={(e) => setExcludePrompt(e.target.value)}
+            onBlur={() => patch({ exclude_prompt: excludePrompt.trim() || null })} />
+        </Field>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          <SwitchRow label="✂ Trim silence" hint="Cut dead air inside clips"
+            on={trimSilence}
+            onChange={(v) => { setTrimSilence(v); patch({ trim_silence: v }); }} />
+          <SwitchRow label="⌫ Cut fillers (um, uh)" hint="Remove filler words from the cut"
+            on={removeFillers}
+            onChange={(v) => { setRemoveFillers(v); patch({ remove_fillers: v }); }} />
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
+  const isMobile = useMobile();
+  const isCompleted = bf.status === "completed";
+  const processed = (bf.processed_video_ids || []).length;
+  const total = bf.total_videos || 0;
+  const progressMax = total || processed + 1;
+
+  const [daysBack, setDaysBack] = useState(bf.days_back ?? 30);
+  const [videosPerDay, setVideosPerDay] = useState(bf.videos_per_day ?? 2);
+  const [ytChannelId, setYtChannelId] = useState(bf.yt_upload_channel_id ?? "");
+  const [ttAccountId, setTtAccountId] = useState(bf.tt_open_id ?? "");
+  const [autoUpload, setAutoUpload] = useState(bf.auto_upload ?? false);
+  const [maxClips, setMaxClips] = useState(bf.max_clips ?? 3);
+  const [minDur, setMinDur] = useState(bf.min_duration ?? 30);
+  const [maxDur, setMaxDur] = useState(bf.max_duration ?? 90);
 
   const ytChannels = ytStatus?.channels || [];
   const ttAccounts = ttStatus?.accounts || [];
-  const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
-  const captionCustomizable = CUSTOMIZABLE_CAPTION_STYLES.includes(captionStyle);
-
   const patch = (fields) => onPatch(bf.id, fields);
-  const adj = (val, setVal, min, max, delta, field) => {
-    const next = Math.min(max, Math.max(min, val + delta));
-    setVal(next);
-    patch({ [field]: next });
-  };
 
   return (
-    <PixelCard color={isCompleted ? C.signal : C.cream} padding={0} style={isMobile ? { boxShadow: "none" } : {}}>
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) auto", alignItems: "stretch" }}>
-
-        {/* Left: info + controls */}
-        <div style={{ padding: isMobile ? "16px" : "20px 22px", borderRight: isMobile ? "none" : BORDER, borderBottom: isMobile ? BORDER : "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap", minWidth: 0 }}>
-            <span className="pixel" style={{ fontSize: 11, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: isMobile ? "60vw" : "none" }}>
-              * {bf.channel_name || bf.channel_url}
+    <Card flush>
+      <div style={{
+        display: "grid", alignItems: "stretch",
+        gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) 240px",
+      }}>
+        {/* Left: channel info, progress, per-video settings */}
+        <div style={{
+          padding: isMobile ? 16 : 20, minWidth: 0,
+          borderRight: isMobile ? "none" : "var(--border-w-sm) solid var(--line)",
+          borderBottom: isMobile ? "var(--border-w-sm) solid var(--line)" : "none",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
+            <span style={{
+              fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis",
+              whiteSpace: "nowrap", maxWidth: isMobile ? "60vw" : "none",
+            }}>
+              {bf.channel_name || bf.channel_url}
             </span>
-            {isCompleted && (
-              <span className="pixel" style={{ fontSize: 7, background: C.signalDeep, color: C.cream, padding: "3px 7px", border: BORDER }}>DONE</span>
-            )}
+            {isCompleted && <Tag tone="success">✓ Done</Tag>}
           </div>
-          <div className="mono" style={{ fontSize: 11, color: C.dim2, marginBottom: 12, wordBreak: "break-all" }}>{bf.channel_url}</div>
+          <div className="t-sm" style={{ color: "var(--text-3)", marginTop: 2, marginBottom: 14, wordBreak: "break-all" }}>
+            {bf.channel_url}
+          </div>
 
           {isCompleted ? (
-            <div className="vt" style={{ fontSize: isMobile ? 14 : 16, color: C.signalDeep }}>
+            <Banner tone="success">
               All {total} videos from the {bf.days_back}-day window have been clipped and posted!
-            </div>
+            </Banner>
           ) : (
-            <>
-              <div style={{ marginBottom: 14 }}><ProgressBar value={processed} max={total || processed + 1} /></div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: isMobile ? 8 : 10 }}>
-                <Stepper label="MAX CLIPS" val={maxClips} min={1} max={10} step={1}
-                  onAdj={d => adj(maxClips, setMaxClips, 1, 10, d, "max_clips")} />
-                <Stepper label="MIN DUR" val={minDur} min={15} max={120} step={5} suffix="s"
-                  onAdj={d => adj(minDur, setMinDur, 15, 120, d, "min_duration")} />
-                <Stepper label="MAX DUR" val={maxDur} min={30} max={180} step={10} suffix="s"
-                  onAdj={d => adj(maxDur, setMaxDur, 30, 180, d, "max_duration")} />
-              </div>
-
-              <div style={{ marginTop: 14 }}>
-                <button onClick={() => setCaptionOpen(o => !o)} className="pixel"
-                  style={{ fontSize: 8, color: C.ink, background: captionOpen ? C.lavender : C.cream2,
-                    cursor: "pointer", padding: "8px 12px", border: BORDER,
-                    boxShadow: captionOpen ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                    transform: captionOpen ? "translate(2px,2px)" : "none",
-                    display: "flex", alignItems: "center", gap: 6, transition: "all .1s" }}>
-                  <span style={{ fontSize: 10 }}>Aa</span>
-                  CAPTION SETTINGS {captionOpen ? "▲" : "▼"}
-                </button>
-              </div>
-
-              {captionOpen && (
-                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
-                  <div style={{ marginBottom: 14 }}>
-                    <CaptionStyleGrid value={captionStyle}
-                      onChange={(id) => {
-                        setCaptionStyle(id);
-                        const fields = { caption_style: id };
-                        if (!CUSTOMIZABLE_CAPTION_STYLES.includes(id)) {
-                          setFontSize(null); setHighlightColor(null);
-                          fields.caption_font_size = null; fields.caption_highlight_color = null;
-                        }
-                        patch(fields);
-                      }}
-                      highlightColor={highlightColor} isMobile={isMobile} />
-                  </div>
-
-                  <div style={{ marginBottom: 14 }}>
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>AI EXTRAS</div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {[
-                        { on: captionKeywords, label: "KEYWORDS", toggle: () => { const v = !captionKeywords; setCaptionKeywords(v); patch({ caption_keywords: v }); } },
-                        { on: captionEmoji, label: "EMOJI", toggle: () => { const v = !captionEmoji; setCaptionEmoji(v); patch({ caption_emoji: v }); } },
-                      ].map(({ on, label, toggle }) => (
-                        <button key={label} onClick={toggle} className="pixel"
-                          style={{ flex: 1, padding: "8px 4px", fontSize: 8, cursor: "pointer",
-                            background: on ? C.signal : C.cream2, color: C.ink,
-                            border: on ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                            boxShadow: on ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
-                          {label} {on ? "ON" : "OFF"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div style={{ marginBottom: 14 }}>
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>CAPTION POSITION</div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {[["default", "AUTO"], ["bottom", "BOTTOM"], ["middle", "MID"], ["top", "TOP"]].map(([id, label]) => (
-                        <button key={id} onClick={() => { setCaptionPosition(id); patch({ caption_position: id === "default" ? null : id }); }} className="pixel"
-                          style={{ flex: 1, padding: "8px 0", fontSize: 8, cursor: "pointer",
-                            background: captionPosition === id ? C.signal : C.cream2, color: C.ink,
-                            border: captionPosition === id ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                            boxShadow: captionPosition === id ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div style={{ marginBottom: 14 }}>
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>LANGUAGE</div>
-                    <select value={captionLang} onChange={e => { setCaptionLang(e.target.value); patch({ caption_language: e.target.value }); }}
-                      className="mono" style={{ width: "100%", padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 12, cursor: "pointer" }}>
-                      {CAPTION_LANGUAGES.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}
-                    </select>
-                  </div>
-                  {captionCustomizable && (
-                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
-                      <div>
-                        <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FONT SIZE</div>
-                        <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
-                          <div style={{ flex: 1 }}>
-                            <Stepper label="" val={effectiveFontSize} min={40} max={120} step={4} suffix="px"
-                              onAdj={d => { const v = Math.min(120, Math.max(40, effectiveFontSize + d)); setFontSize(v); patch({ caption_font_size: v }); }} />
-                          </div>
-                          <button onClick={() => { setFontSize(null); patch({ caption_font_size: null }); }} className="pixel"
-                            style={{ padding: "6px 10px", fontSize: 8, cursor: "pointer",
-                              background: fontSize === null ? C.signal : C.cream2, color: C.ink, border: BORDER,
-                              boxShadow: fontSize === null ? `2px 2px 0 ${C.ink}` : SHADOW_SM }}>AUTO</button>
-                        </div>
-                      </div>
-                      <div>
-                        <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>HIGHLIGHT</div>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => (
-                            <button key={label} onClick={() => { setHighlightColor(color); patch({ caption_highlight_color: color }); }} className="pixel"
-                              style={{ padding: "5px 8px", fontSize: 7, background: bg, color: fg,
-                                border: highlightColor === color ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                                boxShadow: highlightColor === color ? `2px 2px 0 ${C.ink}` : "none",
-                                cursor: "pointer", transition: "all .1s" }}>{label}</button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>
-                      <span style={{ fontSize: 11, fontFamily: "sans-serif" }}>🎵</span> BACKGROUND MUSIC <span style={{ color: C.dim }}>(optional)</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: C.paper, border: BORDER, marginBottom: 8 }}>
-                      <span className="pixel" style={{ fontSize: 9, color: C.dim, flexShrink: 0 }}>{`>`}</span>
-                      <input value={bgMusicUrl} onChange={e => setBgMusicUrl(e.target.value)}
-                        onBlur={() => patch({ bg_music_url: bgMusicUrl.trim() || null })}
-                        placeholder="paste a YouTube music URL"
-                        className="mono" style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 11, fontWeight: 500, minWidth: 0, outline: "none", border: "none" }} />
-                    </div>
-                    {bgMusicUrl.trim() && (
-                      <div style={{ display: "flex", gap: 5 }}>
-                        {[["Quiet", 0.08], ["Soft", 0.15], ["Med", 0.30], ["Loud", 0.50]].map(([label, vol]) => (
-                          <button key={label} onClick={() => { setBgMusicVolume(vol); patch({ bg_music_volume: vol }); }} className="pixel" style={{
-                            flex: 1, padding: "6px 4px", fontSize: 7, cursor: "pointer",
-                            background: bgMusicVolume === vol ? C.signal : C.cream2, color: C.ink, border: BORDER,
-                            boxShadow: bgMusicVolume === vol ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                            transform: bgMusicVolume === vol ? "translate(2px,2px)" : "none",
-                          }}>{label}</button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `2px dashed ${C.ink}22` }}>
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>LAYOUT</div>
-                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
-                      {LAYOUT_CHOICES.map(({ id, label }) => (
-                        <button key={id} onClick={() => { setClipStyle(id); patch({ clip_style: id }); }} className="pixel"
-                          style={{ flex: "1 1 auto", padding: "8px 8px", fontSize: 7, cursor: "pointer",
-                            background: clipStyle === id ? C.signal : C.cream2, color: C.ink,
-                            border: clipStyle === id ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                            boxShadow: clipStyle === id ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {["facecam", "screenshare", "auto"].includes(clipStyle) && (
-                      <button onClick={() => setCamModalOpen(true)} className="pixel"
-                        style={{ width: "100%", textAlign: "left", padding: "9px 10px", fontSize: 8, cursor: "pointer",
-                          background: facecamBox ? C.signal : C.cream2, color: C.ink, marginBottom: 12,
-                          border: facecamBox ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                          boxShadow: facecamBox ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
-                        {facecamBox ? "✓ CAM BOX SET — click to adjust" : "▦ MARK THE FACECAM (optional)"}
-                      </button>
-                    )}
-                    {camModalOpen && (
-                      <FacecamBoxModal
-                        videoId={(bf.processed_video_ids || [])[0] || null}
-                        value={facecamBox ? { x: facecamBox[0], y: facecamBox[1], w: facecamBox[2], h: facecamBox[3] } : null}
-                        onSave={(b) => { setFacecamBox(b); patch({ facecam_box: b }); }}
-                        onClose={() => setCamModalOpen(false)}
-                      />
-                    )}
-
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FORMAT</div>
-                    <div style={{ display: "flex", gap: 5, marginBottom: 12 }}>
-                      {["9:16", "1:1", "16:9"].map((id) => {
-                        const unavailable = ["facecam", "split", "screenshare", "auto"].includes(clipStyle) && id !== "9:16";
-                        return (
-                          <button key={id} disabled={unavailable}
-                            onClick={() => { setAspectRatio(id); patch({ aspect_ratio: id }); }} className="pixel"
-                            style={{ flex: 1, padding: "8px 0", fontSize: 8,
-                              cursor: unavailable ? "not-allowed" : "pointer", opacity: unavailable ? 0.4 : 1,
-                              background: aspectRatio === id ? C.signal : C.cream2, color: C.ink,
-                              border: aspectRatio === id ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-                              boxShadow: aspectRatio === id ? `2px 2px 0 ${C.ink}` : "none", transition: "all .1s" }}>
-                            {id}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FIND <span style={{ color: C.dim }}>(optional)</span></div>
-                    <input value={findPrompt} onChange={e => setFindPrompt(e.target.value)}
-                      onBlur={() => patch({ style_prompt: findPrompt.trim() || null })}
-                      placeholder="e.g. every moment about pricing"
-                      className="mono" style={{ width: "100%", padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 11, marginBottom: 8 }} />
-                    <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>EXCLUDE <span style={{ color: C.dim }}>(optional)</span></div>
-                    <input value={excludePrompt} onChange={e => setExcludePrompt(e.target.value)}
-                      onBlur={() => patch({ exclude_prompt: excludePrompt.trim() || null })}
-                      placeholder="e.g. intros, sponsor reads"
-                      className="mono" style={{ width: "100%", padding: "8px 10px", background: C.paper, color: C.ink, border: BORDER, fontSize: 11, marginBottom: 12 }} />
-
-                    <button onClick={() => { const v = !trimSilence; setTrimSilence(v); patch({ trim_silence: v }); }} className="pixel" style={{
-                      width: "100%", padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
-                      background: trimSilence ? C.signal : C.cream2, color: C.ink, border: BORDER,
-                      boxShadow: trimSilence ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                      transform: trimSilence ? "translate(2px,2px)" : "none",
-                      marginBottom: 8,
-                    }}>
-                      ✂ TRIM SILENCE {trimSilence ? "ON" : "OFF"}
-                    </button>
-                    <button onClick={() => { const v = !removeFillers; setRemoveFillers(v); patch({ remove_fillers: v }); }} className="pixel" style={{
-                      width: "100%", padding: "9px 12px", fontSize: 8, cursor: "pointer", textAlign: "center",
-                      background: removeFillers ? C.signal : C.cream2, color: C.ink, border: BORDER,
-                      boxShadow: removeFillers ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                      transform: removeFillers ? "translate(2px,2px)" : "none",
-                    }}>
-                      ⌫ CUT FILLERS (UM/UH) {removeFillers ? "ON" : "OFF"}
-                    </button>
-                  </div>
+            <div style={{ display: "grid", gap: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <ProgressBar progress={progressMax > 0 ? Math.min(100, Math.round((processed / progressMax) * 100)) : 0} />
                 </div>
-              )}
-            </>
+                <span className="t-sm" style={{ color: "var(--text-3)", flexShrink: 0 }}>
+                  {processed}/{progressMax}
+                </span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: isMobile ? 8 : 10 }}>
+                <Field label="Max clips">
+                  <StepperInput value={maxClips} min={1} max={10} step={1}
+                    onChange={(v) => { setMaxClips(v); patch({ max_clips: v }); }} />
+                </Field>
+                <Field label="Min dur">
+                  <StepperInput value={minDur} min={15} max={120} step={5} suffix="s"
+                    onChange={(v) => { setMinDur(v); patch({ min_duration: v }); }} />
+                </Field>
+                <Field label="Max dur">
+                  <StepperInput value={maxDur} min={30} max={180} step={10} suffix="s"
+                    onChange={(v) => { setMaxDur(v); patch({ max_duration: v }); }} />
+                </Field>
+              </div>
+
+              <DigestSettings bf={bf} patch={patch} />
+            </div>
           )}
         </div>
 
-        {/* Right: pace/channel/actions */}
-        <div style={{ padding: isMobile ? "12px 16px" : "20px 18px", display: "flex", flexDirection: "column", gap: 8, justifyContent: "center", minWidth: isMobile ? "auto" : 180 }}>
+        {/* Right: pace, destinations, actions */}
+        <div style={{ padding: isMobile ? 16 : 20, display: "grid", gap: 12, alignContent: "start" }}>
+          <SwitchRow label="🎉 Auto-upload" hint="Post finished clips automatically"
+            on={autoUpload}
+            onChange={(v) => { setAutoUpload(v); patch({ auto_upload: v }); }} />
 
-          {/* Auto upload toggle */}
-          <PixelBtn color={autoUpload ? "signal" : "cream"} size="sm" full
-            onClick={() => { setAutoUpload(v => { const next = !v; patch({ auto_upload: next }); return next; }); }}>
-            <span style={{ fontSize: 14, fontFamily: "sans-serif" }}>🎉</span>
-            {autoUpload ? "AUTO-UPLOAD ON" : "AUTO-UPLOAD OFF"}
-          </PixelBtn>
-
-          {/* Look back */}
-          <div>
-            <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 5 }}>LOOK BACK</div>
-            <select value={daysBack} onChange={e => { setDaysBack(Number(e.target.value)); patch({ days_back: Number(e.target.value) }); }}
-              className="pixel" style={{ width: "100%", padding: "7px 8px", background: C.paper, color: C.ink, border: BORDER, fontSize: 7 }}>
-              {DAY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
-          </div>
-
-          {/* Videos per day */}
-          <div>
-            <div className="pixel" style={{ fontSize: 7, color: C.dim2, marginBottom: 5 }}>VIDEOS / DAY</div>
-            <div style={{ display: "flex", gap: 4 }}>
-              {VPD_OPTIONS.map(opt => (
-                <button key={opt.value} onClick={() => { setVideosPerDay(opt.value); patch({ videos_per_day: opt.value }); }} className="pixel" style={{
-                  flex: 1, padding: "6px 0", fontSize: 8,
-                  background: videosPerDay === opt.value ? opt.color : C.cream2,
-                  color: C.ink, border: BORDER,
-                  boxShadow: videosPerDay === opt.value ? `2px 2px 0 ${C.ink}` : SHADOW_SM,
-                  transform: videosPerDay === opt.value ? "translate(2px,2px)" : "none",
-                  cursor: "pointer",
-                }}>{opt.value}</button>
+          <Field label="Look back">
+            <Select value={daysBack}
+              onChange={(e) => { setDaysBack(Number(e.target.value)); patch({ days_back: Number(e.target.value) }); }}>
+              {DAY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
-            </div>
-          </div>
+            </Select>
+          </Field>
 
-          {/* YT channel */}
+          <Field label="Videos / day">
+            <SegmentedControl value={videosPerDay} options={VPD_OPTIONS}
+              onChange={(id) => { setVideosPerDay(id); patch({ videos_per_day: id }); }} />
+          </Field>
+
           {ytChannels.length > 0 && (
-            <div>
-              <div className="pixel" style={{ fontSize: 7, color: C.ytDeep, marginBottom: 5 }}>▶ YOUTUBE</div>
+            <Field label={<span style={{ color: "var(--yt)" }}>▶ YouTube</span>}>
               {ytChannels.length === 1 ? (
-                <div className="pixel" style={{ fontSize: 7, padding: "7px 8px", background: C.yt, border: BORDER, color: C.ink }}>
-                  * {ytChannels[0].yt_channel_name || "YouTube"}
-                </div>
+                <Tag>{ytChannels[0].yt_channel_name || "YouTube"}</Tag>
               ) : (
-                <select value={ytChannelId}
-                  onChange={e => { setYtChannelId(e.target.value); patch({ yt_upload_channel_id: e.target.value }); }}
-                  className="pixel" style={{ width: "100%", padding: "7px 8px", background: C.paper, color: C.ink, border: BORDER, fontSize: 7 }}>
-                  {ytChannels.map(c => <option key={c.yt_channel_id} value={c.yt_channel_id}>{c.yt_channel_name || c.yt_channel_id}</option>)}
-                </select>
+                <Select value={ytChannelId}
+                  onChange={(e) => { setYtChannelId(e.target.value); patch({ yt_upload_channel_id: e.target.value }); }}>
+                  {ytChannels.map((c) => (
+                    <option key={c.yt_channel_id} value={c.yt_channel_id}>
+                      {c.yt_channel_name || c.yt_channel_id}
+                    </option>
+                  ))}
+                </Select>
               )}
-            </div>
+            </Field>
           )}
 
-          {/* TikTok account */}
           {ttAccounts.length > 0 && (
-            <div>
-              <div className="pixel" style={{ fontSize: 7, color: C.ink, marginBottom: 5 }}>♪ TIKTOK</div>
-              <select value={ttAccountId}
-                onChange={e => { setTtAccountId(e.target.value); patch({ tt_open_id: e.target.value || null }); }}
-                className="pixel" style={{ width: "100%", padding: "7px 8px", background: C.paper, color: C.ink, border: BORDER, fontSize: 7 }}>
+            <Field label="♪ TikTok">
+              <Select value={ttAccountId}
+                onChange={(e) => { setTtAccountId(e.target.value); patch({ tt_open_id: e.target.value || null }); }}>
                 <option value="">— off —</option>
-                {ttAccounts.map(a => <option key={a.tt_open_id} value={a.tt_open_id}>{a.tt_display_name || a.tt_open_id}</option>)}
-              </select>
-            </div>
+                {ttAccounts.map((a) => (
+                  <option key={a.tt_open_id} value={a.tt_open_id}>
+                    {a.tt_display_name || a.tt_open_id}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           )}
 
           {!isCompleted && (
-            <PixelBtn color="amber" size="sm" onClick={() => onRunNow(bf.id)}>RUN NOW</PixelBtn>
+            <Button size="sm" variant="secondary" onClick={() => onRunNow(bf.id)}>
+              ▶ Run now
+            </Button>
           )}
-          <PixelBtn color="hot" size="sm" onClick={() => onRemove(bf.id)}>REMOVE</PixelBtn>
+          <Button size="sm" variant="danger" onClick={() => onRemove(bf.id)}>
+            Remove
+          </Button>
         </div>
       </div>
-    </PixelCard>
+    </Card>
   );
 }
 
 export default function DigestPage() {
   const { ytStatus, ttStatus, isPro } = useApp();
-  const isMobile = useMobile();
+  const navigate = useNavigate();
   const [backfills, setBackfills] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [adding, setAdding]     = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
   const [urlInput, setUrlInput] = useState("");
 
@@ -499,93 +419,92 @@ export default function DigestPage() {
 
   if (!isPro) {
     return (
-      <div style={{ minHeight: "100vh", overflowX: "clip" }}>
-        <Header />
-        <div className="fade" style={{ padding: isMobile ? "24px 16px 48px" : "64px 32px", maxWidth: 760, margin: "0 auto" }}>
-          <PixelCard color={C.amber} padding={isMobile ? 24 : 40} style={{ textAlign: "center" }}>
-            <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 12 }}>PRO FEATURE</div>
-            <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 22, color: C.ink, lineHeight: 1.4, marginBottom: 14 }}>Channel Digest</h2>
-            <p className="vt" style={{ fontSize: isMobile ? 18 : 20, color: C.ink, lineHeight: 1.5, marginBottom: 24, maxWidth: 520, margin: "0 auto 24px" }}>
-              Backfill a channel's entire history — turn every past video into clips, fully hands-free.
-            </p>
-            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginTop: 8 }}>
-              Upgrade to Pro to unlock this feature.
-            </div>
-          </PixelCard>
+      <div style={{ maxWidth: 1000, margin: "0 auto", display: "grid", gap: 20 }}>
+        <div className="page-head">
+          <div className="page-head__title">Digest</div>
+          <div className="page-head__sub">
+            Add a channel — ClipForge works through its backlog a few videos per day.
+          </div>
         </div>
+        <Banner tone="info" title="Channel Digest is a Pro feature" action={<ProBadge />}>
+          Backfill a channel's entire history — turn every past video into clips, fully hands-free.
+        </Banner>
+        <Card flush>
+          <EmptyState
+            icon="📼"
+            title="The back-catalog is waiting"
+            description="Upgrade to Pro and the forge will chew through years of uploads, a few videos a day."
+            action={<Button onClick={() => navigate("/upgrade")}>⚡ Upgrade to Pro</Button>}
+          />
+        </Card>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      <Header />
-      <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
-
-        <div style={{ marginBottom: 24 }}>
-          <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>DIGEST</div>
-          <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink }}>Channel digest.</h1>
-          <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
-            Add a channel — ClipForge works through its backlog a few videos per day.
-          </p>
+    <div style={{ maxWidth: 1000, margin: "0 auto", display: "grid", gap: 20 }}>
+      <div className="page-head">
+        <div className="page-head__title">Digest</div>
+        <div className="page-head__sub">
+          Add a channel — ClipForge works through its backlog a few videos per day.
         </div>
+      </div>
 
-        <OnboardingTour storageKey="cf_tour_digest_v1" steps={[
-          { target: "#tour-dg-add", title: "CLIP THE BACK-CATALOG",
-            text: "Digest works through a channel's whole history, a few videos per day, hands-free. Add a channel, pick how far back to look and the daily pace on its card." },
-        ]} />
-        {/* Add form — URL + button only, just like watchlist */}
-        <div id="tour-dg-add">
-        <PixelCard color={C.cream} padding={22} style={{ marginBottom: 24, boxShadow: isMobile ? "none" : undefined }}>
-          <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 12 }}>ADD CHANNEL</div>
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
-            <div style={{ flex: 1, minWidth: isMobile ? 0 : 260, display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: C.paper, border: BORDER, boxShadow: SHADOW_SM }}>
-              <span className="pixel" style={{ fontSize: 12, color: C.dim }}>{`>`}</span>
-              <input value={urlInput} onChange={e => setUrlInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAdd()}
+      <Card id="tour-dg-add">
+        <Field label="Add channel">
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 260px" }}>
+              <TextInput value={urlInput}
                 placeholder="https://youtube.com/@channel or /channel/UCxxx"
-                className="mono" style={{ flex: 1, background: "transparent", color: C.ink, fontSize: 13, fontWeight: 500, minWidth: 0 }} />
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAdd()} />
             </div>
-            <PixelBtn color="hot" onClick={handleAdd} disabled={adding || !urlInput.trim()}>
-              {adding ? "RESOLVING..." : "+ ADD"}
-            </PixelBtn>
+            <Button onClick={handleAdd} disabled={adding || !urlInput.trim()}>
+              {adding ? "Resolving…" : "＋ Add"}
+            </Button>
           </div>
-          {addError && (
-            <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginTop: 10, padding: "8px 10px", background: `${C.hot}44`, border: `2px solid ${C.hotDeep}` }}>
-              ! {addError}
-            </div>
-          )}
-        </PixelCard>
-        </div>
-
-        {/* Channel list */}
-        {loading ? (
-          <PixelCard color={C.paper} padding={48} style={{ textAlign: "center", boxShadow: isMobile ? "none" : undefined }}>
-            <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Loading...</p>
-          </PixelCard>
-        ) : backfills.length === 0 ? (
-          <PixelCard color={C.paper} padding={48} style={{ textAlign: "center", boxShadow: isMobile ? "none" : undefined }}>
-            <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 10 }}>NO CHANNELS</div>
-            <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Add a YouTube channel URL above to start digesting its backlog.</p>
-          </PixelCard>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {backfills.map(bf => (
-              <DigestCard key={bf.id} bf={bf} ytStatus={ytStatus} ttStatus={ttStatus}
-                onRemove={handleRemove} onRunNow={handleRunNow} onPatch={handlePatch} isMobile={isMobile} />
-            ))}
+        </Field>
+        {addError && (
+          <div style={{ marginTop: 12 }}>
+            <Banner tone="danger" title="Couldn't add the channel">
+              {addError}
+            </Banner>
           </div>
         )}
+      </Card>
 
-        {/* Tips — same style as watchlist */}
-        <PixelCard color={C.lavender} padding={18} style={{ marginTop: 24, boxShadow: isMobile ? "none" : undefined }}>
-          <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 8 }}>HOW IT WORKS</div>
-          <div className="vt" style={{ fontSize: 17, color: C.ink, lineHeight: 1.5 }}>
-            ClipForge processes a few videos per day from a channel's backlog until all are done.<br />
-            Set <strong>LOOK BACK</strong> to control how far back in the channel's history to go.<br />
-            <strong>VIDEOS / DAY</strong> controls the daily pace. Clips are auto-uploaded if a YouTube channel is selected.
-          </div>
-        </PixelCard>
-      </div>
+      {loading ? (
+        <div className="t-sm" style={{ color: "var(--text-3)" }}>Loading…</div>
+      ) : backfills.length === 0 ? (
+        <Card flush>
+          <EmptyState
+            icon="📼"
+            title="No channels digesting"
+            description="Add a YouTube channel URL above and the forge starts working through its backlog."
+          />
+        </Card>
+      ) : (
+        <div style={{ display: "grid", gap: 14 }}>
+          {backfills.map((bf) => (
+            <DigestCard key={bf.id} bf={bf} ytStatus={ytStatus} ttStatus={ttStatus}
+              onRemove={handleRemove} onRunNow={handleRunNow} onPatch={handlePatch} />
+          ))}
+        </div>
+      )}
+
+      <Card sub>
+        <div className="t-label" style={{ marginBottom: 8 }}>How it works</div>
+        <div className="t-sm" style={{ lineHeight: 1.6 }}>
+          ClipForge processes a few videos per day from a channel's backlog until all are done.
+          <br />
+          Set <strong>Look back</strong> to control how far back in the channel's history to go.
+          <br />
+          <strong>Videos / day</strong> controls the daily pace. Clips are auto-uploaded if a
+          YouTube channel is selected.
+        </div>
+      </Card>
+
+      <Tour steps={TOUR_STEPS} storageKey="cf_tour_digest_v1" />
     </div>
   );
 }

@@ -1,83 +1,48 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { C, BORDER, BORDER_SM, SHADOW, SHADOW_SM } from "../lib/theme";
-import { PixelSprite, ANVIL, ANVIL_PAL, HAMMER, HAMMER_PAL, PixelBtn, PixelCard, Tag } from "../components/ui";
-import { useMobile } from "../hooks/useMobile";
+import { Button, Card, Tag, RetroSprite } from "../components/kit";
+import { ANVIL, ANVIL_PAL } from "../components/ui";
+import { IconAnvil } from "../components/shell/icons";
+import ThemeFab from "../components/theme/ThemeFab";
 
-function LandingHeader({ onLogin, onSignup, isMobile }) {
+function Logo({ onClick }) {
   return (
-    <header style={{ padding: isMobile ? "14px 16px" : "24px 40px", display: "flex", alignItems: "center", gap: 16, maxWidth: 1320, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={isMobile ? 4 : 5} />
-        <div className="pixel" style={{ fontSize: isMobile ? 16 : 22, color: C.ink, lineHeight: 1 }}>
-          <span style={{ color: C.hotDeep }}>CLIP</span><span>FORGE</span>
-        </div>
-      </div>
-      <div style={{ flex: 1 }} />
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <PixelBtn color="cream" size="sm" onClick={onLogin}>LOG IN</PixelBtn>
-        {!isMobile && <PixelBtn color="hot" size="sm" onClick={onSignup}>GET STARTED</PixelBtn>}
-      </div>
-    </header>
-  );
-}
-
-function HeroSection({ onSignup, isMobile }) {
-  return (
-    <section style={{ padding: isMobile ? "40px 16px 56px" : "72px 40px 96px", maxWidth: 1320, margin: "0 auto", textAlign: "center" }}>
-      <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: C.amber, border: BORDER, boxShadow: SHADOW_SM, padding: "8px 16px", marginBottom: 28 }}>
-        <span className="pixel" style={{ fontSize: 8, color: C.ink }}>⚡ AI-POWERED CLIP EXTRACTION</span>
-      </div>
-
-      <h1 className="pixel" style={{ fontSize: isMobile ? 22 : 40, lineHeight: 1.4, color: C.ink, marginBottom: 24, maxWidth: 820, margin: "0 auto 24px" }}>
-        One long video.<br />
-        <span style={{ color: C.hotDeep }}>Ten viral shorts.</span><br />
-        Fully automatic.
-      </h1>
-
-      <p className="vt" style={{ fontSize: isMobile ? 20 : 26, color: C.dim2, lineHeight: 1.5, maxWidth: 600, margin: "0 auto 40px" }}>
-        Drop any YouTube link. ClipForge's AI finds the best moments, burns captions, scores hooks, and hands you shorts ready to post — in under 5 minutes.
-      </p>
-
-      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, justifyContent: "center", alignItems: "center", marginBottom: 56 }}>
-        <PixelBtn color="hot" size="lg" onClick={onSignup}>
-          &gt; FORGE MY FIRST CLIPS — FREE
-        </PixelBtn>
-        <div className="vt" style={{ fontSize: 18, color: C.dim2 }}>No credit card · up to 30 free clips/month</div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? 10 : 16, maxWidth: 780, margin: "0 auto" }}>
-        {[
-          ["< 5 min", "turnaround"],
-          ["10 clips", "per video"],
-          ["100%", "auto captions"],
-          ["0 editing", "required"],
-        ].map(([stat, label]) => (
-          <div key={label} style={{ background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: isMobile ? "14px 10px" : "18px 12px", textAlign: "center" }}>
-            <div className="pixel" style={{ fontSize: isMobile ? 12 : 16, color: C.hotDeep, marginBottom: 6 }}>{stat}</div>
-            <div className="vt" style={{ fontSize: isMobile ? 16 : 18, color: C.dim2 }}>{label}</div>
-          </div>
-        ))}
-      </div>
-    </section>
+    <div className="landing__logo" onClick={onClick}>
+      <RetroSprite
+        data={ANVIL}
+        palette={ANVIL_PAL}
+        size={4}
+        modern={
+          <span style={{ color: "var(--accent)", display: "inline-flex" }}>
+            <IconAnvil size={24} />
+          </span>
+        }
+      />
+      <span>
+        <b>Clip</b>Forge
+      </span>
+    </div>
   );
 }
 
 function fmtStat(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000)     return (n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "K";
+  if (n >= 1_000) return (n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "K";
   return String(n);
 }
 
-function AnimatedStat({ value, label, isMobile }) {
+function AnimatedStat({ value, label }) {
   const [display, setDisplay] = useState(0);
   const fromRef = useRef(0);
   useEffect(() => {
-    const from = fromRef.current, to = value || 0, dur = 1200, start = performance.now();
+    const from = fromRef.current,
+      to = value || 0,
+      dur = 1200,
+      start = performance.now();
     let raf;
     const tick = (now) => {
       const t = Math.min(1, (now - start) / dur);
-      const eased = 1 - Math.pow(1 - t, 3);          // ease-out
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out
       setDisplay(Math.round(from + (to - from) * eased));
       if (t < 1) raf = requestAnimationFrame(tick);
       else fromRef.current = to;
@@ -86,89 +51,49 @@ function AnimatedStat({ value, label, isMobile }) {
     return () => cancelAnimationFrame(raf);
   }, [value]);
   return (
-    <div style={{ background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: isMobile ? "16px 10px" : "22px 14px", textAlign: "center" }}>
-      <div className="pixel" style={{ fontSize: isMobile ? 16 : 26, color: C.hotDeep, marginBottom: 6 }}>{fmtStat(display)}</div>
-      <div className="vt" style={{ fontSize: isMobile ? 14 : 17, color: C.dim2 }}>{label}</div>
+    <div className="lstat">
+      <div className="lstat__num">{fmtStat(display)}</div>
+      <div className="lstat__label">{label}</div>
     </div>
   );
 }
 
-function LiveStats({ isMobile }) {
+function LiveStats() {
   const [stats, setStats] = useState(null);
   useEffect(() => {
     let alive = true;
-    const load = () => fetch("/api/stats/public").then(r => r.json()).then(d => { if (alive) setStats(d); }).catch(() => {});
+    const load = () =>
+      fetch("/api/stats/public")
+        .then((r) => r.json())
+        .then((d) => {
+          if (alive) setStats(d);
+        })
+        .catch(() => {});
     load();
-    const id = setInterval(load, 30000);  // refresh every 30s for a "live" feel
-    return () => { alive = false; clearInterval(id); };
+    const id = setInterval(load, 30000); // refresh every 30s for a "live" feel
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
   }, []);
   // Don't render until there's real data to brag about.
   if (!stats || ((stats.videos || 0) === 0 && (stats.views || 0) === 0)) return null;
   const items = [
-    [stats.videos || 0,      "videos published"],
-    [stats.views || 0,       "views generated"],
-    [stats.likes || 0,       "likes earned"],
+    [stats.videos || 0, "videos published"],
+    [stats.views || 0, "views generated"],
+    [stats.likes || 0, "likes earned"],
     [stats.subscribers || 0, "combined subscribers"],
   ];
   return (
-    <section style={{ padding: isMobile ? "0 16px 44px" : "0 40px 72px", maxWidth: 1320, margin: "0 auto" }}>
-      <div style={{ textAlign: "center", marginBottom: isMobile ? 16 : 22 }}>
-        <span className="pixel" style={{ fontSize: 8, color: C.signalDeep }}>
-          <span style={{ animation: "blink 1.2s steps(1) infinite" }}>●</span> LIVE — REAL CLIPS, REAL RESULTS
-        </span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: isMobile ? 10 : 16 }}>
-        {items.map(([val, label]) => <AnimatedStat key={label} value={val} label={label} isMobile={isMobile} />)}
-      </div>
-    </section>
-  );
-}
-
-function HowItWorksSection({ isMobile }) {
-  const steps = [
-    {
-      num: "01",
-      color: C.hot,
-      icon: <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={3} />,
-      title: "PASTE A LINK",
-      desc: "Drop any YouTube URL — podcast, interview, gameplay stream, lecture. ClipForge handles everything from 10 minutes to 3 hours.",
-    },
-    {
-      num: "02",
-      color: C.amber,
-      icon: <span style={{ fontSize: 28 }}>🤖</span>,
-      title: "AI FINDS THE GOLD",
-      desc: "Transcript, audio energy, and your own prompts — every segment scored 0-99 for hook, flow, value, and trend. Even low-dialogue gameplay gets clipped by its loudest moments.",
-    },
-    {
-      num: "03",
-      color: C.signal,
-      icon: <PixelSprite data={HAMMER} palette={HAMMER_PAL} size={3} />,
-      title: "DOWNLOAD & POST",
-      desc: "Captions burned in word-by-word. Clips trimmed frame-perfect. Download all at once or push straight to YouTube Shorts with one click.",
-    },
-  ];
-
-  return (
-    <section style={{ padding: isMobile ? "40px 16px" : "72px 40px", background: `${C.ink}08` }}>
-      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
-        <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 48 }}>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 12 }}>&gt; HOW IT WORKS</div>
-          <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 24, color: C.ink }}>Three steps. Done.</h2>
+    <section className="lsection" style={{ paddingTop: 0 }}>
+      <div className="lsection__inner" style={{ textAlign: "center" }}>
+        <div className="lsection__kicker" style={{ marginBottom: 18 }}>
+          <span style={{ animation: "cf-blink 1.2s steps(1) infinite" }}>●</span> Live — real clips,
+          real results
         </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: isMobile ? 14 : 24 }}>
-          {steps.map((step, i) => (
-            <PixelCard key={step.num} color={C.cream} padding={isMobile ? 20 : 28} style={{ position: "relative", overflow: "hidden" }}>
-              <div style={{ position: "absolute", top: 12, right: 16 }}>
-                <span className="pixel" style={{ fontSize: 28, color: `${C.ink}18` }}>{step.num}</span>
-              </div>
-              <div style={{ width: 48, height: 48, background: step.color, border: BORDER, boxShadow: SHADOW_SM, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
-                {step.icon}
-              </div>
-              <div className="pixel" style={{ fontSize: 10, color: C.ink, marginBottom: 10 }}>{step.title}</div>
-              <p className="vt" style={{ fontSize: 18, color: C.dim2, lineHeight: 1.4, margin: 0 }}>{step.desc}</p>
-            </PixelCard>
+        <div className="lstats">
+          {items.map(([val, label]) => (
+            <AnimatedStat key={label} value={val} label={label} />
           ))}
         </div>
       </div>
@@ -176,254 +101,330 @@ function HowItWorksSection({ isMobile }) {
   );
 }
 
-function FeaturesSection({ isMobile }) {
-  const signals = [
-    { emoji: "⚡", title: "Tension shifts", desc: "Moments where energy spikes or drops. These are natural cut points and attention magnets.", color: C.hot },
-    { emoji: "💰", title: "Numbers & names", desc: "Specific dollar figures, dates, ages, places. Concrete details stop the scroll.", color: C.amber },
-    { emoji: "🌶️", title: "Contrarian frames", desc: "Statements that invite disagreement. Polarizing takes drive saves, shares, and comments.", color: C.signal },
-    { emoji: "💬", title: "Confessions", desc: "First-person admissions. Vulnerability lands universally — every platform, every niche.", color: C.lavender },
-    { emoji: "🎯", title: "Strong openers", desc: "The first five seconds decide everything. We score each clip's cold-open hook strength.", color: C.peach },
-    { emoji: "📈", title: "Story arcs", desc: "Clips that have a clear setup → conflict → resolution outperform pure highlights every time.", color: C.cream2 },
-  ];
+const STEPS = [
+  {
+    num: "01",
+    icon: "🔗",
+    title: "Paste a link",
+    desc: "Drop any YouTube URL — podcast, interview, gameplay stream, lecture. ClipForge handles everything from 10 minutes to 3 hours.",
+  },
+  {
+    num: "02",
+    icon: "🤖",
+    title: "AI finds the gold",
+    desc: "Transcript, audio energy, and your own prompts — every segment scored 0-99 for hook, flow, value, and trend. Even low-dialogue gameplay gets clipped by its loudest moments.",
+  },
+  {
+    num: "03",
+    icon: "🚀",
+    title: "Download & post",
+    desc: "Captions burned in word-by-word. Clips trimmed frame-perfect. Download all at once or push straight to YouTube Shorts with one click.",
+  },
+];
 
-  return (
-    <section style={{ padding: isMobile ? "40px 16px" : "72px 40px" }}>
-      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 24 : 48, alignItems: "center" }}>
-          <div>
-            <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 12 }}>&gt; SIGNAL DETECTION</div>
-            <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 24, color: C.ink, lineHeight: 1.5, marginBottom: 20 }}>
-              We don't just cut clips.<br />
-              <span style={{ color: C.hotDeep }}>We find the moments<br />that travel.</span>
-            </h2>
-            <p className="vt" style={{ fontSize: isMobile ? 18 : 22, color: C.dim2, lineHeight: 1.5, marginBottom: 24 }}>
-              ClipForge reads every word of your transcript and applies a multi-signal virality model. Each clip gets a hook score so you know exactly what to post first.
-            </p>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <Tag bg={C.hot} color={C.ink}>Hook scoring</Tag>
-              <Tag bg={C.amber} color={C.ink}>Transcript analysis</Tag>
-              <Tag bg={C.signal} color={C.ink}>Frame detection</Tag>
-            </div>
-          </div>
+const SIGNALS = [
+  { emoji: "⚡", title: "Tension shifts", desc: "Moments where energy spikes or drops. These are natural cut points and attention magnets." },
+  { emoji: "💰", title: "Numbers & names", desc: "Specific dollar figures, dates, ages, places. Concrete details stop the scroll." },
+  { emoji: "🌶️", title: "Contrarian frames", desc: "Statements that invite disagreement. Polarizing takes drive saves, shares, and comments." },
+  { emoji: "💬", title: "Confessions", desc: "First-person admissions. Vulnerability lands universally — every platform, every niche." },
+  { emoji: "🎯", title: "Strong openers", desc: "The first five seconds decide everything. We score each clip's cold-open hook strength." },
+  { emoji: "📈", title: "Story arcs", desc: "Clips with a clear setup → conflict → resolution outperform pure highlights every time." },
+];
 
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 10 : 12 }}>
-            {signals.map((s) => (
-              <div key={s.title} style={{ background: C.cream, border: BORDER, boxShadow: SHADOW_SM, padding: isMobile ? 14 : 16 }}>
-                <div style={{ fontSize: 22, marginBottom: 8 }}>{s.emoji}</div>
-                <div className="pixel" style={{ fontSize: 8, color: C.ink, marginBottom: 6 }}>{s.title}</div>
-                <div className="vt" style={{ fontSize: 15, color: C.dim2, lineHeight: 1.3 }}>{s.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
+const TOOLS = [
+  { icon: "🧠", tag: "New", title: "Auto layout", desc: "The AI reads your video and picks the layout itself — split for podcasts, screen-share for tutorials, gameplay split for streams." },
+  { icon: "🎮", tag: "New", title: "Gameplay split", desc: "Facecam framed on top, tracked gameplay below — and if detection misses, draw the cam box yourself." },
+  { icon: "👥", tag: "New", title: "Split & screen", desc: "Two speakers stacked for podcasts. Screen content up top, presenter below for tutorials and webinars." },
+  { icon: "🎨", tag: "New", title: "10 caption styles", desc: "Hormozi, Karaoke, Beasty and more — animated previews, AI keyword highlights, auto emoji on big moments." },
+  { icon: "🔍", tag: "New", title: "Clip by prompt", desc: "“Find every moment about pricing. Skip the sponsor reads.” Then re-clip the same video with a new prompt — no reprocessing." },
+  { icon: "📐", tag: null, title: "3 formats", desc: "9:16 Shorts, 1:1 square, 16:9 wide — same clip intelligence, every placement covered." },
+  { icon: "📊", tag: null, title: "Virality 0-99", desc: "Every clip scored on hook, flow, value, and trend — post the winners first, skip the guesswork." },
+  { icon: "🎬", tag: null, title: "Blur background", desc: "Landscape clip centered on a blurred, scaled background — full 9:16 frame, no black bars, no crop." },
+  { icon: "🎵", tag: null, title: "Background music", desc: "Paste any YouTube music URL. Lay a bed track under every clip at the volume you choose." },
+  { icon: "✂️", tag: null, title: "Trim silence", desc: "Dead air and long pauses cut automatically. Tighter pacing, higher watch time, no manual editing." },
+  { icon: "📺", tag: "Pro", title: "Digest", desc: "Backfill an entire channel's history. Clips from every video ever uploaded, completely hands-free." },
+  { icon: "♪", tag: "Pro", title: "TikTok posting", desc: "Connect your TikTok account and publish clips directly — no downloading, no re-uploading." },
+];
 
-function ToolsSection({ isMobile }) {
-  const tools = [
-    { icon: "🧠", color: C.signal,   tag: "NEW",          title: "AUTO LAYOUT",        desc: "The AI reads your video and picks the layout itself — split for podcasts, screen-share for tutorials, gameplay split for streams." },
-    { icon: "🎮", color: C.hot,      tag: "NEW",          title: "GAMEPLAY SPLIT",     desc: "Facecam framed on top, tracked gameplay below — and if detection misses, draw the cam box yourself." },
-    { icon: "👥", color: C.lavender, tag: "NEW",          title: "SPLIT & SCREEN",     desc: "Two speakers stacked for podcasts. Screen content up top, presenter below for tutorials and webinars." },
-    { icon: "🎨", color: C.cream2,   tag: "NEW",          title: "10 CAPTION STYLES",  desc: "Hormozi, Karaoke, Beasty and more — animated previews, AI keyword highlights, auto emoji on big moments." },
-    { icon: "🔍", color: C.amber,    tag: "NEW",          title: "CLIP BY PROMPT",     desc: "“Find every moment about pricing. Skip the sponsor reads.” Then re-clip the same video with a new prompt — no reprocessing." },
-    { icon: "📐", color: C.peach,    tag: "NEW",          title: "3 FORMATS",          desc: "9:16 Shorts, 1:1 square, 16:9 wide — same clip intelligence, every placement covered." },
-    { icon: "📊", color: C.signal,   tag: "NEW",          title: "VIRALITY 0-99",      desc: "Every clip scored on hook, flow, value, and trend — post the winners first, skip the guesswork." },
-    { icon: "🎬", color: C.peach,    tag: null,           title: "BLUR BACKGROUND",    desc: "Landscape clip centered on a blurred, scaled background — full 9:16 frame, no black bars, no crop." },
-    { icon: "🎵", color: C.signal,   tag: null,           title: "BACKGROUND MUSIC",   desc: "Paste any YouTube music URL. Lay a bed track under every clip at the volume you choose." },
-    { icon: "✂️", color: C.amber,    tag: null,           title: "TRIM SILENCE",       desc: "Dead air and long pauses cut automatically. Tighter pacing, higher watch time, no manual editing." },
-    { icon: "📺", color: C.lavender, tag: "PRO",          title: "DIGEST",             desc: "Backfill an entire channel's history. Clips from every video ever uploaded, completely hands-free." },
-    { icon: "♪",  color: C.tt,       tag: "COMING SOON",  title: "TIKTOK AUTO-UPLOAD", desc: "Connect your TikTok account and publish clips directly — no downloading, no re-uploading." },
-  ];
-
-  return (
-    <section style={{ padding: isMobile ? "40px 16px" : "72px 40px", background: `${C.ink}05` }}>
-      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
-        <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 48 }}>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 12 }}>&gt; BUILT-IN TOOLS</div>
-          <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 24, color: C.ink }}>Everything in one pipeline.</h2>
-          <p className="vt" style={{ fontSize: isMobile ? 18 : 21, color: C.dim2, maxWidth: 540, margin: "12px auto 0", lineHeight: 1.5 }}>
-            No stitching together apps. Every tool runs in the same job — one link, one click, one batch of ready-to-post clips.
-          </p>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(3, 1fr)", gap: isMobile ? 10 : 16 }}>
-          {tools.map((t) => (
-            <PixelCard key={t.title} color={C.cream} padding={isMobile ? 14 : 22} style={{ position: "relative" }}>
-              {t.tag && (
-                <div style={{ position: "absolute", top: -10, right: 12, background: t.tag === "COMING SOON" ? C.ink : C.amber, border: BORDER, padding: "4px 10px" }}>
-                  <span className="pixel" style={{ fontSize: 6, color: t.tag === "COMING SOON" ? C.cream : C.ink }}>{t.tag}</span>
-                </div>
-              )}
-              <div style={{ width: 38, height: 38, background: t.color, border: BORDER, boxShadow: SHADOW_SM, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14, fontSize: 18 }}>
-                {t.icon}
-              </div>
-              <div className="pixel" style={{ fontSize: isMobile ? 7 : 8, color: C.ink, marginBottom: 8 }}>{t.title}</div>
-              <p className="vt" style={{ fontSize: isMobile ? 13 : 16, color: C.dim2, lineHeight: 1.4, margin: 0 }}>{t.desc}</p>
-            </PixelCard>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function WatchlistSection({ onSignup, isMobile }) {
-  return (
-    <section style={{ padding: isMobile ? "40px 16px" : "72px 40px", background: `${C.ink}08` }}>
-      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
-        <PixelCard color={C.lavender} padding={isMobile ? 24 : 40}>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 24 : 48, alignItems: "center" }}>
-            <div>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: C.ink, border: BORDER, padding: "6px 14px", marginBottom: 18 }}>
-                <span className="pixel" style={{ fontSize: 8, color: C.lavender }}>PRO FEATURE</span>
-              </div>
-              <h2 className="pixel" style={{ fontSize: isMobile ? 14 : 22, color: C.ink, lineHeight: 1.5, marginBottom: 16 }}>
-                Watchlist & Digest.<br />
-                <span style={{ color: C.lavenderDeep }}>Set it. Forget it.<br />Never miss a clip.</span>
-              </h2>
-              <p className="vt" style={{ fontSize: isMobile ? 18 : 22, color: C.dim2, lineHeight: 1.5, marginBottom: 24 }}>
-                <strong style={{ color: C.ink }}>Watchlist</strong> monitors any YouTube channel — the moment a new video drops, clipping starts automatically. <strong style={{ color: C.ink }}>Digest</strong> goes further: backfill the entire channel history and get clips from every video ever uploaded.
-              </p>
-              <PixelBtn color="lavender" size="md" onClick={onSignup} style={isMobile ? { width: "100%" } : {}}>&gt; GET PRO — START AUTOMATING</PixelBtn>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {[
-                { emoji: "📡", title: "CHANNEL MONITORING", desc: "Add any YouTube channel URL. ClipForge polls for new uploads automatically." },
-                { emoji: "⚡", title: "INSTANT PROCESSING", desc: "New video detected? Clipping starts within minutes. No manual trigger needed." },
-                { emoji: "📥", title: "CLIPS WAITING FOR YOU", desc: "Log in and find your shorts already rendered, captioned, and scored." },
-                { emoji: "🔗", title: "DIRECT YT UPLOAD", desc: "Pair with YouTube auto-upload and clips go live the same day they're created." },
-              ].map(step => (
-                <div key={step.title} style={{ display: "flex", gap: 14, alignItems: "flex-start", background: `${C.cream}88`, border: BORDER_SM, padding: "14px 16px" }}>
-                  <span style={{ fontSize: 22, lineHeight: 1 }}>{step.emoji}</span>
-                  <div>
-                    <div className="pixel" style={{ fontSize: 8, color: C.ink, marginBottom: 4 }}>{step.title}</div>
-                    <div className="vt" style={{ fontSize: 16, color: C.dim2, lineHeight: 1.3 }}>{step.desc}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </PixelCard>
-      </div>
-    </section>
-  );
-}
-
-function PricingSection({ onSignup, isMobile }) {
-  const free = [
-    "10 jobs per month",
-    "Up to 3 clips per job (≈30 clips/mo)",
-    "Word-by-word captions",
-    "Hook scoring",
-    "Download MP4",
-  ];
-  const pro = [
-    "Unlimited clips",
-    "10 clips per job",
-    "Word-by-word captions",
-    "Hook scoring",
-    "Download MP4",
-    "9:16 auto-reframe",
-    "Blur background style",
-    "Background music",
-    "Trim silence",
-    "Caption styles & colors",
-    "Watchlist automation",
-    "Digest (backfill history)",
-    "YouTube auto-upload",
-    "TikTok auto-upload (soon)",
-  ];
-
-  return (
-    <section style={{ padding: isMobile ? "40px 16px 64px" : "72px 40px 96px" }}>
-      <div style={{ maxWidth: 1320, margin: "0 auto" }}>
-        <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 48 }}>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 12 }}>&gt; PRICING</div>
-          <h2 className="pixel" style={{ fontSize: isMobile ? 16 : 24, color: C.ink }}>Start free. Go pro when ready.</h2>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 16 : 28, maxWidth: 820, margin: "0 auto" }}>
-          {/* Free */}
-          <PixelCard color={C.paper} padding={isMobile ? 24 : 32}>
-            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>FREE</div>
-            <div className="pixel" style={{ fontSize: isMobile ? 28 : 36, color: C.ink, marginBottom: 4 }}>$0</div>
-            <div className="vt" style={{ fontSize: 18, color: C.dim2, marginBottom: 24 }}>forever · no card needed</div>
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px", display: "flex", flexDirection: "column", gap: 10 }}>
-              {free.map(f => (
-                <li key={f} className="pixel" style={{ fontSize: 8, color: C.ink, display: "flex", gap: 10, alignItems: "center" }}>
-                  <span style={{ color: C.signalDeep }}>✓</span> {f}
-                </li>
-              ))}
-            </ul>
-            <PixelBtn color="cream" full onClick={onSignup}>START FREE</PixelBtn>
-          </PixelCard>
-
-          {/* Pro */}
-          <PixelCard color={C.hotDeep} padding={isMobile ? 24 : 32} style={{ position: "relative" }}>
-            <div style={{ position: "absolute", top: -14, right: 20, background: C.ink, border: BORDER, padding: "6px 12px" }}>
-              <span className="pixel" style={{ fontSize: 8, color: C.amber }}>MOST POPULAR</span>
-            </div>
-            <div className="pixel" style={{ fontSize: 9, color: `${C.cream}cc`, marginBottom: 8 }}>PRO</div>
-            <div className="pixel" style={{ fontSize: isMobile ? 28 : 36, color: C.cream, marginBottom: 4 }}>$29<span style={{ fontSize: 14 }}>/mo</span></div>
-            <div className="vt" style={{ fontSize: 18, color: `${C.cream}bb`, marginBottom: 24 }}>or $290/yr — 2 months free</div>
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px", display: "flex", flexDirection: "column", gap: 10 }}>
-              {pro.map(f => (
-                <li key={f} className="pixel" style={{ fontSize: 8, color: C.cream, display: "flex", gap: 10, alignItems: "center" }}>
-                  <span style={{ color: C.signal }}>✓</span> {f}
-                </li>
-              ))}
-            </ul>
-            <PixelBtn color="cream" full onClick={onSignup}>GET PRO</PixelBtn>
-          </PixelCard>
-        </div>
-
-        <div className="vt" style={{ textAlign: "center", fontSize: 18, color: C.dim2, marginTop: 28 }}>
-          Questions? Email us at <span style={{ color: C.ink }}>hatimtoor2025@gmail.com</span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Footer({ isMobile }) {
-  const navigate = useNavigate();
-  return (
-    <footer style={{ borderTop: BORDER, background: C.ink, padding: isMobile ? "24px 16px" : "32px 40px" }}>
-      <div style={{ maxWidth: 1320, margin: "0 auto", display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", justifyContent: "space-between" }}>
-        <div className="pixel" style={{ fontSize: 12, color: C.cream }}>
-          <span style={{ color: C.hot }}>CLIP</span>FORGE
-        </div>
-        <div style={{ display: "flex", gap: 20 }}>
-          <button onClick={() => navigate("/privacy")} className="pixel" style={{ background: "transparent", color: `${C.cream}88`, fontSize: 7, cursor: "pointer", padding: "8px 6px" }}>PRIVACY</button>
-          <button onClick={() => navigate("/terms")} className="pixel" style={{ background: "transparent", color: `${C.cream}88`, fontSize: 7, cursor: "pointer", padding: "8px 6px" }}>TERMS</button>
-        </div>
-        <div className="vt" style={{ fontSize: 16, color: `${C.cream}66` }}>© 2025 ClipForge</div>
-      </div>
-    </footer>
-  );
-}
+const FREE_FEATURES = [
+  "10 jobs per month",
+  "Up to 3 clips per job (≈30 clips/mo)",
+  "Word-by-word captions",
+  "Hook scoring",
+  "Download MP4",
+];
+const PRO_FEATURES = [
+  "Unlimited clips",
+  "10 clips per job",
+  "Word-by-word captions",
+  "Hook scoring",
+  "Download MP4",
+  "9:16 auto-reframe",
+  "Blur background style",
+  "Background music",
+  "Trim silence",
+  "Caption styles & colors",
+  "Watchlist automation",
+  "Digest (backfill history)",
+  "YouTube auto-upload",
+  "TikTok posting",
+];
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const isMobile = useMobile();
-
-  const onLogin  = () => navigate("/login");
+  const onLogin = () => navigate("/login");
   const onSignup = () => navigate("/login?mode=signup");
 
   return (
-    <div style={{ minHeight: "100vh", overflowX: "clip" }}>
-      <LandingHeader onLogin={onLogin} onSignup={onSignup} isMobile={isMobile} />
-      <HeroSection onSignup={onSignup} isMobile={isMobile} />
-      <LiveStats isMobile={isMobile} />
-      <HowItWorksSection isMobile={isMobile} />
-      <FeaturesSection isMobile={isMobile} />
-      <ToolsSection isMobile={isMobile} />
-      <WatchlistSection onSignup={onSignup} isMobile={isMobile} />
-      <PricingSection onSignup={onSignup} isMobile={isMobile} />
-      <Footer isMobile={isMobile} />
+    <div className="landing">
+      <nav className="landing__nav">
+        <Logo onClick={() => navigate("/")} />
+        <span style={{ flex: 1 }} />
+        <Button size="sm" variant="secondary" onClick={onLogin}>
+          Log in
+        </Button>
+        <span className="hide-sm">
+          <Button size="sm" onClick={onSignup}>
+            Get started
+          </Button>
+        </span>
+      </nav>
+
+      <section className="lhero">
+        <Tag tone="accent">⚡ AI-powered clip extraction</Tag>
+        <h1 className="lhero__title">
+          One long video.
+          <br />
+          <em>Ten viral shorts.</em>
+          <br />
+          Fully automatic.
+        </h1>
+        <p className="lhero__sub">
+          Drop any YouTube link. ClipForge's AI finds the best moments, burns captions, scores
+          hooks, and hands you shorts ready to post — in under 5 minutes.
+        </p>
+        <div className="lhero__cta">
+          <Button size="lg" onClick={onSignup}>
+            ⚡ Forge my first clips — free
+          </Button>
+          <span className="t-sm">No credit card · up to 30 free clips/month</span>
+        </div>
+        <div className="lstats">
+          {[
+            ["< 5 min", "turnaround"],
+            ["10 clips", "per video"],
+            ["100%", "auto captions"],
+            ["0 editing", "required"],
+          ].map(([stat, label]) => (
+            <div key={label} className="lstat">
+              <div className="lstat__num">{stat}</div>
+              <div className="lstat__label">{label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <LiveStats />
+
+      <section className="lsection lsection--tint">
+        <div className="lsection__inner">
+          <div style={{ textAlign: "center", marginBottom: 44 }}>
+            <div className="lsection__kicker">How it works</div>
+            <h2 className="lsection__title">Three steps. Done.</h2>
+          </div>
+          <div className="lgrid-3">
+            {STEPS.map((step) => (
+              <Card key={step.num} style={{ overflow: "hidden" }}>
+                <span className="lstep__num">{step.num}</span>
+                <div className="lstep__icon">{step.icon}</div>
+                <div className="lcard__title">{step.title}</div>
+                <p className="lcard__desc">{step.desc}</p>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="lsection">
+        <div className="lsection__inner">
+          <div className="lsplit">
+            <div>
+              <div className="lsection__kicker">Signal detection</div>
+              <h2 className="lsection__title">
+                We don't just cut clips.
+                <br />
+                <em style={{ fontStyle: "normal", color: "var(--accent)" }}>
+                  We find the moments that travel.
+                </em>
+              </h2>
+              <p className="lsection__sub" style={{ margin: "16px 0 22px", maxWidth: "none" }}>
+                ClipForge reads every word of your transcript and applies a multi-signal virality
+                model. Each clip gets a hook score so you know exactly what to post first.
+              </p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Tag tone="accent">Hook scoring</Tag>
+                <Tag>Transcript analysis</Tag>
+                <Tag>Frame detection</Tag>
+              </div>
+            </div>
+            <div className="lgrid-2 lgrid-2--keep">
+              {SIGNALS.map((s) => (
+                <Card key={s.title} sub style={{ padding: 16 }}>
+                  <div style={{ fontSize: 22, marginBottom: 8 }}>{s.emoji}</div>
+                  <div className="lcard__title">{s.title}</div>
+                  <p className="lcard__desc">{s.desc}</p>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="lsection lsection--tint">
+        <div className="lsection__inner">
+          <div style={{ textAlign: "center", marginBottom: 44 }}>
+            <div className="lsection__kicker">Built-in tools</div>
+            <h2 className="lsection__title">Everything in one pipeline.</h2>
+            <p className="lsection__sub">
+              No stitching together apps. Every tool runs in the same job — one link, one click,
+              one batch of ready-to-post clips.
+            </p>
+          </div>
+          <div className="lgrid-3">
+            {TOOLS.map((t) => (
+              <Card key={t.title} style={{ padding: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div className="lstep__icon" style={{ width: 38, height: 38, fontSize: 18, marginBottom: 0 }}>
+                    {t.icon}
+                  </div>
+                  <span style={{ flex: 1 }} />
+                  {t.tag && <Tag tone={t.tag === "Pro" ? "accent" : "success"}>{t.tag}</Tag>}
+                </div>
+                <div className="lcard__title">{t.title}</div>
+                <p className="lcard__desc">{t.desc}</p>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="lsection">
+        <div className="lsection__inner">
+          <Card style={{ padding: "clamp(24px, 4vw, 44px)" }}>
+            <div className="lsplit">
+              <div>
+                <Tag tone="accent">Pro feature</Tag>
+                <h2 className="lsection__title" style={{ margin: "16px 0" }}>
+                  Watchlist & Digest.
+                  <br />
+                  <em style={{ fontStyle: "normal", color: "var(--accent)" }}>
+                    Set it. Forget it. Never miss a clip.
+                  </em>
+                </h2>
+                <p className="lsection__sub" style={{ margin: "0 0 24px", maxWidth: "none" }}>
+                  <strong>Watchlist</strong> monitors any YouTube channel — the moment a new video
+                  drops, clipping starts automatically. <strong>Digest</strong> goes further:
+                  backfill the entire channel history and get clips from every video ever uploaded.
+                </p>
+                <Button onClick={onSignup}>→ Get Pro — start automating</Button>
+              </div>
+              <div style={{ display: "grid", gap: 12 }}>
+                {[
+                  ["📡", "Channel monitoring", "Add any YouTube channel URL. ClipForge polls for new uploads automatically."],
+                  ["⚡", "Instant processing", "New video detected? Clipping starts within minutes. No manual trigger needed."],
+                  ["📥", "Clips waiting for you", "Log in and find your shorts already rendered, captioned, and scored."],
+                  ["🔗", "Direct YT upload", "Pair with YouTube auto-upload and clips go live the same day they're created."],
+                ].map(([emoji, title, desc]) => (
+                  <Card key={title} sub style={{ padding: "14px 16px", display: "flex", gap: 14 }}>
+                    <span style={{ fontSize: 22, lineHeight: 1 }}>{emoji}</span>
+                    <div>
+                      <div className="lcard__title" style={{ marginBottom: 4 }}>
+                        {title}
+                      </div>
+                      <p className="lcard__desc">{desc}</p>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          </Card>
+        </div>
+      </section>
+
+      <section className="lsection lsection--tint">
+        <div className="lsection__inner">
+          <div style={{ textAlign: "center", marginBottom: 44 }}>
+            <div className="lsection__kicker">Pricing</div>
+            <h2 className="lsection__title">Start free. Go pro when ready.</h2>
+          </div>
+          <div className="lprice">
+            <Card>
+              <div className="t-label">Free</div>
+              <div className="lprice__num">$0</div>
+              <div className="t-sm lprice__muted" style={{ marginBottom: 22 }}>
+                forever · no card needed
+              </div>
+              <ul className="lprice__list">
+                {FREE_FEATURES.map((f) => (
+                  <li key={f}>
+                    <span className="lprice__check">✓</span> {f}
+                  </li>
+                ))}
+              </ul>
+              <Button variant="secondary" full onClick={onSignup}>
+                Start free
+              </Button>
+            </Card>
+            <Card className="lprice__card--pro">
+              <span className="lribbon">Most popular</span>
+              <div className="t-label" style={{ color: "rgba(245,241,234,.65)" }}>
+                Pro
+              </div>
+              <div className="lprice__num">
+                $29<span style={{ fontSize: 16, fontWeight: 600 }}>/mo</span>
+              </div>
+              <div className="t-sm lprice__muted" style={{ marginBottom: 22 }}>
+                or $290/yr — 2 months free
+              </div>
+              <ul className="lprice__list">
+                {PRO_FEATURES.map((f) => (
+                  <li key={f}>
+                    <span className="lprice__check">✓</span> {f}
+                  </li>
+                ))}
+              </ul>
+              <Button full onClick={onSignup}>
+                Get Pro
+              </Button>
+            </Card>
+          </div>
+          <div className="t-sm" style={{ textAlign: "center", marginTop: 28 }}>
+            Questions? Email us at{" "}
+            <a href="mailto:support@clipforging.com" style={{ color: "var(--accent-strong)" }}>
+              support@clipforging.com
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <footer className="lfoot">
+        <div className="lfoot__inner">
+          <div className="lfoot__logo">
+            <b>Clip</b>Forge
+          </div>
+          <div style={{ display: "flex", gap: 12 }}>
+            <button className="lfoot__link" onClick={() => navigate("/privacy")}>
+              Privacy
+            </button>
+            <button className="lfoot__link" onClick={() => navigate("/terms")}>
+              Terms
+            </button>
+          </div>
+          <div className="lfoot__muted">© 2026 ClipForge</div>
+        </div>
+      </footer>
+
+      <ThemeFab />
     </div>
   );
 }

@@ -1,15 +1,54 @@
 import { useState, useEffect, useRef } from "react";
-import { C, BORDER, SHADOW_SM } from "../lib/theme";
-import { PixelBtn, PixelCard } from "../components/ui";
-import Header from "../components/Header";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
-import { useMobile } from "../hooks/useMobile";
-import OnboardingTour from "../components/OnboardingTour";
+import {
+  Button,
+  Card,
+  Banner,
+  EmptyState,
+  Field,
+  SwitchRow,
+  SegmentedControl,
+  Tour,
+} from "../components/kit";
+
+const TOUR_STEPS = [
+  {
+    target: "#tour-cn-yt",
+    title: "Connect YouTube",
+    text: "One click and finished clips can upload straight to your channel — manually from the results page, or automatically from Watchlist and Digest.",
+  },
+  {
+    target: "#tour-cn-tt",
+    title: "Connect TikTok",
+    text: "Same idea for TikTok: connect once, then post clips directly without downloading and re-uploading.",
+  },
+];
+
+// Watermark sizes / opacities — ids are the exact values sent to the API.
+const POSITIONS = [
+  { id: "tl", label: "↖", title: "Top left" },
+  { id: "tr", label: "↗", title: "Top right" },
+  { id: "bl", label: "↙", title: "Bottom left" },
+  { id: "br", label: "↘", title: "Bottom right" },
+];
+const SIZES = [
+  { id: 0.1, label: "S" },
+  { id: 0.15, label: "M" },
+  { id: 0.22, label: "L" },
+];
+const OPACITIES = [
+  { id: 0.25, label: "25%" },
+  { id: 0.5, label: "50%" },
+  { id: 0.85, label: "85%" },
+];
+// Brand-color payload values (null = none). These are data sent to the
+// renderer, not UI theming — they must stay literal.
+const SWATCHES = [null, "#FFD400", "#00FFFF", "#FF4500", "#FF69B4", "#00FF88", "#FFFFFF"];
 
 // ── Brand kit (Pro): watermark logo + brand color for all rendered clips ─────
-function BrandKitCard({ isMobile }) {
-  const [brand, setBrand] = useState(null);   // {enabled, position, opacity, size, color, has_logo}
+function BrandKitCard() {
+  const [brand, setBrand] = useState(null); // {enabled, position, opacity, size, color, has_logo}
   const [logoUrl, setLogoUrl] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -18,10 +57,18 @@ function BrandKitCard({ isMobile }) {
   const loadLogo = async () => {
     try {
       const res = await authFetch("/api/brand/logo");
-      if (!res.ok) { setLogoUrl(null); return; }
+      if (!res.ok) {
+        setLogoUrl(null);
+        return;
+      }
       const url = URL.createObjectURL(await res.blob());
-      setLogoUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url; });
-    } catch { setLogoUrl(null); }
+      setLogoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+    } catch {
+      setLogoUrl(null);
+    }
   };
 
   useEffect(() => {
@@ -29,111 +76,248 @@ function BrandKitCard({ isMobile }) {
       try {
         const res = await authFetch("/api/brand");
         const d = await res.json();
-        if (res.ok) { setBrand(d); if (d.has_logo) loadLogo(); }
-      } catch { /* card stays hidden */ }
+        if (res.ok) {
+          setBrand(d);
+          if (d.has_logo) loadLogo();
+        }
+      } catch {
+        /* card stays hidden */
+      }
     })();
   }, []);
   // Revoke the last blob URL on unmount (the loader revokes prior ones).
-  useEffect(() => () => setLogoUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; }), []);
+  useEffect(
+    () => () =>
+      setLogoUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      }),
+    []
+  );
 
   const save = async (patch) => {
     // Functional update so rapid clicks on different settings each read the
     // latest committed state instead of a stale closure (dropped-change race).
     let next;
-    setBrand(prev => { next = { ...prev, ...patch }; return next; });
+    setBrand((prev) => {
+      next = { ...prev, ...patch };
+      return next;
+    });
     try {
       const res = await authFetch("/api/brand", {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: next.enabled, position: next.position,
-          opacity: next.opacity, size: next.size, color: next.color || null }),
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: next.enabled,
+          position: next.position,
+          opacity: next.opacity,
+          size: next.size,
+          color: next.color || null,
+        }),
       });
       if (!res.ok) setMsg((await res.json()).detail || "Save failed — did you run profiles_options.sql?");
       else setMsg("");
-    } catch { setMsg("Save failed"); }
+    } catch {
+      setMsg("Save failed");
+    }
   };
 
   const uploadLogo = async (file) => {
     if (!file) return;
-    setBusy(true); setMsg("");
+    setBusy(true);
+    setMsg("");
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await authFetch("/api/brand/logo", { method: "POST", body: fd });
-      if (!res.ok) { setMsg((await res.json()).detail || "Upload failed"); }
-      else { setBrand(b => ({ ...b, has_logo: true })); loadLogo(); }
-    } catch { setMsg("Upload failed"); }
+      if (!res.ok) {
+        setMsg((await res.json()).detail || "Upload failed");
+      } else {
+        setBrand((b) => ({ ...b, has_logo: true }));
+        loadLogo();
+      }
+    } catch {
+      setMsg("Upload failed");
+    }
     setBusy(false);
   };
 
   if (!brand) return null;
-  const chip = (on) => ({
-    padding: "7px 10px", fontSize: 8, cursor: "pointer",
-    background: on ? C.signal : C.cream2, color: C.ink,
-    border: on ? `2px solid ${C.ink}` : `2px solid ${C.ink}33`,
-    boxShadow: on ? `2px 2px 0 ${C.ink}` : "none",
-  });
-  const SWATCHES = [null, "#FFD400", "#00FFFF", "#FF4500", "#FF69B4", "#00FF88", "#FFFFFF"];
+  const sizeVal = SIZES.find((o) => Math.abs(brand.size - o.id) < 0.01)?.id;
+  const opacityVal = OPACITIES.find((o) => Math.abs(brand.opacity - o.id) < 0.01)?.id;
 
   return (
-    <PixelCard color={C.cream} padding={isMobile ? 16 : 22} style={{ marginTop: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-        <span className="pixel" style={{ fontSize: 11, background: C.peach, color: C.ink, padding: "8px 12px", border: BORDER }}>◆ BRAND KIT</span>
-        <button onClick={() => save({ enabled: !brand.enabled })} className="pixel" style={chip(brand.enabled)}>
-          {brand.enabled ? "✓ ON — applied to every clip" : "OFF"}
-        </button>
-      </div>
-      <div className="vt" style={{ fontSize: 15, color: C.dim2, marginBottom: 12 }}>
-        your logo watermarked on every rendered clip · brand color becomes the default caption highlight
-      </div>
-      {msg && <div className="vt" style={{ fontSize: 14, color: C.hotDeep, marginBottom: 8 }}>{msg}</div>}
+    <Card>
+      <div style={{ display: "grid", gap: 14 }}>
+        <div>
+          <div className="t-h2" style={{ margin: 0 }}>◆ Brand kit</div>
+          <div className="t-sm" style={{ color: "var(--text-2)", marginTop: 4 }}>
+            Your logo watermarked on every rendered clip · brand color becomes the default caption highlight
+          </div>
+        </div>
 
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
-        <div style={{ width: 120 }}>
-          <div onClick={() => fileRef.current?.click()} title="upload PNG logo"
-            style={{ width: 120, height: 120, border: BORDER, background: "#ffffff", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-            {logoUrl ? <img src={logoUrl} alt="logo" style={{ maxWidth: "100%", maxHeight: "100%" }} />
-              : <span className="pixel" style={{ fontSize: 8, color: C.dim2, textAlign: "center" }}>{busy ? "..." : "+ PNG LOGO"}</span>}
+        <SwitchRow
+          label="Apply to every clip"
+          hint={brand.enabled ? "On — watermark and brand color are applied to every render" : "Off"}
+          on={!!brand.enabled}
+          onChange={(v) => save({ enabled: v })}
+        />
+
+        {msg && <Banner tone="danger">{msg}</Banner>}
+
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div style={{ width: 120, flexShrink: 0 }}>
+            <div
+              onClick={() => fileRef.current?.click()}
+              title="Upload PNG logo"
+              style={{
+                width: 120,
+                height: 120,
+                border: "var(--border-w-sm) solid var(--line-strong)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--surface-2)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+              }}
+            >
+              {logoUrl ? (
+                <img src={logoUrl} alt="logo" style={{ maxWidth: "100%", maxHeight: "100%" }} />
+              ) : (
+                <span className="t-label" style={{ color: "var(--text-3)", textAlign: "center" }}>
+                  {busy ? "…" : "+ PNG logo"}
+                </span>
+              )}
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png"
+              style={{ display: "none" }}
+              onChange={(e) => uploadLogo(e.target.files?.[0])}
+            />
           </div>
-          <input ref={fileRef} type="file" accept="image/png" style={{ display: "none" }}
-            onChange={e => uploadLogo(e.target.files?.[0])} />
-        </div>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>POSITION</div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            {[["tl", "↖"], ["tr", "↗"], ["bl", "↙"], ["br", "↘"]].map(([id, icon]) => (
-              <button key={id} onClick={() => save({ position: id })} className="pixel" style={chip(brand.position === id)}>{icon}</button>
-            ))}
-          </div>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>SIZE</div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            {[[0.10, "S"], [0.15, "M"], [0.22, "L"]].map(([v, l]) => (
-              <button key={l} onClick={() => save({ size: v })} className="pixel" style={chip(Math.abs(brand.size - v) < 0.01)}>{l}</button>
-            ))}
-          </div>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>OPACITY</div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            {[[0.25, "25%"], [0.5, "50%"], [0.85, "85%"]].map(([v, l]) => (
-              <button key={l} onClick={() => save({ opacity: v })} className="pixel" style={chip(Math.abs(brand.opacity - v) < 0.01)}>{l}</button>
-            ))}
-          </div>
-          <div className="pixel" style={{ fontSize: 8, color: C.dim2, margin: "0 0 6px" }}>BRAND COLOR (default caption highlight)</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {SWATCHES.map(col => (
-              <button key={col || "none"} onClick={() => save({ color: col })} title={col || "none"} className="pixel"
-                style={{ ...chip(brand.color === col || (!brand.color && !col)), width: 34, height: 30,
-                  background: col || C.cream2 }}>{col ? "" : "–"}</button>
-            ))}
+
+          <div style={{ flex: 1, minWidth: 220, display: "grid", gap: 12 }}>
+            <Field label="Position">
+              <SegmentedControl value={brand.position} onChange={(id) => save({ position: id })} options={POSITIONS} />
+            </Field>
+            <Field label="Size">
+              <SegmentedControl value={sizeVal} onChange={(id) => save({ size: id })} options={SIZES} />
+            </Field>
+            <Field label="Opacity">
+              <SegmentedControl value={opacityVal} onChange={(id) => save({ opacity: id })} options={OPACITIES} />
+            </Field>
+            <Field label="Brand color" hint="Default caption highlight">
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {SWATCHES.map((col) => {
+                  const active = brand.color === col || (!brand.color && !col);
+                  return (
+                    <button
+                      key={col || "none"}
+                      type="button"
+                      onClick={() => save({ color: col })}
+                      title={col || "None"}
+                      aria-pressed={active}
+                      style={{
+                        width: 36,
+                        height: 30,
+                        cursor: "pointer",
+                        background: col || "var(--surface-2)",
+                        color: "var(--text-2)",
+                        border: "var(--border-w-sm) solid var(--line-strong)",
+                        borderRadius: "var(--radius-sm)",
+                        boxShadow: active ? "var(--focus-ring)" : "none",
+                      }}
+                    >
+                      {col ? "" : "–"}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
           </div>
         </div>
       </div>
-    </PixelCard>
+    </Card>
+  );
+}
+
+// ── One card per platform: header, connected account rows, connect CTA ───────
+function PlatformCard({ id, variant, icon, title, countLabel, rows, cta, onConnect }) {
+  return (
+    <Card id={id}>
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span
+            aria-hidden
+            style={{
+              width: 34,
+              height: 34,
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 16,
+              background: `var(--${variant}-soft)`,
+              color: `var(--${variant})`,
+              border: `var(--border-w-sm) solid var(--${variant})`,
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
+            {icon}
+          </span>
+          <div className="t-h2" style={{ margin: 0 }}>{title}</div>
+          <span className="t-sm" style={{ color: "var(--text-2)", marginLeft: "auto" }}>{countLabel}</span>
+        </div>
+
+        {rows.length > 0 && (
+          <div style={{ display: "grid", gap: 8 }}>
+            {rows.map((r) => (
+              <div
+                key={r.key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 8px 8px 12px",
+                  background: "var(--surface-2)",
+                  border: "var(--border-w-sm) solid var(--line)",
+                  borderRadius: "var(--radius-sm)",
+                }}
+              >
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontWeight: "var(--fw-ui)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {icon} {r.name}
+                </div>
+                <Button size="sm" variant="ghost" title="Disconnect" onClick={r.onDisconnect}>
+                  Disconnect
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div>
+          <Button variant={variant} onClick={onConnect}>+ {cta}</Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 
 export default function ConnectionsPage() {
   const { isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus } = useApp();
-  const isMobile = useMobile();
   const [error, setError] = useState("");
 
   const ytChannels = ytStatus?.channels || [];
@@ -146,8 +330,14 @@ export default function ConnectionsPage() {
     try {
       const res = await authFetch(`/api/${provider}/auth`);
       const data = await res.json();
-      if (!res.ok) { setError(data.detail || `${provider} auth failed.`); return; }
-      if (!data.auth_url) { setError("No auth URL returned."); return; }
+      if (!res.ok) {
+        setError(data.detail || `${provider} auth failed.`);
+        return;
+      }
+      if (!data.auth_url) {
+        setError("No auth URL returned.");
+        return;
+      }
       window.open(data.auth_url, `${provider}_auth`, "width=600,height=700,scrollbars=yes,resizable=yes");
       const onMsg = (e) => {
         if (e.data?.type === `${provider}_auth_success`) {
@@ -159,7 +349,9 @@ export default function ConnectionsPage() {
         }
       };
       window.addEventListener("message", onMsg);
-    } catch { setError("Cannot reach server."); }
+    } catch {
+      setError("Cannot reach server.");
+    }
   };
 
   const disconnectYt = async (id) => {
@@ -167,7 +359,9 @@ export default function ConnectionsPage() {
     try {
       await authFetch(`/api/youtube/disconnect?yt_channel_id=${encodeURIComponent(id)}`, { method: "DELETE" });
       refreshYtStatus();
-    } catch { setError("Could not disconnect. Try again."); }
+    } catch {
+      setError("Could not disconnect. Try again.");
+    }
   };
 
   const disconnectTt = async (id) => {
@@ -175,95 +369,79 @@ export default function ConnectionsPage() {
     try {
       await authFetch(`/api/tiktok/disconnect?tt_open_id=${encodeURIComponent(id)}`, { method: "DELETE" });
       refreshTtStatus();
-    } catch { setError("Could not disconnect. Try again."); }
+    } catch {
+      setError("Could not disconnect. Try again.");
+    }
   };
 
   if (!isPro) {
     return (
-      <div style={{ minHeight: "100vh" }}>
-        <Header />
-        <div className="fade" style={{ padding: isMobile ? "16px 12px" : "64px 32px", maxWidth: 1320, margin: "0 auto", textAlign: "center" }}>
-          <div className="pixel" style={{ fontSize: 11, color: C.dim2, marginBottom: 16 }}>PRO ONLY</div>
-          <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Upgrade to Pro to connect your social accounts.</p>
+      <div style={{ maxWidth: 900, margin: "0 auto", display: "grid", gap: 20 }}>
+        <div className="page-head">
+          <div className="page-head__title">Connections</div>
+          <div className="page-head__sub">Linked accounts for direct publishing.</div>
         </div>
+        <EmptyState
+          icon="🔒"
+          title="Pro only"
+          description="Upgrade to Pro to connect your social accounts."
+        />
       </div>
     );
   }
 
-  const AccountRow = ({ label, sub, onDisconnect }) => (
-    <div style={{ display: "flex", alignItems: "stretch", border: BORDER, boxShadow: SHADOW_SM, background: C.paper, marginBottom: 10 }}>
-      <div style={{ flex: 1, padding: "12px 14px", minWidth: 0 }}>
-        <div className="pixel" style={{ fontSize: 10, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
-        {sub && <div className="vt" style={{ fontSize: 14, color: C.dim2, marginTop: 2 }}>{sub}</div>}
-      </div>
-      <button onClick={onDisconnect} className="pixel" title="Disconnect"
-        style={{ padding: "0 16px", borderLeft: BORDER, background: "transparent", color: C.ink, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>×</button>
-    </div>
-  );
-
   return (
-    <div style={{ minHeight: "100vh" }}>
-      <Header />
-      <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 900, margin: "0 auto" }}>
-        <div style={{ marginBottom: 24 }}>
-          <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>CONNECTIONS</div>
-          <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink }}>Linked accounts.</h1>
-          <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
-            Connect the platforms you want to publish clips to. You can link multiple accounts.
-          </p>
+    <div style={{ maxWidth: 900, margin: "0 auto", display: "grid", gap: 20 }}>
+      <div className="page-head">
+        <div className="page-head__title">Connections</div>
+        <div className="page-head__sub">
+          Connect the platforms you want to publish clips to. You can link multiple accounts.
         </div>
-
-        {error && (
-          <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginBottom: 16, padding: "10px 12px", background: `${C.hot}44`, border: `2px solid ${C.hotDeep}` }}>
-            ! {error}
-          </div>
-        )}
-
-        <OnboardingTour storageKey="cf_tour_connections_v1" steps={[
-          { target: "#tour-cn-yt", title: "CONNECT YOUTUBE",
-            text: "One click and finished clips can upload straight to your channel — manually from the results page, or automatically from Watchlist and Digest." },
-          { target: "#tour-cn-tt", title: "CONNECT TIKTOK",
-            text: "Same idea for TikTok: connect once, then post clips directly without downloading and re-uploading." },
-        ]} />
-        {/* YouTube */}
-        <div id="tour-cn-yt">
-        <PixelCard color={C.cream} padding={isMobile ? 16 : 22} style={{ marginBottom: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-            <span className="pixel" style={{ fontSize: 11, background: C.yt, color: C.ink, padding: "8px 12px", border: BORDER }}>▶ YOUTUBE</span>
-            <span className="vt" style={{ fontSize: 15, color: C.dim2 }}>{ytChannels.length} channel{ytChannels.length === 1 ? "" : "s"} connected</span>
-          </div>
-          {ytChannels.map(ch => (
-            <AccountRow key={ch.yt_channel_id} label={`* ${ch.yt_channel_name || "YouTube"}`} onDisconnect={() => disconnectYt(ch.yt_channel_id)} />
-          ))}
-          <PixelBtn color="yt" size="md" onClick={() => connect("youtube")}>+ CONNECT YOUTUBE CHANNEL</PixelBtn>
-        </PixelCard>
-
-        {/* TikTok */}
-        </div>
-        <div id="tour-cn-tt">
-        <PixelCard color={C.cream} padding={isMobile ? 16 : 22}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-            <span className="pixel" style={{ fontSize: 11, background: C.tt, color: C.ink, padding: "8px 12px", border: BORDER }}>♪ TIKTOK</span>
-            <span className="vt" style={{ fontSize: 15, color: C.dim2 }}>{ttAccounts.length} account{ttAccounts.length === 1 ? "" : "s"} connected</span>
-          </div>
-          {ttAccounts.map(acc => (
-            <AccountRow key={acc.tt_open_id} label={`♪ ${acc.tt_display_name || "TikTok"}`} onDisconnect={() => disconnectTt(acc.tt_open_id)} />
-          ))}
-          <PixelBtn color="tt" size="md" onClick={() => connect("tiktok")}>+ CONNECT TIKTOK ACCOUNT</PixelBtn>
-        </PixelCard>
-        </div>
-
-        {/* Brand kit */}
-        <BrandKitCard isMobile={isMobile} />
-
-        <PixelCard color={C.lavender} padding={16} style={{ marginTop: 18, boxShadow: isMobile ? "none" : undefined }}>
-          <div className="pixel" style={{ fontSize: 9, color: C.ink, marginBottom: 6 }}>HOW IT WORKS</div>
-          <div className="vt" style={{ fontSize: 16, color: C.ink, lineHeight: 1.5 }}>
-            Once connected, you'll see upload buttons on your clips and can pick which account to post to.
-            Watchlist and Digest channels can also auto-upload to a connected account.
-          </div>
-        </PixelCard>
       </div>
+
+      {error && <Banner tone="danger">{error}</Banner>}
+
+      <PlatformCard
+        id="tour-cn-yt"
+        variant="yt"
+        icon="▶"
+        title="YouTube"
+        countLabel={`${ytChannels.length} channel${ytChannels.length === 1 ? "" : "s"} connected`}
+        rows={ytChannels.map((ch) => ({
+          key: ch.yt_channel_id,
+          name: ch.yt_channel_name || "YouTube",
+          onDisconnect: () => disconnectYt(ch.yt_channel_id),
+        }))}
+        cta="Connect YouTube channel"
+        onConnect={() => connect("youtube")}
+      />
+
+      <PlatformCard
+        id="tour-cn-tt"
+        variant="tt"
+        icon="♪"
+        title="TikTok"
+        countLabel={`${ttAccounts.length} account${ttAccounts.length === 1 ? "" : "s"} connected`}
+        rows={ttAccounts.map((acc) => ({
+          key: acc.tt_open_id,
+          name: acc.tt_display_name || "TikTok",
+          onDisconnect: () => disconnectTt(acc.tt_open_id),
+        }))}
+        cta="Connect TikTok account"
+        onConnect={() => connect("tiktok")}
+      />
+
+      <BrandKitCard />
+
+      <Card sub>
+        <div className="t-label" style={{ marginBottom: 6 }}>How it works</div>
+        <div className="t-sm" style={{ color: "var(--text-2)", lineHeight: "var(--lh-body)" }}>
+          Once connected, you'll see upload buttons on your clips and can pick which account to post to.
+          Watchlist and Digest channels can also auto-upload to a connected account.
+        </div>
+      </Card>
+
+      <Tour steps={TOUR_STEPS} storageKey="cf_tour_connections_v1" />
     </div>
   );
 }

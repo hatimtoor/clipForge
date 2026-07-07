@@ -1,25 +1,117 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { C, BORDER, SHADOW_SM, timeAgo } from "../lib/theme";
-import { PixelBtn, PixelCard, Tag } from "../components/ui";
-import Header from "../components/Header";
+import { timeAgo } from "../lib/theme";
 import { authFetch } from "../lib/supabase";
 import { useMobile } from "../hooks/useMobile";
-import OnboardingTour from "../components/OnboardingTour";
+import {
+  Button,
+  Card,
+  Tag,
+  EmptyState,
+  SegmentedControl,
+  Tour,
+} from "../components/kit";
 
 const PAGE_SIZE = 20;
 
-// Delete (×) button — PixelBtn tactile feel, turns red on hover
-function DeleteButton({ onDelete }) {
-  const [hover, setHover] = useState(false);
+const FILTERS = [
+  { id: "all", label: "All" },
+  { id: "done", label: "Done" },
+  { id: "error", label: "Failed" },
+];
+
+const TOUR_STEPS = [
+  {
+    target: "#tour-ar-head",
+    title: "Every job lives here",
+    text: "Reopen any job to watch and download its clips again, or hit Retry to re-run it with the exact same settings. Clip files expire after 7 days — your settings and history never do.",
+  },
+];
+
+const GRID_COLS = "minmax(0, 1fr) 110px 90px 110px 230px";
+
+function statusLabel(status) {
+  if (status === "done") return "Done";
+  if (status === "error") return "Failed";
+  if (status === "cancelled") return "Cancelled";
+  return status || "—";
+}
+
+function StatusTag({ status }) {
+  if (status === "done") return <Tag tone="success">✓ Done</Tag>;
+  if (status === "error")
+    return (
+      <Tag>
+        <span style={{ color: "var(--danger)" }}>✕ Failed</span>
+      </Tag>
+    );
+  return <Tag>{statusLabel(status)}</Tag>;
+}
+
+/* Per-row action cluster — identical actions on desktop and mobile. */
+function RowActions({ j, isDone, isErr, isProc, navigate, retryHref, onCancel, onDelete }) {
   return (
-    <PixelBtn color="cream" size="sm"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={(e) => { e.stopPropagation(); onDelete(); }}
-      style={{ background: hover ? C.ytDeep : C.cream2, color: hover ? C.cream : C.ink, padding: "9px 13px", fontSize: 13, lineHeight: 1 }}>
-      ×
-    </PixelBtn>
+    <>
+      {isDone && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/work?job=${j.job_id}`);
+          }}
+        >
+          Open →
+        </Button>
+      )}
+      {isErr && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(retryHref(j));
+          }}
+        >
+          ↻ Retry
+        </Button>
+      )}
+      {isProc && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/work?job=${j.job_id}`);
+          }}
+        >
+          ● Live →
+        </Button>
+      )}
+      {isProc && (
+        <Button
+          size="sm"
+          variant="danger"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancel(j.job_id);
+          }}
+        >
+          Cancel
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        title="Delete job"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(j.job_id);
+        }}
+      >
+        ✕
+      </Button>
+    </>
   );
 }
 
@@ -102,114 +194,223 @@ export default function ArchivePage() {
 
   useEffect(() => { fetchInitial(); }, []);
 
-  const filtered = (Array.isArray(jobs) ? jobs : []).filter(j => filter === "all" || j.status === filter);
+  const filtered = (Array.isArray(jobs) ? jobs : []).filter(
+    (j) => filter === "all" || j.status === filter
+  );
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      <Header />
-      <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 1320, margin: "0 auto" }}>
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 20, gap: 18, flexWrap: "wrap" }}>
-          <div>
-            <OnboardingTour storageKey="cf_tour_archive_v1" steps={[
-          { target: "#tour-ar-head", title: "EVERY JOB LIVES HERE",
-            text: "Reopen any job to watch and download its clips again, or hit RETRY to re-run it with the exact same settings. Clip files expire after 7 days — your settings and history never do." },
-        ]} />
-        <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }} id="tour-ar-head">
-              ARCHIVE — {jobs.length} JOBS LOADED
-            </div>
-            <h1 className="pixel" style={{ fontSize: 26, color: C.ink }}>The vault.</h1>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {[["all", "ALL"], ["done", "DONE"], ["error", "FAILED"]].map(([k, l]) => {
-              const a = filter === k;
-              const col = k === "done" ? "signal" : k === "error" ? "hot" : "cream";
-              return <PixelBtn key={k} color={a ? col : "cream"} onClick={() => setFilter(k)} size="md" style={a ? { transform: "translate(3px,3px)", boxShadow: `0 0 0 ${C.ink}` } : {}}>{l}</PixelBtn>;
-            })}
-            <PixelBtn color="lavender" size="md" onClick={fetchInitial}>Refresh</PixelBtn>
-          </div>
+    <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gap: 20 }}>
+      <div className="page-head" id="tour-ar-head">
+        <div className="page-head__title">Archive</div>
+        <div className="page-head__sub">
+          {jobs.length} {jobs.length === 1 ? "job" : "jobs"} loaded · clip files expire after 7
+          days — your settings and history never do
         </div>
-
-        {loading ? (
-          <PixelCard color={C.cream} padding={48} style={{ textAlign: "center" }}>
-            <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>Loading...</p>
-          </PixelCard>
-        ) : filtered.length === 0 ? (
-          <PixelCard color={C.cream} padding={48} style={{ textAlign: "center" }}>
-            <p className="vt" style={{ fontSize: 20, color: C.dim2 }}>No jobs to show. Forge some clips first.</p>
-          </PixelCard>
-        ) : isMobile ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filtered.map((j) => {
-              const isDone      = j.status === "done";
-              const isErr       = j.status === "error";
-              const isCancelled = j.status === "cancelled";
-              const isProc      = !["done", "error", "cancelled"].includes(j.status);
-              return (
-                <PixelCard key={j.job_id} color={C.cream} padding={16}
-                  style={{ cursor: isProc ? "pointer" : "default" }}
-                  onClick={() => isProc && navigate(`/work?job=${j.job_id}`)}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-                    <Tag bg={isDone ? C.signal : isErr ? C.hot : isCancelled ? C.cream2 : C.amber}>* {j.status?.toUpperCase()}</Tag>
-                    <span className="vt" style={{ fontSize: 15, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
-                    {isDone && j.clips?.length > 0 && <span className="pixel" style={{ fontSize: 8, color: C.ink }}>{j.clips.length} CLIPS</span>}
-                    <span style={{ marginLeft: "auto" }}><DeleteButton onDelete={() => handleDelete(j.job_id)} /></span>
-                  </div>
-                  <div className="mono" style={{ fontSize: 12, color: C.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: isErr ? 6 : 10 }}>{j.url}</div>
-                  {isErr && <div className="vt" style={{ fontSize: 15, color: C.hotDeep, marginBottom: 8 }}>! {j.error?.split("\n").pop()}</div>}
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {isDone  && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr   && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
-                    {isProc  && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
-                    {isProc  && <PixelBtn color="danger"   size="sm" onClick={e => { e.stopPropagation(); handleCancel(j.job_id); }}>CANCEL</PixelBtn>}
-                  </div>
-                </PixelCard>
-              );
-            })}
-          </div>
-        ) : (
-          <PixelCard color={C.cream} padding={0}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 200px", padding: "12px 20px", borderBottom: `3px solid ${C.ink}`, gap: 14, background: C.cream2 }}>
-              {["SOURCE", "STATUS", "CLIPS", "CREATED", "ACTIONS"].map(h => <span key={h} className="pixel" style={{ fontSize: 8, color: C.dim2 }}>{h}</span>)}
-            </div>
-            {filtered.map((j, i) => {
-              const isDone      = j.status === "done";
-              const isErr       = j.status === "error";
-              const isCancelled = j.status === "cancelled";
-              const isProc      = !["done", "error", "cancelled"].includes(j.status);
-              return (
-                <div key={j.job_id}
-                  onClick={() => isProc && navigate(`/work?job=${j.job_id}`)}
-                  style={{ display: "grid", gridTemplateColumns: "1fr 110px 110px 110px 200px", padding: "16px 20px", borderBottom: i < filtered.length - 1 ? `2px solid ${C.ink}22` : "none", gap: 14, alignItems: "center", cursor: isProc ? "pointer" : "default" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="mono" style={{ fontSize: 13, color: C.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.url}</div>
-                    {isErr && <div className="vt" style={{ fontSize: 16, color: C.hotDeep, marginTop: 2 }}>! {j.error?.split("\n").pop()}</div>}
-                  </div>
-                  <Tag bg={isDone ? C.signal : isErr ? C.hot : isCancelled ? C.cream2 : C.amber}>* {j.status?.toUpperCase()}</Tag>
-                  <span className="pixel" style={{ fontSize: 9, color: isDone ? C.ink : C.dim }}>
-                    {j.clips?.length > 0 ? `${j.clips.length} CLIPS` : "--"}
-                  </span>
-                  <span className="vt" style={{ fontSize: 16, color: C.dim2 }}>{timeAgo(j.created_at)}</span>
-                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
-                    {isDone  && <PixelBtn color="lavender" size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>OPEN {`>`}</PixelBtn>}
-                    {isErr   && <PixelBtn color="amber"    size="sm" onClick={e => { e.stopPropagation(); navigate(retryHref(j)); }}>RETRY</PixelBtn>}
-                    {isProc  && <PixelBtn color="hot"      size="sm" onClick={e => { e.stopPropagation(); navigate(`/work?job=${j.job_id}`); }}>LIVE {`>`}</PixelBtn>}
-                    {isProc  && <PixelBtn color="danger"   size="sm" onClick={e => { e.stopPropagation(); handleCancel(j.job_id); }}>CANCEL</PixelBtn>}
-                    <DeleteButton onDelete={() => handleDelete(j.job_id)} />
-                  </div>
-                </div>
-              );
-            })}
-          </PixelCard>
-        )}
-
-        {!loading && hasMore && (
-          <div style={{ textAlign: "center", marginTop: 24 }}>
-            <PixelBtn color="lavender" size="md" onClick={loadMore} disabled={loadingMore}>
-              {loadingMore ? "LOADING..." : "LOAD MORE"}
-            </PixelBtn>
-          </div>
-        )}
       </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <SegmentedControl options={FILTERS} value={filter} onChange={setFilter} />
+        <Button size="sm" variant="secondary" onClick={fetchInitial}>
+          ↻ Refresh
+        </Button>
+      </div>
+
+      {loading ? (
+        <Card>
+          <div className="t-sm" style={{ textAlign: "center", color: "var(--text-2)", padding: 24 }}>
+            Loading…
+          </div>
+        </Card>
+      ) : filtered.length === 0 ? (
+        <Card flush>
+          <EmptyState
+            icon="🗃️"
+            title="No jobs to show"
+            description="Forge some clips first."
+            action={<Button onClick={() => navigate("/hello")}>⚡ New job</Button>}
+          />
+        </Card>
+      ) : isMobile ? (
+        <div style={{ display: "grid", gap: 10 }}>
+          {filtered.map((j) => {
+            const isDone = j.status === "done";
+            const isErr = j.status === "error";
+            const isProc = !["done", "error", "cancelled"].includes(j.status);
+            return (
+              <Card
+                key={j.job_id}
+                style={{ cursor: isProc ? "pointer" : "default" }}
+                onClick={() => isProc && navigate(`/work?job=${j.job_id}`)}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    marginBottom: 8,
+                  }}
+                >
+                  <StatusTag status={j.status} />
+                  <span className="t-sm" style={{ color: "var(--text-3)" }}>
+                    {timeAgo(j.created_at)}
+                  </span>
+                  {isDone && j.clips?.length > 0 && (
+                    <span className="t-sm" style={{ color: "var(--text-2)" }}>
+                      {j.clips.length} clips
+                    </span>
+                  )}
+                </div>
+                <div
+                  className="t-mono"
+                  style={{
+                    fontSize: "var(--fs-sm)",
+                    color: "var(--text-1)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    marginBottom: isErr ? 6 : 10,
+                  }}
+                >
+                  {j.url}
+                </div>
+                {isErr && (
+                  <div
+                    className="t-sm"
+                    style={{ color: "var(--danger)", marginBottom: 8 }}
+                  >
+                    {j.error?.split("\n").pop()}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <RowActions
+                    j={j}
+                    isDone={isDone}
+                    isErr={isErr}
+                    isProc={isProc}
+                    navigate={navigate}
+                    retryHref={retryHref}
+                    onCancel={handleCancel}
+                    onDelete={handleDelete}
+                  />
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <Card flush>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: GRID_COLS,
+              gap: 14,
+              padding: "12px 20px",
+              background: "var(--surface-2)",
+              borderBottom: "var(--border-w-sm) solid var(--line)",
+            }}
+          >
+            {["Source", "Status", "Clips", "Created", ""].map((h, i) => (
+              <span key={i} className="t-label">
+                {h || "Actions"}
+              </span>
+            ))}
+          </div>
+          {filtered.map((j, i) => {
+            const isDone = j.status === "done";
+            const isErr = j.status === "error";
+            const isProc = !["done", "error", "cancelled"].includes(j.status);
+            return (
+              <div
+                key={j.job_id}
+                onClick={() => isProc && navigate(`/work?job=${j.job_id}`)}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: GRID_COLS,
+                  gap: 14,
+                  alignItems: "center",
+                  padding: "14px 20px",
+                  borderBottom:
+                    i < filtered.length - 1
+                      ? "var(--border-w-sm) solid var(--line)"
+                      : "none",
+                  cursor: isProc ? "pointer" : "default",
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    className="t-mono"
+                    style={{
+                      fontSize: "var(--fs-sm)",
+                      color: "var(--text-1)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {j.url}
+                  </div>
+                  {isErr && (
+                    <div className="t-sm" style={{ color: "var(--danger)", marginTop: 2 }}>
+                      {j.error?.split("\n").pop()}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <StatusTag status={j.status} />
+                </div>
+                <span
+                  className="t-sm"
+                  style={{ color: j.clips?.length > 0 ? "var(--text-1)" : "var(--text-3)" }}
+                >
+                  {j.clips?.length > 0 ? `${j.clips.length} clips` : "—"}
+                </span>
+                <span className="t-sm" style={{ color: "var(--text-2)" }}>
+                  {timeAgo(j.created_at)}
+                </span>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <RowActions
+                    j={j}
+                    isDone={isDone}
+                    isErr={isErr}
+                    isProc={isProc}
+                    navigate={navigate}
+                    retryHref={retryHref}
+                    onCancel={handleCancel}
+                    onDelete={handleDelete}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {!loading && hasMore && (
+        <div style={{ textAlign: "center" }}>
+          <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Load more"}
+          </Button>
+        </div>
+      )}
+
+      <Tour steps={TOUR_STEPS} storageKey="cf_tour_archive_v2" />
     </div>
   );
 }

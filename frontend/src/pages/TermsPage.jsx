@@ -1,33 +1,29 @@
-import { C } from "../lib/theme";
-import { PixelCard } from "../components/ui";
 import { useNavigate } from "react-router-dom";
-import { useMobile } from "../hooks/useMobile";
+import { Card, Button } from "../components/kit";
 
 export default function TermsPage() {
   const navigate = useNavigate();
-  const isMobile = useMobile();
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#b8a5e8 0%,#d8b6e0 30%,#f4c4d8 55%,#ffd2b8 80%,#ffe8c8 100%)", backgroundAttachment: "fixed" }}>
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: isMobile ? "24px 16px 48px" : "40px 32px 80px" }}>
+    <div style={{ minHeight: "100vh" }}>
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 20px 80px" }}>
 
         {/* Header */}
         <div style={{ marginBottom: 32 }}>
-          <button onClick={() => navigate("/")} className="pixel"
-            style={{ fontSize: 9, color: C.dim2, background: "transparent", border: "none", cursor: "pointer", marginBottom: 24, padding: 0 }}>
-            {"<"} BACK
-          </button>
-          <div className="pixel" style={{ fontSize: 11, color: C.hotDeep, marginBottom: 10 }}>LEGAL</div>
-          <h1 className="pixel" style={{ fontSize: 28, color: C.ink, marginBottom: 8 }}>Terms of Service</h1>
-          <p className="vt" style={{ fontSize: 17, color: C.dim2 }}>Last updated: June 21, 2026</p>
+          <div style={{ marginBottom: 20 }}>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/")}>← Back</Button>
+          </div>
+          <div className="t-label" style={{ color: "var(--accent-strong)", marginBottom: 8 }}>Legal</div>
+          <h1 className="t-display" style={{ margin: "0 0 8px" }}>Terms of Service</h1>
+          <p className="t-sm" style={{ margin: 0 }}>Last updated: June 21, 2026</p>
         </div>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="1. Agreement">
             By accessing or using ClipForge at clipforging.com ("the Service"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service. ClipForge is operated by Hatim Toor, Pakistan. Contact: hatimtoor2025@gmail.com.
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="2. Description of Service">
             ClipForge is an AI-powered tool that:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
@@ -39,13 +35,13 @@ export default function TermsPage() {
                 "Optionally uploads clips to your connected YouTube channel and/or TikTok account",
                 "Optionally monitors YouTube channels (Watchlist) and backfills a channel's past videos (Digest) to auto-process new and historical videos (Pro only)",
               ].map((item, i) => (
-                <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
+                <li key={i} style={{ marginBottom: 8, lineHeight: 1.55 }}>{item}</li>
               ))}
             </ul>
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="3. Acceptable Use">
             You agree to use ClipForge only for lawful purposes. You must not use the Service to:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
@@ -58,21 +54,21 @@ export default function TermsPage() {
                 "Use the Service for any automated bulk processing outside of the Watchlist feature",
                 "Circumvent plan limits through any means",
               ].map((item, i) => (
-                <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
+                <li key={i} style={{ marginBottom: 8, lineHeight: 1.55 }}>{item}</li>
               ))}
             </ul>
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="4. Your Content & Intellectual Property">
             You retain all rights to the videos you submit and the clips generated from them. By using ClipForge, you grant us a limited, non-exclusive license to process your submitted URLs and store your rendered clips solely for the purpose of delivering the Service to you.
             <br /><br />
             You are solely responsible for ensuring you have the right to process, clip, and redistribute any video you submit to ClipForge. We do not verify copyright ownership of submitted content.
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="5. YouTube, TikTok & Third-Party Platform Compliance">
             ClipForge uses yt-dlp to download YouTube videos for processing, and integrates with YouTube and TikTok for optional publishing. You acknowledge that:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
@@ -83,13 +79,13 @@ export default function TermsPage() {
                 "If you use the YouTube upload feature, you are responsible for the content uploaded to your channel",
                 "If you use the TikTok upload feature, you are responsible for the content you publish and for complying with TikTok's Terms of Service and Community Guidelines",
               ].map((item, i) => (
-                <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
+                <li key={i} style={{ marginBottom: 8, lineHeight: 1.55 }}>{item}</li>
               ))}
             </ul>
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="6. Plans, Limits & Payment">
             <SubSection title="Free Plan">
               Free accounts are limited to 10 jobs per month, each producing up to 3 clips (up to 30 clips per month). Limits reset every 30 days.
@@ -107,17 +103,17 @@ export default function TermsPage() {
               We offer refunds within 7 days of payment if the Service did not function as described. Because Lemon Squeezy is the Merchant of Record, refunds are issued through Lemon Squeezy; contact hatimtoor2025@gmail.com with your request. We do not offer refunds for partial billing periods beyond the 7-day window.
             </SubSection>
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="7. Service Availability">
             We aim to keep ClipForge running reliably but do not guarantee 100% uptime. The Service may be unavailable due to maintenance, server issues, or events outside our control. We are not liable for losses caused by downtime.
             <br /><br />
             Processing times depend on video length and server load. Typical processing time is 5–10 minutes for a 1-hour video. We do not guarantee specific processing times.
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="8. Disclaimer of Warranties">
             ClipForge is provided "as is" and "as available" without warranties of any kind, either express or implied. We do not warrant that:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
@@ -128,43 +124,43 @@ export default function TermsPage() {
                 "The Service will be uninterrupted or error-free",
                 "Any particular video can be successfully downloaded or processed",
               ].map((item, i) => (
-                <li key={i} className="vt" style={{ fontSize: 17, color: C.ink, marginBottom: 8, lineHeight: 1.5 }}>{item}</li>
+                <li key={i} style={{ marginBottom: 8, lineHeight: 1.55 }}>{item}</li>
               ))}
             </ul>
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="9. Limitation of Liability">
             To the maximum extent permitted by applicable law, Hatim Toor and ClipForge shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, or goodwill, arising from your use of or inability to use the Service.
             <br /><br />
             Our total liability to you for any claim arising from use of the Service shall not exceed the amount you paid us in the 3 months preceding the claim.
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="10. Account Termination">
             We reserve the right to suspend or terminate your account at any time if you violate these Terms. You may delete your account at any time by contacting hatimtoor2025@gmail.com.
             <br /><br />
             Upon termination, your access to the Service ends immediately. We may retain your data for up to 30 days after termination before permanent deletion.
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32} style={{ marginBottom: 24 }}>
+        <Card style={{ marginBottom: 20 }}>
           <Section title="11. Changes to Terms">
             We may modify these Terms at any time. Updated Terms will be posted at this URL with a new "Last updated" date. Continued use of the Service after changes constitutes acceptance of the new Terms.
           </Section>
-        </PixelCard>
+        </Card>
 
-        <PixelCard color={C.cream} padding={32}>
+        <Card>
           <Section title="12. Contact">
             For any questions about these Terms:
             <br /><br />
-            <span className="pixel" style={{ fontSize: 10, color: C.ink }}>Hatim Toor</span><br />
-            <span className="vt" style={{ fontSize: 17, color: C.dim2 }}>hatimtoor2025@gmail.com</span><br />
-            <span className="vt" style={{ fontSize: 17, color: C.dim2 }}>Pakistan</span>
+            <span style={{ fontWeight: 700 }}>Hatim Toor</span><br />
+            <span style={{ color: "var(--text-2)" }}>hatimtoor2025@gmail.com</span><br />
+            <span style={{ color: "var(--text-2)" }}>Pakistan</span>
           </Section>
-        </PixelCard>
+        </Card>
 
       </div>
     </div>
@@ -174,8 +170,8 @@ export default function TermsPage() {
 function Section({ title, children }) {
   return (
     <div>
-      <h2 className="pixel" style={{ fontSize: 13, color: C.ink, marginBottom: 16 }}>{title}</h2>
-      <div className="vt" style={{ fontSize: 17, color: C.ink, lineHeight: 1.6 }}>{children}</div>
+      <h2 className="t-h2" style={{ margin: "0 0 14px" }}>{title}</h2>
+      <div style={{ fontSize: "var(--fs-body)", color: "var(--text-1)", lineHeight: 1.65 }}>{children}</div>
     </div>
   );
 }
@@ -183,8 +179,8 @@ function Section({ title, children }) {
 function SubSection({ title, children }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginBottom: 6 }}>{title}</div>
-      <div className="vt" style={{ fontSize: 17, color: C.ink, lineHeight: 1.6 }}>{children}</div>
+      <div className="t-label" style={{ color: "var(--accent-strong)", marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: "var(--fs-body)", color: "var(--text-1)", lineHeight: 1.65 }}>{children}</div>
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { C, SHADOW_SM, BORDER } from "../lib/theme";
-import { PixelSprite, ANVIL, ANVIL_PAL, PixelBtn, Field, Tag } from "../components/ui";
 import { supabase } from "../lib/supabase";
+import { Button, Card, Banner, Field, TextInput, SegmentedControl, RetroSprite } from "../components/kit";
+import { ANVIL, ANVIL_PAL } from "../components/ui";
+import { IconAnvil } from "../components/shell/icons";
+import ThemeFab from "../components/theme/ThemeFab";
 
 // Instant-feedback blocklist of common disposable providers. The real,
 // unbypassable enforcement is the auth.users trigger in Supabase
@@ -35,11 +37,14 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState(searchParams.get("mode") === "signup" ? "signup" : "signin");
   const [signupDone, setSignupDone] = useState(false);
-  const [googleHover, setGoogleHover] = useState(false);
 
   const attempt = async () => {
-    if (!email || !pass) { setErr("Enter email and password."); return; }
-    setLoading(true); setErr("");
+    if (!email || !pass) {
+      setErr("Enter email and password.");
+      return;
+    }
+    setLoading(true);
+    setErr("");
     try {
       if (mode === "signup") {
         if (isDisposableEmail(email)) {
@@ -55,16 +60,26 @@ export default function LoginPage() {
           const msg = /disposable|not allowed|database error|already/i.test(error.message)
             ? "We couldn't create an account with this email. Please use a different permanent email address (temporary inboxes and aliases of an existing account aren't allowed)."
             : error.message;
-          setErr(msg); setLoading(false); return;
+          setErr(msg);
+          setLoading(false);
+          return;
         }
         setSignupDone(true);
         setLoading(false);
         return;
       }
       const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
-      if (error) { setErr(error.message); setLoading(false); return; }
+      if (error) {
+        setErr(error.message);
+        setLoading(false);
+        return;
+      }
       navigate("/hello");
-    } catch { setErr("Cannot reach server."); } finally { setLoading(false); }
+    } catch {
+      setErr("Cannot reach server.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGoogle = async () => {
@@ -77,80 +92,118 @@ export default function LoginPage() {
   };
 
   return (
-    <>
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden", padding: 24 }}>
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 80, background: `repeating-linear-gradient(90deg,${C.signalDeep} 0 8px,${C.signal} 8px 16px)`, borderTop: BORDER, zIndex: 0 }} />
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 80, height: 8, background: `repeating-linear-gradient(90deg,#5a3a1a 0 8px,#7a4a2a 8px 16px)`, borderTop: BORDER, zIndex: 0 }} />
-        <div style={{ position: "absolute", bottom: 84, left: "calc(50% - 280px)", zIndex: 1, animation: "bob 2s ease-in-out infinite" }}>
-          <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={6} />
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <Card style={{ width: 440, maxWidth: "94vw" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 24,
+            cursor: "pointer",
+          }}
+          onClick={() => navigate("/")}
+        >
+          <RetroSprite
+            data={ANVIL}
+            palette={ANVIL_PAL}
+            size={4}
+            modern={
+              <span style={{ color: "var(--accent)", display: "inline-flex" }}>
+                <IconAnvil size={24} />
+              </span>
+            }
+          />
+          <span className="side__logo-name" style={{ fontSize: 20 }}>
+            <b>Clip</b>Forge
+          </span>
         </div>
 
-        <div className="fade" style={{ position: "relative", zIndex: 2 }}>
-          <div style={{ background: C.cream, border: BORDER, boxShadow: `5px 5px 0 ${C.ink}`, padding: 36, width: 440, maxWidth: "90vw" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
-              <PixelSprite data={ANVIL} palette={ANVIL_PAL} size={4} />
-              <div className="pixel" style={{ fontSize: 18, color: C.ink }}><span style={{ color: C.hotDeep }}>CLIP</span>FORGE</div>
+        {signupDone ? (
+          <div style={{ textAlign: "center", display: "grid", gap: 14 }}>
+            <div className="t-h2" style={{ color: "var(--success)" }}>
+              ✓ Check your email
+            </div>
+            <p className="t-sm" style={{ margin: 0 }}>
+              We sent a confirmation link to <strong>{email}</strong>. Click it to activate your
+              account, then sign in.
+            </p>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setSignupDone(false);
+                setMode("signin");
+              }}
+            >
+              Back to sign in
+            </Button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 16 }}>
+            <SegmentedControl
+              value={mode}
+              onChange={(m) => {
+                setMode(m);
+                setErr("");
+              }}
+              options={[
+                { id: "signin", label: "Sign in" },
+                { id: "signup", label: "Sign up" },
+              ]}
+            />
+
+            <Field label="Email">
+              <TextInput
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                type="email"
+                autoComplete="email"
+              />
+            </Field>
+            <Field label="Password">
+              <TextInput
+                type="password"
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                placeholder="••••••••"
+                onKeyDown={(e) => e.key === "Enter" && attempt()}
+              />
+            </Field>
+
+            {err && <Banner tone="danger">{err}</Banner>}
+
+            <Button size="lg" full onClick={attempt} disabled={loading}>
+              {loading ? "Loading…" : mode === "signup" ? "Create account" : "→ Enter the forge"}
+            </Button>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1, height: 1, background: "var(--line)" }} />
+              <span className="t-label">or</span>
+              <div style={{ flex: 1, height: 1, background: "var(--line)" }} />
             </div>
 
-            {signupDone ? (
-              <div style={{ textAlign: "center" }}>
-                <div className="pixel" style={{ fontSize: 11, color: C.signalDeep, marginBottom: 12 }}>v CHECK YOUR EMAIL</div>
-                <p className="vt" style={{ fontSize: 18, color: C.dim2 }}>We sent a confirmation link to <strong style={{ color: C.ink }}>{email}</strong>. Click it to activate your account, then sign in.</p>
-                <div style={{ marginTop: 20 }}>
-                  <PixelBtn color="cream" onClick={() => { setSignupDone(false); setMode("signin"); }}>BACK TO SIGN IN</PixelBtn>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-                  {[["signin", "SIGN IN"], ["signup", "SIGN UP"]].map(([m, l]) => (
-                    <button key={m} onClick={() => { setMode(m); setErr(""); }} className="pixel" style={{
-                      flex: 1, padding: "10px", fontSize: 9,
-                      background: mode === m ? (m === "signup" ? C.signal : C.hot) : C.paper,
-                      color: C.ink, border: BORDER,
-                      boxShadow: mode === m ? `0 0 0 ${C.ink}` : SHADOW_SM,
-                      transform: mode === m ? "translate(3px,3px)" : "none",
-                      cursor: "pointer",
-                    }}>{l}</button>
-                  ))}
-                </div>
-
-                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <Field label="EMAIL">
-                    <input value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" type="email" className="mono" autoComplete="email"
-                      style={{ width: "100%", padding: "12px 14px", background: C.paper, border: BORDER, color: C.ink, fontSize: 14, fontWeight: 500, boxShadow: SHADOW_SM }} />
-                  </Field>
-                  <Field label="PASSWORD">
-                    <input type="password" value={pass} onChange={e => setPass(e.target.value)} placeholder="••••••••" className="mono"
-                      onKeyDown={e => e.key === "Enter" && attempt()}
-                      style={{ width: "100%", padding: "12px 14px", background: C.paper, border: BORDER, color: C.ink, fontSize: 14, fontWeight: 500, boxShadow: SHADOW_SM }} />
-                  </Field>
-
-                  {err && <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, padding: "8px 10px", background: `${C.hot}55`, border: `2px solid ${C.hotDeep}` }}>! {err}</div>}
-
-                  <PixelBtn color="signal" size="lg" full onClick={attempt} disabled={loading}>
-                    {loading && <span style={{ width: 10, height: 10, background: C.ink, animation: "blink .4s steps(1) infinite" }} />}
-                    {loading ? "LOADING..." : mode === "signup" ? "> CREATE ACCOUNT" : "> ENTER FORGE"}
-                  </PixelBtn>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0" }}>
-                    <div style={{ flex: 1, height: 2, background: `${C.ink}22` }} />
-                    <span className="pixel" style={{ fontSize: 8, color: C.dim }}>OR</span>
-                    <div style={{ flex: 1, height: 2, background: `${C.ink}22` }} />
-                  </div>
-
-                  <PixelBtn color="cream" size="md" full onClick={handleGoogle}
-                    style={{ background: googleHover ? C.lavender : C.cream }}
-                    onMouseEnter={() => setGoogleHover(true)}
-                    onMouseLeave={() => setGoogleHover(false)}>
-                    G&nbsp; CONTINUE WITH GOOGLE
-                  </PixelBtn>
-                </div>
-              </>
-            )}
+            <Button variant="secondary" full onClick={handleGoogle}>
+              <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.4 17.7 9.5 24 9.5Z" />
+                <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5Z" />
+                <path fill="#FBBC05" d="M10.4 28.7a14.5 14.5 0 0 1 0-9.4l-7.8-6.1a24 24 0 0 0 0 21.6l7.8-6.1Z" />
+                <path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.4-5.5l-7.5-5.8c-2.1 1.4-4.8 2.3-7.9 2.3-6.3 0-11.7-3.9-13.6-9.3l-7.8 6.1C6.5 42.6 14.6 48 24 48Z" />
+              </svg>
+              Continue with Google
+            </Button>
           </div>
-        </div>
-      </div>
-    </>
+        )}
+      </Card>
+      <ThemeFab />
+    </div>
   );
 }

@@ -1,12 +1,20 @@
 import { useState, useEffect } from "react";
-import { C, BORDER, SHADOW_SM } from "../lib/theme";
-import { PixelBtn, PixelCard, Tag } from "../components/ui";
-import Header from "../components/Header";
+import { Button, Card, ProBadge, Banner, EmptyState } from "../components/kit";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
-import { useMobile } from "../hooks/useMobile";
 
-const STATUS_COLORS = { scheduled: C.amber, publishing: C.signal, done: C.signal, error: C.hot, cancelled: C.cream2 };
+/* Status → tag tint (CSS vars so both themes work automatically). */
+const STATUS_TINTS = {
+  scheduled: { background: "var(--warning-soft)", color: "var(--warning)", borderColor: "transparent" },
+  publishing: { background: "var(--accent-soft)", color: "var(--accent-strong)", borderColor: "transparent" },
+  done: { background: "var(--success-soft)", color: "var(--success)", borderColor: "transparent" },
+  error: { background: "var(--danger-soft)", color: "var(--danger)", borderColor: "transparent" },
+};
+
+const PLATFORM_TINTS = {
+  youtube: { background: "var(--yt-soft)", color: "var(--yt)", borderColor: "transparent" },
+  tiktok: { background: "var(--tt-soft)", color: "var(--tt)", borderColor: "transparent" },
+};
 
 const dayLabel = (iso) => {
   const d = new Date(iso);
@@ -20,7 +28,6 @@ const dayLabel = (iso) => {
 
 export default function CalendarPage() {
   const { isPro } = useApp();
-  const isMobile = useMobile();
   const [posts, setPosts] = useState(null);
   const [error, setError] = useState("");
 
@@ -51,72 +58,117 @@ export default function CalendarPage() {
     upcoming.reduce((acc, p) => { (acc[dayLabel(p.publish_at)] ??= []).push(p); return acc; }, {})
   ).sort((a, b) => new Date(a[1][0].publish_at) - new Date(b[1][0].publish_at));
 
-  const Row = ({ p, showCancel }) => (
-    <div style={{ display: "flex", alignItems: "stretch", border: BORDER, boxShadow: SHADOW_SM, background: C.paper, marginBottom: 8 }}>
+  const Row = ({ p, showCancel, first }) => (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "12px 14px",
+        borderTop: first ? "none" : "1px solid var(--line)",
+      }}
+    >
       {p.thumbnail_url && (
-        <img src={p.thumbnail_url} alt="" style={{ width: 54, objectFit: "cover", borderRight: BORDER }} />
+        <img
+          src={p.thumbnail_url}
+          alt=""
+          style={{
+            width: 44,
+            height: 58,
+            objectFit: "cover",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--line)",
+            flexShrink: 0,
+          }}
+        />
       )}
-      <div style={{ flex: 1, padding: "10px 12px", minWidth: 0 }}>
-        <div className="pixel" style={{ fontSize: 9, color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {p.platform === "youtube" ? "▶" : "♪"} {p.clip_title}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            color: "var(--text-1)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <span className="show-sm">{p.platform === "youtube" ? "▶ " : "♪ "}</span>
+          {p.clip_title}
         </div>
-        <div className="vt" style={{ fontSize: 14, color: C.dim2, marginTop: 2 }}>
+        <div className="t-sm" style={{ color: "var(--text-3)", marginTop: 2 }}>
           {new Date(p.publish_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-          {" · "}{p.platform}
           {p.error ? ` · ${p.error.slice(0, 80)}` : ""}
         </div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flexShrink: 0 }}>
-        <Tag bg={STATUS_COLORS[p.status] || C.cream2}>{p.status.toUpperCase()}</Tag>
-        {showCancel && (
-          <button onClick={() => cancel(p.id)} className="pixel" title="Cancel"
-            style={{ padding: "4px 10px", background: "transparent", color: C.ink, border: BORDER, fontSize: 10, cursor: "pointer" }}>×</button>
-        )}
-      </div>
+      <span className="tag hide-sm" style={PLATFORM_TINTS[p.platform] || undefined}>
+        {p.platform === "youtube" ? "▶ YouTube" : p.platform === "tiktok" ? "♪ TikTok" : p.platform}
+      </span>
+      <span className="tag" style={STATUS_TINTS[p.status] || undefined}>
+        {p.status}
+      </span>
+      {showCancel && (
+        <Button size="sm" variant="ghost" title="Cancel" onClick={() => cancel(p.id)}>
+          ✕
+        </Button>
+      )}
     </div>
   );
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      <Header />
-      <div className="fade" style={{ padding: isMobile ? "16px 12px 48px" : "32px 32px 64px", maxWidth: 900, margin: "0 auto" }}>
-        <div style={{ marginBottom: 24 }}>
-          <div className="pixel" style={{ fontSize: 10, color: C.dim2, marginBottom: 10 }}>CALENDAR</div>
-          <h1 className="pixel" style={{ fontSize: isMobile ? 18 : 26, color: C.ink }}>Scheduled posts.</h1>
-          <p className="vt" style={{ fontSize: 18, color: C.dim2, marginTop: 6 }}>
-            Queue clips from any job's ▾ MORE menu — they publish automatically at the time you pick.
-          </p>
+    <div style={{ maxWidth: 1000, margin: "0 auto", display: "grid", gap: 20 }}>
+      <div className="page-head">
+        <div className="page-head__title">Calendar</div>
+        <div className="page-head__sub">
+          Queue clips from any results page — they publish automatically at the time you pick.
         </div>
-
-        {error && <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginBottom: 16 }}>! {error}</div>}
-        {!isPro && (
-          <PixelCard color={C.cream} padding={20} style={{ marginBottom: 16 }}>
-            <span className="vt" style={{ fontSize: 17, color: C.dim2 }}>Scheduling is a Pro feature. </span>
-            <Tag bg={C.amber}>PRO</Tag>
-          </PixelCard>
-        )}
-
-        {posts === null && !error && <p className="vt" style={{ fontSize: 16, color: C.dim2 }}>loading…</p>}
-        {posts !== null && upcoming.length === 0 && (
-          <PixelCard color={C.cream} padding={26} style={{ textAlign: "center", marginBottom: 18 }}>
-            <p className="vt" style={{ fontSize: 18, color: C.dim2 }}>Nothing scheduled. Open a clip's ▾ MORE menu → ⏰ SCHEDULE.</p>
-          </PixelCard>
-        )}
-
-        {groups.map(([label, items]) => (
-          <div key={label} style={{ marginBottom: 18 }}>
-            <div className="pixel" style={{ fontSize: 9, color: C.hotDeep, marginBottom: 8 }}>{label}</div>
-            {items.map(p => <Row key={p.id} p={p} showCancel />)}
-          </div>
-        ))}
-
-        {settled.length > 0 && (
-          <div style={{ marginTop: 26 }}>
-            <div className="pixel" style={{ fontSize: 9, color: C.dim2, marginBottom: 8 }}>HISTORY</div>
-            {settled.slice(0, 20).map(p => <Row key={p.id} p={p} showCancel={p.status === "error"} />)}
-          </div>
-        )}
       </div>
+
+      {error && (
+        <Banner tone="danger" title="Couldn't load the schedule">
+          {error}
+        </Banner>
+      )}
+
+      {!isPro && (
+        <Banner tone="info" title="Scheduling is a Pro feature" action={<ProBadge />}>
+          Upgrade to queue clips and let them publish themselves.
+        </Banner>
+      )}
+
+      {posts === null && !error && (
+        <div className="t-sm" style={{ color: "var(--text-3)" }}>Loading…</div>
+      )}
+
+      {posts !== null && upcoming.length === 0 && (
+        <Card flush>
+          <EmptyState
+            icon="🗓"
+            title="Nothing scheduled"
+            description="Schedule a clip from any results page — pick a time and it posts itself."
+          />
+        </Card>
+      )}
+
+      {groups.map(([label, items]) => (
+        <div key={label}>
+          <div className="t-label" style={{ marginBottom: 8 }}>{label}</div>
+          <Card flush>
+            {items.map((p, i) => (
+              <Row key={p.id} p={p} showCancel first={i === 0} />
+            ))}
+          </Card>
+        </div>
+      ))}
+
+      {settled.length > 0 && (
+        <div>
+          <div className="t-label" style={{ marginBottom: 8 }}>History</div>
+          <Card flush>
+            {settled.slice(0, 20).map((p, i) => (
+              <Row key={p.id} p={p} showCancel={p.status === "error"} first={i === 0} />
+            ))}
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

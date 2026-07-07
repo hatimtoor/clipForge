@@ -27,7 +27,6 @@ function ScrollToTop() {
 }
 import { AppContext } from "./context/AppContext";
 import { supabase, authFetch } from "./lib/supabase";
-import LegacyPage   from "./components/LegacyPage";
 import AppShell     from "./components/shell/AppShell";
 import ThemeTransition from "./components/theme/ThemeTransition";
 import KitPage      from "./pages/KitPage";
@@ -151,20 +150,20 @@ export default function App() {
         )}
         <ErrorBoundary>
         <Routes>
-          <Route path="/"       element={authed ? <Navigate to="/hello" replace /> : <LegacyPage><LandingPage /></LegacyPage>} />
-          <Route path="/login" element={authed ? <Navigate to="/hello" replace /> : <LegacyPage><LoginPage /></LegacyPage>} />
+          <Route path="/"       element={authed ? <Navigate to="/hello" replace /> : <LandingPage />} />
+          <Route path="/login" element={authed ? <Navigate to="/hello" replace /> : <LoginPage />} />
           <Route element={<PrivateRoute><AppShell /></PrivateRoute>}>
             <Route path="/hello" element={<HelloPage />} />
             <Route path="/work" element={<WorkPage />} />
+            <Route path="/archive" element={<ArchivePage />} />
+            <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/connections" element={<ConnectionsPage />} />
+            <Route path="/upgrade" element={<UpgradePage />} />
+            <Route path="/watchlist" element={<WatchlistPage />} />
+            <Route path="/digest" element={<DigestPage />} />
           </Route>
-          <Route path="/watchlist" element={<PrivateRoute><LegacyPage><WatchlistPage /></LegacyPage></PrivateRoute>} />
-          <Route path="/digest"    element={<PrivateRoute><LegacyPage><DigestPage /></LegacyPage></PrivateRoute>} />
-          <Route path="/connections" element={<PrivateRoute><LegacyPage><ConnectionsPage /></LegacyPage></PrivateRoute>} />
-          <Route path="/calendar"  element={<PrivateRoute><LegacyPage><CalendarPage /></LegacyPage></PrivateRoute>} />
-          <Route path="/upgrade"   element={<PrivateRoute><LegacyPage><UpgradePage /></LegacyPage></PrivateRoute>} />
-          <Route path="/archive"   element={<PrivateRoute><LegacyPage><ArchivePage /></LegacyPage></PrivateRoute>} />
-          <Route path="/privacy"   element={<LegacyPage><PrivacyPage /></LegacyPage>} />
-          <Route path="/terms"     element={<LegacyPage><TermsPage /></LegacyPage>} />
+          <Route path="/privacy"   element={<PrivacyPage />} />
+          <Route path="/terms"     element={<TermsPage />} />
           {import.meta.env.DEV && (
             <Route element={<AppShell />}>
               <Route path="/kit" element={<KitPage />} />

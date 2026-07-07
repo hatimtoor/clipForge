@@ -1540,7 +1540,9 @@ async def translate_segments(segments: list, target_lang: str, job_id: str) -> l
                 model=GROQ_ANALYSIS_MODEL,
                 messages=[{"role": "user", "content": p}],
                 temperature=0.1,
-                max_tokens=4000,
+                # Under Groq's 8k TPM per-request ceiling (30 short caption
+                # strings need well under this); 4000 risked a 413 on dense batches.
+                max_tokens=2000,
             )
             return r.choices[0].message.content.strip()
 

@@ -6870,7 +6870,8 @@ async def get_tiktok_upload_status(job_id: str, clip_index: int, user=Depends(re
 
 
 @app.post("/api/jobs/{job_id}/clips/{clip_index}/refresh_analytics")
-async def refresh_clip_analytics(job_id: str, clip_index: int, user=Depends(require_auth)):
+@_limiter.limit("20/minute")
+async def refresh_clip_analytics(request: Request, job_id: str, clip_index: int, user=Depends(require_auth)):
     if not YOUTUBE_API_KEY:
         raise HTTPException(503, "YOUTUBE_API_KEY not configured on server")
     job = db_get_job(job_id)

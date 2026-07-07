@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
-import { useMobile } from "../hooks/useMobile";
 import {
   Button, Card, Tag, ProBadge, Banner, EmptyState,
   Field, TextInput, Select, SwitchRow, SegmentedControl,
@@ -32,7 +31,6 @@ const TOUR_STEPS = [
 ];
 
 function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
-  const isMobile = useMobile();
   const isCompleted = bf.status === "completed";
   const processed = (bf.processed_video_ids || []).length;
   const total = bf.total_videos || 0;
@@ -53,63 +51,56 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
 
   return (
     <Card flush>
-      <div style={{
-        display: "grid", alignItems: "stretch",
-        gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) 240px",
-      }}>
-        {/* Left: channel info, progress, per-video settings */}
-        <div style={{
-          padding: isMobile ? 16 : 20, minWidth: 0,
-          borderRight: isMobile ? "none" : "var(--border-w-sm) solid var(--line)",
-          borderBottom: isMobile ? "var(--border-w-sm) solid var(--line)" : "none",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
-            <span style={{
-              fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis",
-              whiteSpace: "nowrap", maxWidth: isMobile ? "60vw" : "none",
-            }}>
-              {bf.channel_name || bf.channel_url}
-            </span>
-            {isCompleted && <Tag tone="success">✓ Done</Tag>}
-          </div>
-          <div className="t-sm" style={{ color: "var(--text-3)", marginTop: 2, marginBottom: 14, wordBreak: "break-all" }}>
-            {bf.channel_url}
-          </div>
-
-          {isCompleted ? (
-            <Banner tone="success">
-              All {total} videos from the {bf.days_back}-day window have been clipped and posted!
-            </Banner>
-          ) : (
-            <div style={{ display: "grid", gap: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <ProgressBar progress={progressMax > 0 ? Math.min(100, Math.round((processed / progressMax) * 100)) : 0} />
-                </div>
-                <span className="t-sm" style={{ color: "var(--text-3)", flexShrink: 0 }}>
-                  {processed}/{progressMax}
-                </span>
-              </div>
-
-              <ChannelSettingsChips
-                settings={settings}
-                videoId={(bf.processed_video_ids || [])[0] || null}
-                minDurMax={120}
-              />
-
-              <CollapsibleSection title="AI direction & music" hint="Find/exclude prompts, background music">
-                <PromptsAndMusic source={bf} patch={patch} />
-              </CollapsibleSection>
-            </div>
-          )}
+      {/* Channel info, progress, per-video settings */}
+      <div style={{ padding: "16px 20px", display: "grid", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
+          <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+            {bf.channel_name || bf.channel_url}
+          </span>
+          {isCompleted && <Tag tone="success">✓ Done</Tag>}
+        </div>
+        <div className="t-sm" style={{ color: "var(--text-3)", wordBreak: "break-all" }}>
+          {bf.channel_url}
         </div>
 
-        {/* Right: pace, destinations, actions */}
-        <div style={{ padding: isMobile ? 16 : 20, display: "grid", gap: 12, alignContent: "start" }}>
-          <SwitchRow label="🎉 Auto-upload" hint="Post finished clips automatically"
-            on={autoUpload}
-            onChange={(v) => { setAutoUpload(v); patch({ auto_upload: v }); }} />
+        {isCompleted ? (
+          <Banner tone="success">
+            All {total} videos from the {bf.days_back}-day window have been clipped and posted!
+          </Banner>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <ProgressBar progress={progressMax > 0 ? Math.min(100, Math.round((processed / progressMax) * 100)) : 0} />
+              </div>
+              <span className="t-sm" style={{ color: "var(--text-3)", flexShrink: 0 }}>
+                {processed}/{progressMax}
+              </span>
+            </div>
+            <ChannelSettingsChips
+              settings={settings}
+              videoId={(bf.processed_video_ids || [])[0] || null}
+              minDurMax={120}
+            />
+          </>
+        )}
+      </div>
 
+      {!isCompleted && (
+        <div style={{ borderTop: "1px solid var(--line)", padding: "6px 20px" }}>
+          <CollapsibleSection title="AI direction & music" hint="Find/exclude prompts, background music">
+            <PromptsAndMusic source={bf} patch={patch} />
+          </CollapsibleSection>
+        </div>
+      )}
+
+      {/* Pace, destinations, actions — stacked below, like the Watchlist card */}
+      <div style={{ borderTop: "1px solid var(--line)", padding: "14px 20px", display: "grid", gap: 12 }}>
+        <SwitchRow label="🎉 Auto-upload" hint="Post finished clips automatically"
+          on={autoUpload}
+          onChange={(v) => { setAutoUpload(v); patch({ auto_upload: v }); }} />
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
           <Field label="Look back">
             <Select value={daysBack}
               onChange={(e) => { setDaysBack(Number(e.target.value)); patch({ days_back: Number(e.target.value) }); }}>
@@ -118,43 +109,44 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
               ))}
             </Select>
           </Field>
-
           <Field label="Videos / day">
             <SegmentedControl value={videosPerDay} options={VPD_OPTIONS}
               onChange={(id) => { setVideosPerDay(id); patch({ videos_per_day: id }); }} />
           </Field>
+        </div>
 
-          {ytChannels.length > 0 && (
-            <Field label={<span style={{ color: "var(--yt)" }}>▶ YouTube</span>}>
-              {ytChannels.length === 1 ? (
-                <Tag>{ytChannels[0].yt_channel_name || "YouTube"}</Tag>
-              ) : (
-                <Select value={ytChannelId}
-                  onChange={(e) => { setYtChannelId(e.target.value); patch({ yt_upload_channel_id: e.target.value }); }}>
-                  {ytChannels.map((c) => (
-                    <option key={c.yt_channel_id} value={c.yt_channel_id}>
-                      {c.yt_channel_name || c.yt_channel_id}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-          )}
-
-          {ttAccounts.length > 0 && (
-            <Field label="♪ TikTok">
-              <Select value={ttAccountId}
-                onChange={(e) => { setTtAccountId(e.target.value); patch({ tt_open_id: e.target.value || null }); }}>
-                <option value="">— off —</option>
-                {ttAccounts.map((a) => (
-                  <option key={a.tt_open_id} value={a.tt_open_id}>
-                    {a.tt_display_name || a.tt_open_id}
+        {ytChannels.length > 0 && (
+          <Field label={<span style={{ color: "var(--yt)" }}>▶ YouTube channel</span>}>
+            {ytChannels.length === 1 ? (
+              <Tag>{ytChannels[0].yt_channel_name || "YouTube"}</Tag>
+            ) : (
+              <Select value={ytChannelId}
+                onChange={(e) => { setYtChannelId(e.target.value); patch({ yt_upload_channel_id: e.target.value }); }}>
+                {ytChannels.map((c) => (
+                  <option key={c.yt_channel_id} value={c.yt_channel_id}>
+                    {c.yt_channel_name || c.yt_channel_id}
                   </option>
                 ))}
               </Select>
-            </Field>
-          )}
+            )}
+          </Field>
+        )}
 
+        {ttAccounts.length > 0 && (
+          <Field label="♪ TikTok account">
+            <Select value={ttAccountId}
+              onChange={(e) => { setTtAccountId(e.target.value); patch({ tt_open_id: e.target.value || null }); }}>
+              <option value="">— off —</option>
+              {ttAccounts.map((a) => (
+                <option key={a.tt_open_id} value={a.tt_open_id}>
+                  {a.tt_display_name || a.tt_open_id}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {!isCompleted && (
             <Button size="sm" variant="secondary" onClick={() => onRunNow(bf.id)}>
               ▶ Run now

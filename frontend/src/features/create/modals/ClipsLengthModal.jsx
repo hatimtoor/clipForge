@@ -1,7 +1,7 @@
 import { Modal, Button, Field, StepperInput } from "../../../components/kit";
 import { DURATION_BUCKETS } from "../constants";
 
-export default function ClipsLengthModal({ form, set, onClose }) {
+export default function ClipsLengthModal({ form, set, onClose, minDurMax = 90 }) {
   return (
     <Modal
       title="Clips & length"
@@ -24,7 +24,7 @@ export default function ClipsLengthModal({ form, set, onClose }) {
               value={form.minDur}
               onChange={(v) => set({ minDur: v })}
               min={15}
-              max={90}
+              max={minDurMax}
               step={5}
               suffix="s"
             />

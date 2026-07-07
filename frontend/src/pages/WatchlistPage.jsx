@@ -2,19 +2,15 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext";
 import { authFetch } from "../lib/supabase";
-import { useMobile } from "../hooks/useMobile";
 import {
   Button, Card, Tag, ProBadge, Banner, EmptyState, Field, TextInput, Select,
-  StepperInput, SwitchRow, SegmentedControl, OptionGrid, CollapsibleSection, Tour,
+  SwitchRow, CollapsibleSection, Tour,
 } from "../components/kit";
-import { CaptionStyleGrid, CUSTOMIZABLE_CAPTION_STYLES } from "../components/CaptionPreviews";
-import FacecamBoxModal from "../components/FacecamBoxModal";
 import {
-  LAYOUTS, VERTICAL_ONLY_LAYOUTS, CAM_BOX_LAYOUTS, FORMATS,
-  CAPTION_LANGUAGES, CAPTION_POSITIONS, HIGHLIGHT_SWATCHES, MUSIC_VOLUMES,
-} from "../features/create/constants";
-
-const CAPTION_FONT_DEFAULTS = { bold_bottom: 72, center_pop: 88, minimal: 56, simple: 56 };
+  useChannelSettingsForm,
+  ChannelSettingsChips,
+  PromptsAndMusic,
+} from "../features/create/ChannelClipSettings";
 
 const TOUR_STEPS = [
   {
@@ -25,7 +21,7 @@ const TOUR_STEPS = [
   {
     target: "#tour-wl-add",
     title: "Add a channel",
-    text: "Paste a channel URL, then open Clip settings on its card to pick layout, captions, prompts, and auto-upload targets.",
+    text: "Paste a channel URL, then use the settings chips on its card to pick layout, captions, enhancements, and auto-upload targets.",
   },
 ];
 
@@ -68,171 +64,9 @@ function UpgradeGate() {
   );
 }
 
-/* Per-channel clip settings — same fields the create flow offers, PATCHed to
-   /api/channels/:id as they change (backend field names are the contract). */
-function ChannelSettings({ ch, patch }) {
-  const isMobile = useMobile();
-  const [captionStyle, setCaptionStyle] = useState(ch.caption_style ?? "bold_bottom");
-  const [fontSize, setFontSize] = useState(ch.caption_font_size ?? null);
-  const [highlightColor, setHighlightColor] = useState(ch.caption_highlight_color ?? null);
-  const [captionLang, setCaptionLang] = useState(ch.caption_language ?? "source");
-  const [bgMusicUrl, setBgMusicUrl] = useState(ch.bg_music_url ?? "");
-  const [bgMusicVolume, setBgMusicVolume] = useState(ch.bg_music_volume ?? 0.15);
-  const [trimSilence, setTrimSilence] = useState(ch.trim_silence ?? false);
-  const [clipStyle, setClipStyle] = useState(ch.clip_style ?? "reframe");
-  const chOpt = ch.options || {};
-  const [removeFillers, setRemoveFillers] = useState(chOpt.remove_fillers ?? false);
-  const [aspectRatio, setAspectRatio] = useState(chOpt.aspect_ratio ?? "9:16");
-  const [captionPosition, setCaptionPosition] = useState(chOpt.caption_position ?? "default");
-  const [captionKeywords, setCaptionKeywords] = useState(chOpt.caption_keywords !== false);
-  const [captionEmoji, setCaptionEmoji] = useState(chOpt.caption_emoji !== false);
-  const [findPrompt, setFindPrompt] = useState(chOpt.style_prompt ?? "");
-  const [excludePrompt, setExcludePrompt] = useState(chOpt.exclude_prompt ?? "");
-  const [facecamBox, setFacecamBox] = useState(chOpt.facecam_box ?? null);
-  const [camModalOpen, setCamModalOpen] = useState(false);
-
-  const effectiveFontSize = fontSize ?? CAPTION_FONT_DEFAULTS[captionStyle] ?? 72;
-  const captionCustomizable = CUSTOMIZABLE_CAPTION_STYLES.includes(captionStyle);
-  const verticalOnly = VERTICAL_ONLY_LAYOUTS.includes(clipStyle);
-
-  const handleCaptionStyle = (id) => {
-    setCaptionStyle(id);
-    const fields = { caption_style: id };
-    if (!CUSTOMIZABLE_CAPTION_STYLES.includes(id)) {
-      setFontSize(null); setHighlightColor(null);
-      fields.caption_font_size = null; fields.caption_highlight_color = null;
-    }
-    patch(fields);
-  };
-
-  return (
-    <div style={{ display: "grid", gap: 18 }}>
-      <Field label="Caption style">
-        <CaptionStyleGrid value={captionStyle} onChange={handleCaptionStyle} highlightColor={highlightColor} isMobile={isMobile} />
-      </Field>
-
-      <div style={{ display: "grid", gap: 8 }}>
-        <SwitchRow label="AI keywords" hint="Color the words that carry the clip" on={captionKeywords}
-          onChange={(v) => { setCaptionKeywords(v); patch({ caption_keywords: v }); }} />
-        <SwitchRow label="AI emoji" hint="Drop a fitting emoji on big moments" on={captionEmoji}
-          onChange={(v) => { setCaptionEmoji(v); patch({ caption_emoji: v }); }} />
-      </div>
-
-      <Field label="Caption position">
-        <SegmentedControl value={captionPosition} options={CAPTION_POSITIONS}
-          onChange={(id) => { setCaptionPosition(id); patch({ caption_position: id === "default" ? null : id }); }} />
-      </Field>
-
-      <Field label="Language">
-        <Select value={captionLang} onChange={(e) => { setCaptionLang(e.target.value); patch({ caption_language: e.target.value }); }}>
-          {CAPTION_LANGUAGES.map(({ code, label }) => (
-            <option key={code} value={code}>{label}</option>
-          ))}
-        </Select>
-      </Field>
-
-      {captionCustomizable && (
-        <>
-          <Field label="Font size">
-            <div style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
-              <div style={{ flex: 1 }}>
-                <StepperInput value={effectiveFontSize} min={40} max={120} step={4}
-                  onChange={(v) => { setFontSize(v); patch({ caption_font_size: v }); }} />
-              </div>
-              <Button variant={fontSize === null ? "primary" : "secondary"}
-                onClick={() => { setFontSize(null); patch({ caption_font_size: null }); }}>
-                Auto
-              </Button>
-            </div>
-          </Field>
-          <Field label="Highlight color">
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {HIGHLIGHT_SWATCHES.map(({ color, label, bg, fg }) => {
-                const active = highlightColor === color;
-                return (
-                  <button key={label} type="button"
-                    onClick={() => { setHighlightColor(color); patch({ caption_highlight_color: color }); }}
-                    style={{
-                      padding: "8px 13px", background: bg, color: fg,
-                      fontFamily: "var(--font-ui)", fontSize: "var(--fs-tag)", fontWeight: 700,
-                      textTransform: "var(--tt-label)",
-                      border: active ? "2px solid var(--text-1)" : "2px solid var(--line)",
-                      borderRadius: "var(--radius-sm)",
-                      boxShadow: active ? "var(--shadow-btn)" : "none", cursor: "pointer",
-                    }}>
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
-        </>
-      )}
-
-      <Field label="Background music" hint="Optional — a YouTube music URL, ducked under the voice">
-        <TextInput value={bgMusicUrl} onChange={(e) => setBgMusicUrl(e.target.value)}
-          onBlur={() => patch({ bg_music_url: bgMusicUrl.trim() || null })}
-          placeholder="paste a YouTube music URL" />
-      </Field>
-      {bgMusicUrl.trim() && (
-        <Field label="Music volume">
-          <SegmentedControl value={bgMusicVolume} options={MUSIC_VOLUMES}
-            onChange={(id) => { setBgMusicVolume(id); patch({ bg_music_volume: id }); }} />
-        </Field>
-      )}
-
-      <Field label="Layout" hint="How each new video is framed when it's clipped.">
-        <OptionGrid value={clipStyle}
-          onChange={(id) => { setClipStyle(id); patch({ clip_style: id }); }}
-          options={LAYOUTS.map((l) => ({ id: l.id, label: l.label, description: l.hint }))} />
-      </Field>
-
-      {CAM_BOX_LAYOUTS.includes(clipStyle) && (
-        <Button variant="secondary" onClick={() => setCamModalOpen(true)}>
-          {facecamBox ? "✓ Cam box set — adjust" : "▦ Mark the facecam (optional)"}
-        </Button>
-      )}
-      {camModalOpen && (
-        <FacecamBoxModal
-          videoId={ch.last_video_id || null}
-          value={facecamBox ? { x: facecamBox[0], y: facecamBox[1], w: facecamBox[2], h: facecamBox[3] } : null}
-          onSave={(b) => { setFacecamBox(b); patch({ facecam_box: b }); }}
-          onClose={() => setCamModalOpen(false)}
-        />
-      )}
-
-      <Field label="Format" hint={verticalOnly ? "This layout renders vertical-only (9:16)." : undefined}>
-        <SegmentedControl value={aspectRatio}
-          onChange={(id) => { setAspectRatio(id); patch({ aspect_ratio: id }); }}
-          options={FORMATS.map((f) => ({ id: f.id, label: f.label, disabled: verticalOnly && f.id !== "9:16" }))} />
-      </Field>
-
-      <Field label="Find" hint="Optional — what should the AI clip?">
-        <TextInput value={findPrompt} onChange={(e) => setFindPrompt(e.target.value)}
-          onBlur={() => patch({ style_prompt: findPrompt.trim() || null })}
-          placeholder="e.g. every moment about pricing" />
-      </Field>
-      <Field label="Exclude" hint="Topics to never clip">
-        <TextInput value={excludePrompt} onChange={(e) => setExcludePrompt(e.target.value)}
-          onBlur={() => patch({ exclude_prompt: excludePrompt.trim() || null })}
-          placeholder="e.g. intros, sponsor reads" />
-      </Field>
-
-      <div style={{ display: "grid", gap: 8 }}>
-        <SwitchRow label="✂ Trim silence" hint="Cut dead air inside each clip" on={trimSilence}
-          onChange={(v) => { setTrimSilence(v); patch({ trim_silence: v }); }} />
-        <SwitchRow label="⌫ Cut fillers (um/uh)" hint="Remove filler words from the cut" on={removeFillers}
-          onChange={(v) => { setRemoveFillers(v); patch({ remove_fillers: v }); }} />
-      </div>
-    </div>
-  );
-}
 
 function ChannelRow({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, onSetUploadChannel, onSetTtAccount }) {
   const { ytStatus, ttStatus } = useApp();
-  const [maxClips, setMaxClips] = useState(ch.max_clips ?? 3);
-  const [minDur, setMinDur] = useState(ch.min_duration ?? 30);
-  const [maxDur, setMaxDur] = useState(ch.max_duration ?? 90);
   const [selectedYtChannel, setSelectedYtChannel] = useState(ch.yt_channel_id ?? "");
   const [selectedTtAccount, setSelectedTtAccount] = useState(ch.tt_open_id ?? "");
 
@@ -243,6 +77,9 @@ function ChannelRow({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, on
       body: JSON.stringify(fields),
     });
   };
+
+  // Same chip-strip + modals as the create page, PATCHing this channel.
+  const settings = useChannelSettingsForm(ch, patch);
 
   const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
@@ -260,25 +97,12 @@ function ChannelRow({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, on
             <span style={{ minWidth: 0, maxWidth: 360, ...ellipsis }}>Last video: {ch.last_video_title}</span>
           )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
-          <Field label="Max clips">
-            <StepperInput value={maxClips} min={1} max={10}
-              onChange={(v) => { setMaxClips(v); patch({ max_clips: v }); }} />
-          </Field>
-          <Field label="Min duration">
-            <StepperInput value={minDur} min={15} max={120} step={5} suffix="s"
-              onChange={(v) => { setMinDur(v); patch({ min_duration: v }); }} />
-          </Field>
-          <Field label="Max duration">
-            <StepperInput value={maxDur} min={30} max={180} step={10} suffix="s"
-              onChange={(v) => { setMaxDur(v); patch({ max_duration: v }); }} />
-          </Field>
-        </div>
+        <ChannelSettingsChips settings={settings} videoId={ch.last_video_id} minDurMax={120} />
       </div>
 
       <div style={{ borderTop: "1px solid var(--line)", padding: "6px 20px" }}>
-        <CollapsibleSection title="Clip settings" hint="Captions, layout, prompts, enhancements">
-          <ChannelSettings ch={ch} patch={patch} />
+        <CollapsibleSection title="AI direction & music" hint="Find/exclude prompts, background music">
+          <PromptsAndMusic source={ch} patch={patch} />
         </CollapsibleSection>
       </div>
 

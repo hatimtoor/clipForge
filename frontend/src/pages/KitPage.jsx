@@ -1,4 +1,12 @@
 import { useState } from "react";
+import { CaptionStyleGrid } from "../components/CaptionPreviews";
+import FacecamBoxModal from "../components/FacecamBoxModal";
+import EditClipModal from "../components/EditClipModal";
+import {
+  useChannelSettingsForm,
+  ChannelSettingsChips,
+  PromptsAndMusic,
+} from "../features/create/ChannelClipSettings";
 import {
   Button,
   Card,
@@ -24,6 +32,17 @@ import {
   PhaseProgress,
 } from "../components/kit";
 
+/* Channel-settings chip strip demo — same modals as HelloPage, PATCHes logged. */
+function ChannelChipsDemo() {
+  const settings = useChannelSettingsForm({}, (fields) => console.log("PATCH", fields));
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <ChannelSettingsChips settings={settings} minDurMax={120} />
+      <PromptsAndMusic source={{}} patch={(f) => console.log("PATCH", f)} />
+    </div>
+  );
+}
+
 /* Dev-only kit gallery (/kit, registered only when import.meta.env.DEV).
    Eyeball every component under both themes via the Go Retro FAB. */
 export default function KitPage() {
@@ -32,6 +51,9 @@ export default function KitPage() {
   const [seg, setSeg] = useState("9:16");
   const [opt, setOpt] = useState("fill");
   const [modal, setModal] = useState(false);
+  const [capStyle, setCapStyle] = useState("bold_bottom");
+  const [camOpen, setCamOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   return (
     <div style={{ display: "grid", gap: 24, maxWidth: 860 }}>
@@ -150,6 +172,26 @@ export default function KitPage() {
           <TextInput placeholder="every moment about pricing" />
         </Field>
       </CollapsibleSection>
+
+      <Card>
+        <div className="t-label" style={{ marginBottom: 12 }}>Channel settings chips (Watchlist/Digest)</div>
+        <ChannelChipsDemo />
+      </Card>
+
+      <Card>
+        <div className="t-label" style={{ marginBottom: 12 }}>Caption style grid</div>
+        <CaptionStyleGrid value={capStyle} onChange={setCapStyle} highlightColor={null} isMobile={false} />
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <Button variant="secondary" onClick={() => setCamOpen(true)}>▦ Facecam picker</Button>
+          <Button variant="secondary" onClick={() => setEditOpen(true)}>✂ Edit modal</Button>
+        </div>
+      </Card>
+      {camOpen && (
+        <FacecamBoxModal videoId={null} value={null} onSave={() => {}} onClose={() => setCamOpen(false)} />
+      )}
+      {editOpen && (
+        <EditClipModal jobId="demo" clipIndex={null} onClose={() => setEditOpen(false)} onRendered={() => {}} />
+      )}
 
       <Card flush>
         <EmptyState

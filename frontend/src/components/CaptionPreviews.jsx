@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { C, BORDER, SHADOW_SM, SHADOW } from "../lib/theme";
 
 // ── caption template previews ─────────────────────────────────────────────────
 // Mirrors backend CAPTION_TEMPLATES (fonts, colors, case, mode) so pickers show
@@ -64,7 +63,8 @@ export function TplPreview({ id, highlightColor, tick = 0 }) {
 }
 
 // Label-free grid of animated template previews. One shared ticker drives every
-// preview's active-word cycle.
+// preview's active-word cycle. Chrome is token-driven so it matches both skins;
+// the selected tile keeps its template's signature backdrop color.
 export function CaptionStyleGrid({ value, onChange, highlightColor, isMobile }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -73,15 +73,25 @@ export function CaptionStyleGrid({ value, onChange, highlightColor, isMobile }) 
   }, []);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: isMobile ? 6 : 8 }}>
-      {CAPTION_TEMPLATE_PREVIEWS.map(({ id, name, bg }) => (
-        <button key={id} title={name} onClick={() => onChange(id)} className="pixel"
-          style={{ padding: isMobile ? 4 : 6, background: value === id ? bg : C.paper,
-            minWidth: 0, overflow: "hidden",
-            border: value === id ? `3px solid ${C.ink}` : BORDER,
-            boxShadow: value === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
-          <TplPreview id={id} highlightColor={value === id ? highlightColor : null} tick={tick} />
-        </button>
-      ))}
+      {CAPTION_TEMPLATE_PREVIEWS.map(({ id, name, bg }) => {
+        const active = value === id;
+        return (
+          <button key={id} title={name} type="button" onClick={() => onChange(id)}
+            style={{
+              padding: isMobile ? 4 : 6,
+              background: active ? bg : "var(--surface-2)",
+              minWidth: 0, overflow: "hidden", cursor: "pointer",
+              border: active
+                ? "var(--border-w) solid var(--text-1)"
+                : "var(--border-w-sm) solid var(--card-border-color)",
+              borderRadius: "var(--radius-md)",
+              boxShadow: active ? "var(--shadow-btn)" : "none",
+              transition: "all .12s",
+            }}>
+            <TplPreview id={id} highlightColor={active ? highlightColor : null} tick={tick} />
+          </button>
+        );
+      })}
     </div>
   );
 }

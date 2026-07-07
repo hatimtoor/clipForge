@@ -1092,12 +1092,17 @@ Return valid JSON array only, no markdown, no explanation."""
                     model=GROQ_ANALYSIS_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=t,
-                    # Kept modest so (input + max_tokens) stays under Groq's
-                    # 8k TPM per-request ceiling and the model doesn't ramble
-                    # past valid JSON. 2k comfortably fits 5-10 clip objects.
-                    max_tokens=2000,
+                    # gpt-oss-120b is a REASONING model: it spends output tokens
+                    # "thinking" before answering. reasoning_effort=low keeps that
+                    # minimal, and reasoning_format=hidden keeps `content` a clean
+                    # JSON answer (no chain-of-thought to confuse the parser).
+                    # Without this the reasoning ate the whole budget → empty
+                    # content → "bad JSON" → 0 clips. max_tokens 3000 leaves room
+                    # for the answer while staying under the 8k TPM per-request cap.
+                    max_tokens=3000,
+                    extra_body={"reasoning_effort": "low", "reasoning_format": "hidden"},
                 )
-                return r.choices[0].message.content.strip()
+                return (r.choices[0].message.content or "").strip()
             return await groq_with_retry(
                 lambda t=temp: asyncio.to_thread(lambda: _sync(t)),
                 limiter=llama_limiter,

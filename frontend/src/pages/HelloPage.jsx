@@ -282,7 +282,7 @@ export default function HelloPage() {
             </div>
 
             {!exactOn && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 14, marginBottom: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: isMobile ? 8 : 14, marginBottom: 10 }}>
                 <NumField label="CLIP FROM" suffix="min" value={tfStart} setValue={setTfStart} min={0} max={600} step={1} bg={C.cream2} />
                 <NumField label="CLIP UNTIL" suffix="min" value={tfEnd} setValue={setTfEnd} min={0} max={600} step={1} bg={C.cream2} />
               </div>
@@ -299,7 +299,7 @@ export default function HelloPage() {
                 </span>
               </button>
               {exactOn && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 14, marginTop: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: isMobile ? 8 : 14, marginTop: 10 }}>
                   {[["START AT", exactStart, setExactStart, "14:20"], ["END AT", exactEnd, setExactEnd, "15:05"]].map(([label, val, set, ph]) => (
                     <div key={label} className="pixel" style={{ padding: "10px 14px", background: C.cream2, border: BORDER, boxShadow: SHADOW_SM }}>
                       <div style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>{label}</div>
@@ -461,7 +461,7 @@ export default function HelloPage() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8, marginBottom: 20 }}>
                 {[
                   { on: captionKeywords, toggle: () => setCaptionKeywords(k => !k),
                     label: "AI KEYWORDS", hint: "color the words that carry the clip" },

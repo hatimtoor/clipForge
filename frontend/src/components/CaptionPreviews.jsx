@@ -72,10 +72,11 @@ export function CaptionStyleGrid({ value, onChange, highlightColor, isMobile }) 
     return () => clearInterval(id);
   }, []);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 6 : 8 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: isMobile ? 6 : 8 }}>
       {CAPTION_TEMPLATE_PREVIEWS.map(({ id, name, bg }) => (
         <button key={id} title={name} onClick={() => onChange(id)} className="pixel"
           style={{ padding: isMobile ? 4 : 6, background: value === id ? bg : C.paper,
+            minWidth: 0, overflow: "hidden",
             border: value === id ? `3px solid ${C.ink}` : BORDER,
             boxShadow: value === id ? SHADOW : SHADOW_SM, cursor: "pointer", transition: "all .12s" }}>
           <TplPreview id={id} highlightColor={value === id ? highlightColor : null} tick={tick} />

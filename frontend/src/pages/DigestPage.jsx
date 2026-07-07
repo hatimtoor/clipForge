@@ -224,7 +224,7 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch, isMob
                     </select>
                   </div>
                   {captionCustomizable && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
                       <div>
                         <div className="pixel" style={{ fontSize: 8, color: C.dim2, marginBottom: 6 }}>FONT SIZE</div>
                         <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>

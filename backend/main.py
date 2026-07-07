@@ -26,8 +26,21 @@ set_groq_keys([GROQ_API_KEY or ""] + [os.getenv(f"GROQ_API_KEY_{i}", "") for i i
 
 # Groq chat model for virality analysis + caption translation. llama-3.3-70b was
 # deprecated (decommissioned 2026-08-16); default to its recommended replacement,
-# GPT-OSS-120B. Override with GROQ_ANALYSIS_MODEL in .env (no code change needed).
-GROQ_ANALYSIS_MODEL = os.getenv("GROQ_ANALYSIS_MODEL", "openai/gpt-oss-120b")
+# llama-3.3-70b-versatile for now: NOT a reasoning model (no empty-JSON
+# problem gpt-oss has) and a higher Groq free-tier TPM (12k vs 8k). It's
+# decommissioned ~2026-08-16 — flip GROQ_ANALYSIS_MODEL to openai/gpt-oss-120b
+# in .env before then (the reasoning params below auto-enable for gpt-oss).
+GROQ_ANALYSIS_MODEL = os.getenv("GROQ_ANALYSIS_MODEL", "llama-3.3-70b-versatile")
+
+
+def _groq_reasoning_kwargs() -> dict:
+    """extra_body for REASONING models (gpt-oss): minimize thinking + hide the
+    chain-of-thought so `content` is clean JSON. Without it, reasoning eats the
+    max_tokens budget → empty content → unparseable. No-op for non-reasoning
+    models like llama, which reject these params."""
+    if "gpt-oss" in GROQ_ANALYSIS_MODEL.lower():
+        return {"extra_body": {"reasoning_effort": "low", "reasoning_format": "hidden"}}
+    return {}
 
 # Google's OAuth server always returns extra scopes (openid, userinfo.*).
 # This tells oauthlib to accept a superset of the requested scopes without raising.
@@ -949,9 +962,10 @@ Return ONLY a JSON array, one item per clip, each with:
             model=GROQ_ANALYSIS_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
-            max_tokens=1500,
+            max_tokens=2500,
+            **_groq_reasoning_kwargs(),
         )
-        return r.choices[0].message.content.strip()
+        return (r.choices[0].message.content or "").strip()
 
     try:
         raw = await groq_with_retry(lambda: asyncio.to_thread(_sync),
@@ -1092,15 +1106,11 @@ Return valid JSON array only, no markdown, no explanation."""
                     model=GROQ_ANALYSIS_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=t,
-                    # gpt-oss-120b is a REASONING model: it spends output tokens
-                    # "thinking" before answering. reasoning_effort=low keeps that
-                    # minimal, and reasoning_format=hidden keeps `content` a clean
-                    # JSON answer (no chain-of-thought to confuse the parser).
-                    # Without this the reasoning ate the whole budget → empty
-                    # content → "bad JSON" → 0 clips. max_tokens 3000 leaves room
-                    # for the answer while staying under the 8k TPM per-request cap.
+                    # 3000 leaves room for the JSON answer (and, on gpt-oss, its
+                    # reasoning tokens) while staying under Groq's TPM per-request
+                    # ceiling. Reasoning params auto-enable only for gpt-oss.
                     max_tokens=3000,
-                    extra_body={"reasoning_effort": "low", "reasoning_format": "hidden"},
+                    **_groq_reasoning_kwargs(),
                 )
                 return (r.choices[0].message.content or "").strip()
             return await groq_with_retry(
@@ -1545,11 +1555,12 @@ async def translate_segments(segments: list, target_lang: str, job_id: str) -> l
                 model=GROQ_ANALYSIS_MODEL,
                 messages=[{"role": "user", "content": p}],
                 temperature=0.1,
-                # Under Groq's 8k TPM per-request ceiling (30 short caption
-                # strings need well under this); 4000 risked a 413 on dense batches.
-                max_tokens=2000,
+                # Under Groq's TPM per-request ceiling (30 short caption strings
+                # need well under this); reasoning params auto-enable for gpt-oss.
+                max_tokens=2500,
+                **_groq_reasoning_kwargs(),
             )
-            return r.choices[0].message.content.strip()
+            return (r.choices[0].message.content or "").strip()
 
         try:
             raw = await groq_with_retry(

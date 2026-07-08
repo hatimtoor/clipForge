@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { Button, Card, Banner, Field, TextInput, SegmentedControl, RetroSprite } from "../components/kit";
@@ -35,8 +35,57 @@ export default function LoginPage() {
   const [pass, setPass] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  // signin | signup | forgot (enter email → send reset) | update (set new pw)
   const [mode, setMode] = useState(searchParams.get("mode") === "signup" ? "signup" : "signin");
   const [signupDone, setSignupDone] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [newPass, setNewPass] = useState("");
+  const [updated, setUpdated] = useState(false);
+
+  // When the user clicks the reset link in their email, Supabase lands them
+  // back here with a recovery session and fires PASSWORD_RECOVERY — switch to
+  // the "set a new password" form.
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") { setMode("update"); setErr(""); }
+    });
+    return () => data?.subscription?.unsubscribe?.();
+  }, []);
+
+  const sendReset = async () => {
+    if (!email) { setErr("Enter your email first."); return; }
+    setLoading(true); setErr("");
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin + "/login",
+      });
+      if (error) { setErr(error.message); setLoading(false); return; }
+      setResetSent(true);
+    } catch {
+      setErr("Cannot reach server.");
+    } finally { setLoading(false); }
+  };
+
+  const updatePassword = async () => {
+    if (newPass.length < 6) { setErr("Password must be at least 6 characters."); return; }
+    setLoading(true); setErr("");
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPass });
+      if (error) { setErr(error.message); setLoading(false); return; }
+      setUpdated(true);
+      setTimeout(() => navigate("/hello"), 1200);
+    } catch {
+      setErr("Cannot reach server.");
+    } finally { setLoading(false); }
+  };
+
+  const switchMode = (m) => { setMode(m); setErr(""); setResetSent(false); };
+  const LinkBtn = ({ onClick, children }) => (
+    <button type="button" onClick={onClick} className="t-sm"
+      style={{ background: "none", padding: 0, cursor: "pointer", color: "var(--accent)", textDecoration: "underline" }}>
+      {children}
+    </button>
+  );
 
   const attempt = async () => {
     if (!email || !pass) {
@@ -146,6 +195,57 @@ export default function LoginPage() {
               Back to sign in
             </Button>
           </div>
+        ) : mode === "update" ? (
+          /* Landed here from the password-reset email link. */
+          updated ? (
+            <div style={{ textAlign: "center", display: "grid", gap: 14 }}>
+              <div className="t-h2" style={{ color: "var(--success)" }}>✓ Password updated</div>
+              <p className="t-sm" style={{ margin: 0 }}>Signing you in…</p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 16 }}>
+              <div className="t-h2">Set a new password</div>
+              <Field label="New password">
+                <TextInput type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)}
+                  placeholder="••••••••" autoComplete="new-password"
+                  onKeyDown={(e) => e.key === "Enter" && updatePassword()} />
+              </Field>
+              {err && <Banner tone="danger">{err}</Banner>}
+              <Button size="lg" full onClick={updatePassword} disabled={loading}>
+                {loading ? "Saving…" : "Update password"}
+              </Button>
+            </div>
+          )
+        ) : mode === "forgot" ? (
+          resetSent ? (
+            <div style={{ textAlign: "center", display: "grid", gap: 14 }}>
+              <div className="t-h2" style={{ color: "var(--success)" }}>✓ Check your email</div>
+              <p className="t-sm" style={{ margin: 0 }}>
+                If an account exists for <strong>{email}</strong>, we sent a password-reset link.
+                Open it to choose a new password.
+              </p>
+              <Button variant="secondary" onClick={() => switchMode("signin")}>Back to sign in</Button>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 16 }}>
+              <div className="t-h2">Reset your password</div>
+              <p className="t-sm" style={{ margin: 0 }}>
+                Enter your account email and we'll send you a reset link.
+              </p>
+              <Field label="Email">
+                <TextInput value={email} onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com" type="email" autoComplete="email"
+                  onKeyDown={(e) => e.key === "Enter" && sendReset()} />
+              </Field>
+              {err && <Banner tone="danger">{err}</Banner>}
+              <Button size="lg" full onClick={sendReset} disabled={loading}>
+                {loading ? "Sending…" : "Send reset link"}
+              </Button>
+              <div style={{ textAlign: "center" }}>
+                <LinkBtn onClick={() => switchMode("signin")}>← Back to sign in</LinkBtn>
+              </div>
+            </div>
+          )
         ) : (
           <div style={{ display: "grid", gap: 16 }}>
             <SegmentedControl
@@ -175,8 +275,14 @@ export default function LoginPage() {
                 value={pass}
                 onChange={(e) => setPass(e.target.value)}
                 placeholder="••••••••"
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
                 onKeyDown={(e) => e.key === "Enter" && attempt()}
               />
+              {mode === "signin" && (
+                <div style={{ textAlign: "right", marginTop: 6 }}>
+                  <LinkBtn onClick={() => switchMode("forgot")}>Forgot password?</LinkBtn>
+                </div>
+              )}
             </Field>
 
             {err && <Banner tone="danger">{err}</Banner>}
@@ -184,6 +290,14 @@ export default function LoginPage() {
             <Button size="lg" full onClick={attempt} disabled={loading}>
               {loading ? "Loading…" : mode === "signup" ? "Create account" : "→ Enter the forge"}
             </Button>
+
+            <div className="t-sm" style={{ textAlign: "center" }}>
+              {mode === "signup" ? (
+                <>Already have an account? <LinkBtn onClick={() => switchMode("signin")}>Sign in</LinkBtn></>
+              ) : (
+                <>New to ClipForge? <LinkBtn onClick={() => switchMode("signup")}>Create an account</LinkBtn></>
+              )}
+            </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ flex: 1, height: 1, background: "var(--line)" }} />

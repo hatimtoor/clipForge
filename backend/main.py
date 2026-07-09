@@ -626,7 +626,12 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         # Prefer direct-https (DASH) formats, never HLS: YouTube 403s HLS segments
         # from datacenter IPs even with a valid PO token. Try H.264+m4a first (clean
         # mp4, no AV1 decode quirks), then any https video+audio, then best https.
-        "-f", "bv*[height<=1080][vcodec^=avc1][protocol^=http]+ba[ext=m4a][protocol^=http]/bv*[height<=1080][protocol^=http]+ba[ext=m4a][protocol^=http]/bv*[height<=1080][protocol^=http]+ba[protocol^=http]/b[protocol^=http]/b",
+        # Prefer H.264 (so the OpenCV layout probes can read the source), but
+        # fall back to ANY video+audio, then best — YouTube now 403s the AVC
+        # DASH streams from the tv/mweb clients on datacenter IPs, so the
+        # working stream is often AV1 via the default web client. ffmpeg
+        # renders AV1 fine; only the auto/gameplay/split cam probes degrade.
+        "-f", "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b",
         "--merge-output-format", "mp4",
         "-o", str(video_path),
         "--no-playlist",
@@ -649,9 +654,14 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
         cmd += ["--cookies-from-browser", COOKIES_FROM_BROWSER]
     elif COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
-    # Force tv/mweb player clients (which serve direct https/DASH URLs); the
-    # default clients fall back to HLS, whose segments 403 from datacenter IPs.
-    cmd += ["--extractor-args", "youtube:player_client=tv,mweb,web"]
+    # Player client override. Empty by default = let yt-dlp pick its default
+    # clients, whose streams currently download reliably. The old forced
+    # "tv,mweb,web" started 403'ing mid-download (YouTube now blocks those
+    # clients' AVC streams from datacenter IPs). Set YTDLP_PLAYER_CLIENT to
+    # override again if the default ever regresses.
+    _player_client = os.getenv("YTDLP_PLAYER_CLIENT", "").strip()
+    if _player_client:
+        cmd += ["--extractor-args", f"youtube:player_client={_player_client}"]
     if POTTOKEN_URL:
         cmd += ["--extractor-args", f"youtubepot-bgutilhttp:base_url={POTTOKEN_URL}"]
     if YTDLP_REMOTE_COMPONENTS:

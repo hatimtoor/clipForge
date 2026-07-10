@@ -1,6 +1,24 @@
 import os
 from pathlib import Path
 
+
+def _safe_segment(value: str) -> str:
+    """Reject any value that isn't a single path/key segment before it's joined
+    into an object key. Blocks path separators, traversal, and control chars;
+    permits unicode so legitimately-titled clip filenames (e.g. "Café") pass.
+    Defense-in-depth against path traversal."""
+    v = str(value or "")
+    if (
+        v in ("", ".", "..")
+        or ".." in v
+        or "/" in v
+        or "\\" in v
+        or "\x00" in v
+    ):
+        raise ValueError(f"Unsafe path segment: {value!r}")
+    return v
+
+
 R2_ACCOUNT_ID        = os.getenv("R2_ACCOUNT_ID", "")
 R2_ACCESS_KEY_ID     = os.getenv("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
@@ -27,7 +45,9 @@ def _get_client():
 
 
 def clip_key(job_id: str, filename: str) -> str:
-    return f"clips/{job_id}/{filename}"
+    # Validate both segments here so every R2 helper (upload/stream/presign/
+    # delete) that routes through clip_key is traversal-safe by construction.
+    return f"clips/{_safe_segment(job_id)}/{_safe_segment(filename)}"
 
 
 def upload_clip(local_path: Path, job_id: str, filename: str) -> None:

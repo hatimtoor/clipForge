@@ -232,6 +232,23 @@ TEMP_DIR.mkdir(exist_ok=True)
 BRAND_DIR.mkdir(exist_ok=True)
 MUSIC_CACHE_DIR.mkdir(exist_ok=True)
 SOURCE_CACHE_DIR.mkdir(exist_ok=True)
+
+# Every value we splice into a filesystem path (job ids, parent ids, filenames)
+# originates as a Postgres UUID or a server-built name, but it reaches these
+# code paths via HTTP handlers, so we validate it as an allowlisted token right
+# before it touches the disk. This is defense-in-depth against path traversal
+# and also the barrier static analysis (CodeQL py/path-injection) needs to see.
+_SAFE_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+
+
+def safe_path_id(value: str) -> str:
+    """Return `value` unchanged if it's a single safe path segment (no
+    separators, no traversal); raise 400 otherwise. Used on ids/filenames
+    before they're joined into an on-disk path."""
+    v = str(value or "")
+    if v in ("", ".", "..") or not _SAFE_ID_RE.fullmatch(v):
+        raise HTTPException(400, "Invalid identifier")
+    return v
 _oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ..., "_ts": monotonic()}
 _OAUTH_STATE_TTL = 600   # 10 minutes
 
@@ -3675,6 +3692,7 @@ async def create_clips(
     remove_fillers: bool = False,
     brand_overlay: Optional[dict] = None,
 ) -> list:
+    job_id = safe_path_id(job_id)   # barrier: id feeds on-disk clip/thumb paths
     log(job_id, f"Rendering {len(clip_defs)} clips...")
     await update_job(job_id, status="clipping", progress=78, message="Cutting clips and burning subtitles...")
 
@@ -4334,6 +4352,10 @@ async def _acquire_render_slot(job_id: str) -> None:
 
 
 async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None, watchlist_channel_id: Optional[str] = None, watchlist_video_id: Optional[str] = None, watchlist_video_title: str = "", reprompt_parent_id: Optional[str] = None):
+    # Barrier: both ids get joined into filesystem paths (temp/output/cache).
+    job_id = safe_path_id(job_id)
+    if reprompt_parent_id:
+        reprompt_parent_id = safe_path_id(reprompt_parent_id)
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
@@ -5063,7 +5085,7 @@ async def job_frame(request: Request, job_id: str, t: float = 2.0, user=Depends(
         raise HTTPException(404, "Job not found")
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
-    job_id = job["id"]   # trust the DB row, not the URL, for the filesystem path
+    job_id = safe_path_id(job["id"])   # trust the DB row, not the URL; barrier for on-disk paths
     src = SOURCE_CACHE_DIR / f"{job_id}.mp4"
     if not src.exists():
         raise HTTPException(404, "Source video no longer cached — run the job again first")
@@ -5225,7 +5247,7 @@ async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends
         raise HTTPException(403, "Forbidden")
     if fmt not in ("srt", "xml", "fcpxml"):
         raise HTTPException(400, "fmt must be srt, xml, or fcpxml")
-    job_id = job["id"]   # trust the DB row, not the URL, for the filesystem path
+    job_id = safe_path_id(job["id"])   # trust the DB row, not the URL; barrier for on-disk paths
     clips = job.get("clips") or []
     if not (0 <= clip_idx < len(clips)):
         raise HTTPException(404, "clip not found")
@@ -5412,7 +5434,7 @@ async def job_transcript(job_id: str, clip: Optional[int] = None, user=Depends(r
         raise HTTPException(404, "Job not found")
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
-    job_id = job["id"]   # trust the DB row, not the URL, for the filesystem path
+    job_id = safe_path_id(job["id"])   # trust the DB row, not the URL; barrier for on-disk paths
     tr = OUTPUT_DIR / job_id / "transcript.json"
     if not tr.exists():
         raise HTTPException(404, "Transcript not available for this job")
@@ -6096,6 +6118,7 @@ def do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str
 
 
 def _do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: str = ""):
+    job_id = safe_path_id(job_id)   # barrier: id joins into the local clip path
     try:
         from googleapiclient.discovery import build as yt_build
         from googleapiclient.http import MediaFileUpload
@@ -6678,6 +6701,7 @@ async def tiktok_creator_info(tt_open_id: Optional[str] = None, user=Depends(req
 def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str):
     """Push a rendered clip to the user's TikTok inbox (draft) via the Content Posting API."""
     import httpx, asyncio as _aio
+    job_id = safe_path_id(job_id)   # barrier: id joins into the local clip path
     tmp_path = None
     try:
         tok = _aio.run(get_tiktok_access_token(user_id, req_data.get("tt_open_id") or None))

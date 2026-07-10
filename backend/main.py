@@ -249,6 +249,19 @@ def safe_path_id(value: str) -> str:
     if v in ("", ".", "..") or not _SAFE_ID_RE.fullmatch(v):
         raise HTTPException(400, "Invalid identifier")
     return v
+
+
+def resolve_under(base: Path, *parts) -> Path:
+    """Join `parts` under `base`, resolve the result, and confirm it stays
+    inside `base` — raising 400 on any traversal. Returns the verified absolute
+    Path. This resolve()+is_relative_to() containment check is the barrier the
+    static analyzer (CodeQL py/path-injection) recognizes, so every filesystem
+    access built from a request-derived id/filename must route through it."""
+    base_r = base.resolve()
+    target = base_r.joinpath(*[str(p) for p in parts]).resolve()
+    if not target.is_relative_to(base_r):
+        raise HTTPException(400, "Invalid path")
+    return target
 _oauth_states: dict = {}  # state → {"user_id": ..., "code_verifier": ..., "_ts": monotonic()}
 _OAUTH_STATE_TTL = 600   # 10 minutes
 
@@ -3967,8 +3980,9 @@ async def create_clips(
                     _exp_words.append({"word": str(_w["word"]).strip(),
                                        "start": round(max(0.0, _ws - ass_clip_start), 3),
                                        "end": round(min(render_dur, _we - ass_clip_start), 3)})
-            (OUTPUT_DIR / job_id).mkdir(exist_ok=True)
-            (OUTPUT_DIR / job_id / f"captions_{idx}.json").write_text(json.dumps({
+            job_out_dir = resolve_under(OUTPUT_DIR, job_id)
+            job_out_dir.mkdir(exist_ok=True)
+            resolve_under(OUTPUT_DIR, job_id, f"captions_{idx}.json").write_text(json.dumps({
                 "fps": round(clip_fps, 3), "src_w": src_w, "src_h": src_h,
                 "start": start, "end": end, "duration": round(render_dur, 3),
                 # keep = the cut plan in clip-relative seconds; None when uncut
@@ -3980,7 +3994,7 @@ async def create_clips(
 
         safe_title = re.sub(r'[^\w]', '_', clip['title'][:30])
         clip_filename = f"clip_{idx+1}_{safe_title}.mp4"
-        clip_path = OUTPUT_DIR / job_id / clip_filename
+        clip_path = resolve_under(OUTPUT_DIR, job_id, clip_filename)
         clip_path.parent.mkdir(exist_ok=True)
 
         # basename-only for filter paths — avoids Windows drive-letter colon issue
@@ -4055,7 +4069,7 @@ async def create_clips(
 
         # Generate a thumbnail from the rendered clip
         thumb_filename = f"clip_{idx+1}_thumb.jpg"
-        thumb_path = OUTPUT_DIR / job_id / thumb_filename
+        thumb_path = resolve_under(OUTPUT_DIR, job_id, thumb_filename)
         thumb_ok = await _generate_thumbnail(clip_path, clip.get("title", f"Clip {idx+1}"), thumb_path, job_dir)
 
         if R2_ENABLED:
@@ -4356,7 +4370,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
     job_id = safe_path_id(job_id)
     if reprompt_parent_id:
         reprompt_parent_id = safe_path_id(reprompt_parent_id)
-    job_dir = TEMP_DIR / job_id
+    job_dir = resolve_under(TEMP_DIR, job_id)
     job_dir.mkdir(exist_ok=True)
     log(job_id, f"=== PIPELINE START === url={req.url}")
 
@@ -4368,12 +4382,12 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         video_path: Optional[Path] = None
         segments: Optional[list] = None
         if reprompt_parent_id:
-            cached_src = SOURCE_CACHE_DIR / f"{reprompt_parent_id}.mp4"
+            cached_src = resolve_under(SOURCE_CACHE_DIR, f"{reprompt_parent_id}.mp4")
             if cached_src.exists() and cached_src.stat().st_size > 0:
                 video_path = job_dir / "video.mp4"
                 await asyncio.to_thread(shutil.copy2, cached_src, video_path)
                 log(job_id, f"Reprompt: reusing cached source from {reprompt_parent_id}")
-            tr = OUTPUT_DIR / reprompt_parent_id / "transcript.json"
+            tr = resolve_under(OUTPUT_DIR, reprompt_parent_id, "transcript.json")
             if tr.exists():
                 try:
                     segments = json.loads(tr.read_text(encoding="utf-8"))
@@ -4395,9 +4409,9 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             log(job_id, f"Transcription done → {len(segments)} segments")
 
         # Save transcript alongside output clips so it survives temp cleanup
-        out_dir = OUTPUT_DIR / job_id
+        out_dir = resolve_under(OUTPUT_DIR, job_id)
         out_dir.mkdir(exist_ok=True)
-        (out_dir / "transcript.json").write_text(json.dumps(segments, indent=2))
+        resolve_under(OUTPUT_DIR, job_id, "transcript.json").write_text(json.dumps(segments, indent=2))
 
         # Excitement signals: a cheap audio-energy pass for every job (feeds
         # [HIGH ENERGY] annotations into the analysis); the visual scene pass
@@ -4408,7 +4422,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
             sig_path = out_dir / "signals.json"
             signals = None
             if reprompt_parent_id:
-                _psig = OUTPUT_DIR / reprompt_parent_id / "signals.json"
+                _psig = resolve_under(OUTPUT_DIR, reprompt_parent_id, "signals.json")
                 if _psig.exists():
                     signals = json.loads(_psig.read_text(encoding="utf-8"))
             if signals is None and sig_path.exists():
@@ -4547,7 +4561,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         # not copied — the temp dir is deleted in finally anyway). Best-effort.
         try:
             if video_path.exists():
-                await asyncio.to_thread(shutil.move, str(video_path), str(SOURCE_CACHE_DIR / f"{job_id}.mp4"))
+                await asyncio.to_thread(shutil.move, str(video_path), str(resolve_under(SOURCE_CACHE_DIR, f"{job_id}.mp4")))
         except Exception as _sce:
             log(job_id, f"source cache skipped: {_sce}")
         # Free quota is counted as one job at submit time (db_claim_clips_atomic),
@@ -5086,10 +5100,10 @@ async def job_frame(request: Request, job_id: str, t: float = 2.0, user=Depends(
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
     job_id = safe_path_id(job["id"])   # trust the DB row, not the URL; barrier for on-disk paths
-    src = SOURCE_CACHE_DIR / f"{job_id}.mp4"
+    src = resolve_under(SOURCE_CACHE_DIR, f"{job_id}.mp4")
     if not src.exists():
         raise HTTPException(404, "Source video no longer cached — run the job again first")
-    out = TEMP_DIR / f"frame_{job_id}_{int(max(0.0, t) * 1000)}.jpg"
+    out = resolve_under(TEMP_DIR, f"frame_{job_id}_{int(max(0.0, t) * 1000)}.jpg")
     code, _, err = await run_cmd_async([
         FFMPEG, "-y", "-ss", str(max(0.0, t)), "-i", str(src),
         "-frames:v", "1", "-vf", "scale=960:-2", "-q:v", "5", str(out)])
@@ -5259,7 +5273,7 @@ async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends
     c = clips[clip_idx]
     title = c.get("title") or f"Clip {clip_idx + 1}"
     meta = None
-    mf = OUTPUT_DIR / job_id / f"captions_{clip_idx}.json"
+    mf = resolve_under(OUTPUT_DIR, job_id, f"captions_{clip_idx}.json")
     if mf.exists():
         try:
             meta = json.loads(mf.read_text(encoding="utf-8"))
@@ -5267,7 +5281,7 @@ async def export_clip(job_id: str, clip_idx: int, fmt: str = "srt", user=Depends
             meta = None
     if meta is None:
         # Pre-snapshot job: rebuild from the transcript window (uncut clips only).
-        tr = OUTPUT_DIR / job_id / "transcript.json"
+        tr = resolve_under(OUTPUT_DIR, job_id, "transcript.json")
         if not tr.exists():
             raise HTTPException(404, "Export data not available for this job — re-run it first")
         segs = json.loads(tr.read_text(encoding="utf-8"))
@@ -5435,7 +5449,7 @@ async def job_transcript(job_id: str, clip: Optional[int] = None, user=Depends(r
     if job.get("user_id") != user.id:
         raise HTTPException(403, "Forbidden")
     job_id = safe_path_id(job["id"])   # trust the DB row, not the URL; barrier for on-disk paths
-    tr = OUTPUT_DIR / job_id / "transcript.json"
+    tr = resolve_under(OUTPUT_DIR, job_id, "transcript.json")
     if not tr.exists():
         raise HTTPException(404, "Transcript not available for this job")
     try:
@@ -5458,7 +5472,7 @@ async def job_transcript(job_id: str, clip: Optional[int] = None, user=Depends(r
         if seg.get("end"):
             last_end = max(last_end, float(seg["end"]))
     return {"clip": clip_info, "source_duration": round(last_end, 3),
-            "cached_source": (SOURCE_CACHE_DIR / f"{job_id}.mp4").exists(),
+            "cached_source": resolve_under(SOURCE_CACHE_DIR, f"{job_id}.mp4").exists(),
             "sentences": sentences}
 
 
@@ -6136,7 +6150,7 @@ def _do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: st
         if clip_index >= len(clips):
             return
         clip = clips[clip_index]
-        clip_file = OUTPUT_DIR / job_id / clip["filename"]
+        clip_file = resolve_under(OUTPUT_DIR, job_id, clip["filename"])
         temp_file = None
         if not clip_file.exists():
             if R2_ENABLED:
@@ -6226,7 +6240,7 @@ def _do_youtube_upload(job_id: str, clip_index: int, req_data: dict, user_id: st
         # it from R2 when it isn't on disk.
         thumb_name = clip.get("thumbnail")
         if video_id and thumb_name:
-            thumb_local = OUTPUT_DIR / job_id / thumb_name
+            thumb_local = resolve_under(OUTPUT_DIR, job_id, thumb_name)
             thumb_temp = None
             try:
                 if not thumb_local.exists() and R2_ENABLED:
@@ -6720,7 +6734,7 @@ def do_tiktok_upload(job_id: str, clip_index: int, req_data: dict, user_id: str)
         filename = clip.get("filename", "")
 
         # Get the clip file (download from R2 if needed)
-        local = OUTPUT_DIR / job_id / filename
+        local = resolve_under(OUTPUT_DIR, job_id, filename)
         if local.exists():
             video_path = local
         elif R2_ENABLED:

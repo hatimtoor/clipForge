@@ -1,9 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card, Tag, RetroSprite } from "../components/kit";
 import { ANVIL, ANVIL_PAL } from "../components/ui";
 import { IconAnvil } from "../components/shell/icons";
 import ThemeFab from "../components/theme/ThemeFab";
+
+// Lazy so Three.js ships in its own chunk — logged-in app users never download it.
+const ForgeHero = lazy(() => import("../components/forge/ForgeHero"));
 
 function Logo({ onClick }) {
   return (
@@ -175,6 +178,25 @@ export default function LandingPage() {
   const onLogin = () => navigate("/login");
   const onSignup = () => navigate("/login?mode=signup");
 
+  // Hero reveal: show the text first, then swap the headline for the 3D forge.
+  // Reveal only once BOTH a min delay has passed AND the scene has rendered a frame,
+  // so slow connections wait instead of flashing an empty box. Reduced-motion keeps text.
+  const reduceMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [mountForge, setMountForge] = useState(false);
+  const [forgeReady, setForgeReady] = useState(false);
+  const [delayDone, setDelayDone] = useState(false);
+  const showForge = mountForge && forgeReady && delayDone;
+
+  useEffect(() => {
+    if (reduceMotion) return; // keep the text hero permanently
+    setMountForge(true); // begin loading Three.js + building the scene immediately
+    const t = setTimeout(() => setDelayDone(true), 4000);
+    return () => clearTimeout(t);
+  }, [reduceMotion]);
+
   return (
     <div className="landing">
       <nav className="landing__nav">
@@ -192,17 +214,30 @@ export default function LandingPage() {
 
       <section className="lhero">
         <Tag tone="accent">⚡ AI-powered clip extraction</Tag>
-        <h1 className="lhero__title">
-          One long video.
-          <br />
-          <em>Ten viral shorts.</em>
-          <br />
-          Fully automatic.
-        </h1>
-        <p className="lhero__sub">
-          Drop any YouTube link. ClipForge's AI finds the best moments, burns captions, scores
-          hooks, and hands you shorts ready to post — in under 5 minutes.
-        </p>
+
+        <div className="lhero__reveal">
+          <div className={"lhero__text" + (showForge ? " is-hidden" : "")}>
+            <h1 className="lhero__title">
+              One long video.
+              <br />
+              <em>Ten viral shorts.</em>
+              <br />
+              Fully automatic.
+            </h1>
+            <p className="lhero__sub">
+              Drop any YouTube link. ClipForge's AI finds the best moments, burns captions, scores
+              hooks, and hands you shorts ready to post — in under 5 minutes.
+            </p>
+          </div>
+          {mountForge && (
+            <div className={"lforge" + (showForge ? " is-shown" : "")} aria-hidden="true">
+              <Suspense fallback={null}>
+                <ForgeHero className="lforge__stage" revealed={showForge} onReady={() => setForgeReady(true)} />
+              </Suspense>
+            </div>
+          )}
+        </div>
+
         <div className="lhero__cta">
           <Button size="lg" onClick={onSignup}>
             ⚡ Forge my first clips — free

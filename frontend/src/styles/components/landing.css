@@ -164,6 +164,168 @@
   color: var(--text-2);
 }
 
+/* ── hero reveal: text hero fades to the 3D forge animation ── */
+.lhero__reveal {
+  position: relative;
+  max-width: 880px;
+  margin: 20px auto 10px;
+  min-height: clamp(300px, 42vw, 452px);
+}
+.lhero__text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.lhero__text.is-hidden {
+  opacity: 0;
+  transform: translateY(-16px);
+  pointer-events: none;
+}
+/* inside the fixed slot the title/sub don't need their big vertical margins */
+.lhero__reveal .lhero__title {
+  margin: 0 auto 18px;
+}
+.lhero__reveal .lhero__sub {
+  margin: 0 auto;
+}
+
+.lforge {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1s ease 0.1s;
+}
+.lforge.is-shown {
+  opacity: 1;
+}
+/* soft dark pool so the forge glow/sparks read on the light page — a glow, not a box.
+   The canvas is transparent in its dark areas, so this shows through and fades to the page. */
+.lforge::before {
+  content: "";
+  position: absolute;
+  inset: -16% -10%;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 54% 58% at 50% 54%,
+    rgba(15, 9, 6, 0.6) 0%,
+    rgba(15, 9, 6, 0.24) 46%,
+    rgba(15, 9, 6, 0) 70%
+  );
+}
+.lforge__stage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.lforge__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* overlay: fake URL bar (top-left) + "N shorts ready" label (bottom-right) */
+.lforge__url {
+  position: absolute;
+  left: 4%;
+  top: 8%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: rgba(24, 16, 11, 0.66);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 160, 80, 0.28);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: clamp(10px, 1.3vw, 13px);
+  color: #ecdfd2;
+  white-space: nowrap;
+}
+.lforge__url b {
+  color: #fff;
+}
+.lforge__yt {
+  flex: none;
+  width: 20px;
+  height: 14px;
+  border-radius: 4px;
+  background: #e04141;
+  position: relative;
+}
+.lforge__yt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 3.5px 0 3.5px 6px;
+  border-color: transparent transparent transparent #fff;
+}
+.lforge__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent);
+  vertical-align: -2px;
+  margin-left: 1px;
+  animation: lforge-blink 1s steps(1) infinite;
+}
+@keyframes lforge-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.lforge__label {
+  position: absolute;
+  right: 5%;
+  bottom: 8%;
+  z-index: 2;
+  text-align: right;
+  color: #ffe9d8;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+.lforge__label.is-on {
+  opacity: 1;
+  transform: translateY(0);
+}
+.lforge__label b {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 750;
+  font-size: clamp(13px, 1.7vw, 16px);
+  color: #fff;
+}
+[data-theme="retro"] .lforge__label b {
+  font-size: clamp(10px, 1.4vw, 12px);
+}
+.lforge__label span {
+  font-size: clamp(10px, 1.2vw, 12px);
+  color: rgba(255, 220, 190, 0.72);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lforge__caret {
+    animation: none;
+  }
+}
+@media (max-width: 767px) {
+  .lhero__reveal {
+    min-height: clamp(260px, 68vw, 360px);
+  }
+}
+
 /* grids */
 .lgrid-3 {
   display: grid;

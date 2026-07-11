@@ -359,6 +359,7 @@ class ClipRequest(BaseModel):
     bg_music_volume: float = 0.15
     trim_silence: bool = False
     remove_fillers: bool = False   # cut um/uh/erm... vocal fillers out of clips
+    filter: Optional[str] = None   # color-grade name (cinematic|punchy|golden|tealorange|clean|mono)
     # Exact-clip mode: render exactly this source range as one clip — the AI
     # selection phase is skipped entirely. Both must be set (seconds).
     exact_start_s: Optional[float] = None
@@ -455,6 +456,7 @@ class ChannelRequest(BaseModel):
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
     remove_fillers: Optional[bool] = None
+    filter: Optional[str] = None
 
 class ChannelPatchRequest(BaseModel):
     auto_upload: Optional[bool] = None
@@ -479,13 +481,33 @@ class ChannelPatchRequest(BaseModel):
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
     remove_fillers: Optional[bool] = None
+    filter: Optional[str] = None
 
 
 # Fields that live in the options JSONB bag on channels/backfill_channels
 # (instead of a column per knob). Split out of create/patch payloads.
 _OPTIONS_FIELDS = ("aspect_ratio", "caption_position", "caption_keywords",
                    "caption_emoji", "style_prompt", "exclude_prompt", "facecam_box",
-                   "remove_fillers")
+                   "remove_fillers", "filter")
+
+# Color-grade "filters" — a whitelist of named FFmpeg chains applied to the composed
+# video BEFORE captions are burned (so caption text stays crisp and ungraded). The
+# API only ever accepts a KEY from this table; a raw filter string is never allowed
+# near the filtergraph (injection barrier).
+FILTER_GRADES = {
+    "cinematic":  "eq=contrast=1.10:saturation=0.98:gamma=0.95,curves=r='0/0.02 0.25/0.22 0.75/0.79 1/0.98':g='0/0.01 0.5/0.5 1/0.98':b='0/0.05 0.5/0.47 1/0.94',vignette=angle=PI/4.5",
+    "punchy":     "eq=contrast=1.15:saturation=1.35:brightness=0.02,unsharp=5:5:0.5",
+    "golden":     "colortemperature=temperature=5200:mix=0.5,eq=saturation=1.04:contrast=1.02:gamma=0.98,curves=b='0/0 1/0.95'",
+    "tealorange": "curves=r='0/0 0.4/0.43 1/1':g='0/0.01 0.5/0.5 1/0.99':b='0/0.09 0.5/0.52 1/0.95',eq=contrast=1.10:saturation=1.06",
+    "clean":      "eq=contrast=1.06:saturation=1.08:brightness=0.04:gamma=1.03,unsharp=3:3:0.3",
+    "mono":       "hue=s=0,eq=contrast=1.18:gamma=0.96,curves=preset=strong_contrast,vignette=angle=PI/5",
+}
+
+def _grade_prefix(name: Optional[str]) -> str:
+    """FFmpeg filter chain (comma-terminated) for a named grade, or '' for none.
+    Whitelist keys only — the caller never passes a user-supplied filter string."""
+    chain = FILTER_GRADES.get((name or "").strip().lower())
+    return f"{chain}," if chain else ""
 
 
 def _channel_clip_request(row: dict, video_url: str) -> ClipRequest:
@@ -518,6 +540,7 @@ def _channel_clip_request(row: dict, video_url: str) -> ClipRequest:
         bg_music_volume=row.get("bg_music_volume") or 0.15,
         trim_silence=row.get("trim_silence", False),
         remove_fillers=bool(opt.get("remove_fillers")),
+        filter=opt.get("filter"),
     )
 
 
@@ -546,6 +569,7 @@ class BackfillRequest(BaseModel):
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
     remove_fillers: Optional[bool] = None
+    filter: Optional[str] = None
 
 
 class BackfillPatchRequest(BaseModel):
@@ -573,6 +597,7 @@ class BackfillPatchRequest(BaseModel):
     exclude_prompt: Optional[str] = None
     facecam_box: Optional[list] = None
     remove_fillers: Optional[bool] = None
+    filter: Optional[str] = None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3703,6 +3728,7 @@ async def create_clips(
     bg_music_volume: float = 0.15,
     trim_silence: bool = False,
     remove_fillers: bool = False,
+    color_filter: Optional[str] = None,   # whitelisted color-grade name (see FILTER_GRADES)
     brand_overlay: Optional[dict] = None,
 ) -> list:
     job_id = safe_path_id(job_id)   # barrier: id feeds on-disk clip/thumb paths
@@ -4017,7 +4043,9 @@ async def create_clips(
         # every crop instance). Layouts needing more use pre-pass inputs.
         assert plan.filter_complex.count("sendcmd") <= 1, "layout plan violates one-sendcmd-per-graph"
 
-        fc = plan.filter_complex + f";[vmain]ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
+        # Color grade (whitelisted) is applied to the composed video BEFORE the ass
+        # burn, so caption text keeps its exact styling.
+        fc = plan.filter_complex + f";[vmain]{_grade_prefix(color_filter)}ass={ass_filename}:fontsdir={_FONTSDIR_ESC}[vout]"
         ffmpeg_cmd = [FFMPEG, "-y", "-ss", str(render_ss), "-i", str(render_src)]
         for _p in plan.extra_inputs:
             ffmpeg_cmd += ["-i", str(_p)]
@@ -4545,6 +4573,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 bg_music_volume=req.bg_music_volume,
                 trim_silence=req.trim_silence,
                 remove_fillers=req.remove_fillers,
+                color_filter=req.filter,
                 brand_overlay=brand_overlay,
             )
         finally:
@@ -5060,6 +5089,7 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
             "facecam_box": req.facecam_box,
             "trim_silence": req.trim_silence,
             "remove_fillers": req.remove_fillers,
+            "filter": req.filter,
             "exact_start_s": req.exact_start_s,
             "exact_end_s": req.exact_end_s,
         },
@@ -5539,6 +5569,7 @@ async def edit_clip(request: Request, job_id: str, req: EditClipRequest, user=De
         edit_title=(req.title or "").strip() or (f"{base_title} (edited)" if base_title else None),
         caption_overrides=req.caption_overrides,
         remove_fillers=req.remove_fillers,
+        filter=popt.get("filter"),
     )
 
     child = db_create_job({
@@ -5571,6 +5602,7 @@ async def edit_clip(request: Request, job_id: str, req: EditClipRequest, user=De
             "edit_keep": child_req.edit_keep,
             "edit_of_clip": req.clip_index,
             "remove_fillers": child_req.remove_fillers,
+            "filter": child_req.filter,
         },
     })
     child_id = child["id"]
@@ -5629,6 +5661,7 @@ async def reprompt_job(request: Request, job_id: str, req: RepromptRequest, user
         caption_language=parent.get("caption_language") or "source",
         bg_music_url=parent.get("bg_music_url"),
         bg_music_volume=parent.get("bg_music_volume") or 0.15,
+        filter=popt.get("filter"),
     )
 
     child = db_create_job({
@@ -5663,6 +5696,7 @@ async def reprompt_job(request: Request, job_id: str, req: RepromptRequest, user
             "facecam_box": child_req.facecam_box,
             "trim_silence": child_req.trim_silence,
             "remove_fillers": child_req.remove_fillers,
+            "filter": child_req.filter,
         },
     })
     child_id = child["id"]

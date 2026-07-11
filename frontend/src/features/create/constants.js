@@ -92,3 +92,17 @@ export const PRESETS = [
 ];
 
 export const layoutLabel = (id) => LAYOUTS.find((l) => l.id === id)?.label || id;
+
+/* Color-grade "filters" baked into the render. ids must match the backend
+   FILTER_GRADES whitelist; preview thumbnails live in /public/filters/<id>.jpg. */
+export const FILTERS = [
+  { id: "none", label: "None", desc: "No grade — as recorded" },
+  { id: "cinematic", label: "Cinematic", desc: "Filmic warmth + vignette" },
+  { id: "punchy", label: "Punchy", desc: "Bold, saturated pop" },
+  { id: "golden", label: "Golden Hour", desc: "Warm & sunlit" },
+  { id: "tealorange", label: "Teal & Orange", desc: "Blockbuster grade" },
+  { id: "clean", label: "Clean", desc: "Natural & crisp" },
+  { id: "mono", label: "Mono", desc: "High-contrast B&W" },
+];
+
+export const filterLabel = (id) => FILTERS.find((x) => x.id === id)?.label || "None";

@@ -50,6 +50,7 @@ export function useCreateJobForm() {
     captionPosition: searchParams.get("caption_position") || "default",
     captionKeywords: searchParams.get("caption_keywords") !== "0",
     captionEmoji: searchParams.get("caption_emoji") !== "0",
+    filter: searchParams.get("filter") || "none",
     bgMusicUrl: "",
     bgMusicVolume: 0.15,
   }));
@@ -136,6 +137,7 @@ export function useCreateJobForm() {
           caption_position: form.captionPosition !== "default" ? form.captionPosition : undefined,
           caption_keywords: form.captionKeywords,
           caption_emoji: form.captionEmoji,
+          filter: form.filter && form.filter !== "none" ? form.filter : undefined,
           caption_language: form.captionLanguage || "source",
           bg_music_url: form.bgMusicUrl.trim() || undefined,
           bg_music_volume: form.bgMusicVolume,

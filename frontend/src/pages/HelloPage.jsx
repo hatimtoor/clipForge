@@ -22,11 +22,13 @@ import {
   MUSIC_VOLUMES,
   VERTICAL_ONLY_LAYOUTS,
   layoutLabel,
+  filterLabel,
 } from "../features/create/constants";
 import ClipsLengthModal from "../features/create/modals/ClipsLengthModal";
 import LayoutFormatModal from "../features/create/modals/LayoutFormatModal";
 import CaptionsModal from "../features/create/modals/CaptionsModal";
 import EnhanceModal from "../features/create/modals/EnhanceModal";
+import FilterModal from "../features/create/modals/FilterModal";
 
 const TOUR_STEPS = [
   {
@@ -71,7 +73,7 @@ export default function HelloPage() {
     return () => clearInterval(id);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [openModal, setOpenModal] = useState(null); // clips | layout | captions | enhance
+  const [openModal, setOpenModal] = useState(null); // clips | layout | captions | filter | enhance
   const [camOpen, setCamOpen] = useState(false);
   // RETRY deep-links pre-fill these — auto-expand so restored values are visible.
   const [aiOpen, setAiOpen] = useState(!!(form.stylePrompt || form.excludePrompt));
@@ -175,6 +177,12 @@ export default function HelloPage() {
             icon="Aa"
             value={`${captionName} · ${langShort}`}
             onClick={() => setOpenModal("captions")}
+          />
+          <SettingsChip
+            icon="🎨"
+            label="Filter"
+            value={filterLabel(form.filter)}
+            onClick={() => setOpenModal("filter")}
           />
           <SettingsChip
             icon="✨"
@@ -335,6 +343,9 @@ export default function HelloPage() {
           effectiveFontSize={f.effectiveFontSize}
           onClose={() => setOpenModal(null)}
         />
+      )}
+      {openModal === "filter" && (
+        <FilterModal form={form} set={set} onClose={() => setOpenModal(null)} />
       )}
       {openModal === "enhance" && (
         <EnhanceModal

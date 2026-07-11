@@ -17,6 +17,10 @@ AI finds the highest-engagement moments, cuts the video, crops to 9:16 while tra
 
 Live at **[clipforging.com](https://clipforging.com)**.
 
+![ClipForge forge animation](forge-animation.gif)
+
+> The landing hero is a real-time WebGL **"forge"** — a video is struck white-hot on an anvil and pulled out as captioned vertical clips. Built with Three.js (custom bloom + particle pipeline), lazy-loaded in its own chunk so it never weighs down the app.
+
 ---
 
 ## Features
@@ -45,6 +49,7 @@ Live at **[clipforging.com](https://clipforging.com)**.
 - **Email notifications** — Resend email when your clips are ready
 
 **Platform**
+- **Animated landing hero** — a real-time WebGL "forge" (Three.js, custom bloom + particles) shows a video being struck into vertical clips; lazy-loaded in its own chunk so app users never download it, and it degrades gracefully (reduced-motion / no-WebGL keep a static text hero)
 - **Job archive** — every job stored with full settings; one-click retry carries all original parameters; cancel a running job or delete one outright
 - **Cloudflare R2 storage** — clips served via short-lived presigned URLs; auto-deleted after 7 days
 - **Anti-abuse** — disposable/temp-email blocking and Gmail alias normalization at signup
@@ -98,7 +103,7 @@ Live at **[clipforging.com](https://clipforging.com)**.
 
 | Layer | Technology |
 |---|---|
-| Frontend | React + Vite, React Router v6 |
+| Frontend | React + Vite, React Router v6, Three.js (landing hero) |
 | Backend | FastAPI (Python) |
 | Auth & Database | Supabase (Postgres + Auth) |
 | Clip Storage | Cloudflare R2 (S3-compatible) |

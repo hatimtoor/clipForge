@@ -9,9 +9,11 @@
 ![groq](https://img.shields.io/badge/Groq-Whisper%20%2B%20Llama-f55036)
 ![openrouter](https://img.shields.io/badge/OpenRouter-analysis-7c5cff)
 
-![ClipForge — the forge landing animation](forge-animation.gif)
+<p align="center">
+  <img src="forge-animation.gif" alt="ClipForge — the forge landing animation" width="520">
+</p>
 
-> The landing hero is a real-time WebGL **"forge"** — a video is struck white-hot on an anvil and pulled out as captioned vertical clips. Built with Three.js (custom bloom + particle pipeline), lazy-loaded in its own chunk so it never weighs down the app.
+<p align="center"><em>The landing hero is a real-time WebGL <b>"forge"</b> — a video is struck white-hot on an anvil and pulled out as captioned vertical clips. Built with Three.js (custom bloom + particles), lazy-loaded so it never weighs down the app.</em></p>
 
 Turn any YouTube video into viral short-form clips — fully automatic.
 

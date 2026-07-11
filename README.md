@@ -9,17 +9,15 @@
 ![groq](https://img.shields.io/badge/Groq-Whisper%20%2B%20Llama-f55036)
 ![openrouter](https://img.shields.io/badge/OpenRouter-analysis-7c5cff)
 
-![ClipForge Login](screenshot-login.png)
+![ClipForge — the forge landing animation](forge-animation.gif)
+
+> The landing hero is a real-time WebGL **"forge"** — a video is struck white-hot on an anvil and pulled out as captioned vertical clips. Built with Three.js (custom bloom + particle pipeline), lazy-loaded in its own chunk so it never weighs down the app.
 
 Turn any YouTube video into viral short-form clips — fully automatic.
 
 AI finds the highest-engagement moments, cuts the video, crops to 9:16 while tracking the active speaker, and burns word-by-word karaoke captions. Clips can be downloaded or posted straight to YouTube Shorts and TikTok — manually or fully hands-off via channel monitoring.
 
 Live at **[clipforging.com](https://clipforging.com)**.
-
-![ClipForge forge animation](forge-animation.gif)
-
-> The landing hero is a real-time WebGL **"forge"** — a video is struck white-hot on an anvil and pulled out as captioned vertical clips. Built with Three.js (custom bloom + particle pipeline), lazy-loaded in its own chunk so it never weighs down the app.
 
 ---
 

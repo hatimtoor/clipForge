@@ -37,6 +37,8 @@ export function buildForge(canvas, container, opts = {}) {
   const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 100);
   const camBase = new THREE.Vector3(0.15, 1.55, 5.6);
   const camLook = new THREE.Vector3(0, 0.62, 0);
+  const camDir = camBase.clone().sub(camLook); // camera offset from the target
+  let camZoom = 1; // >1 pulls the camera back on narrow/portrait screens so nothing is clipped
 
   // ── procedural environment (warm forge reflections, no HDR file) ──
   function makeEnv() {
@@ -285,6 +287,8 @@ export function buildForge(canvas, container, opts = {}) {
   function resize() {
     const r = container.getBoundingClientRect(); W = Math.max(2, r.width); H = Math.max(2, r.height);
     renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix();
+    // narrower than ~16:10 → pull the camera back so the wide fan/hammer stay in frame
+    camZoom = THREE.MathUtils.clamp(1.7 / (W / H), 1, 1.9);
     const pr = renderer.getPixelRatio(); const fw = Math.floor(W * pr), fh = Math.floor(H * pr);
     const hw = Math.max(2, Math.floor(fw / 2)), hh = Math.max(2, Math.floor(fh / 2));
     [sceneRT, brightRT, blurA, blurB].forEach((t) => t && t.dispose());
@@ -324,9 +328,14 @@ export function buildForge(canvas, container, opts = {}) {
 
   function frame(u, dt) {
     const t = clock.elapsedTime;
-    let cx = camBase.x + Math.sin(t * 0.35) * 0.12, cy = camBase.y + Math.sin(t * 0.5) * 0.05, cz = camBase.z + Math.sin(t * 0.27) * 0.14;
-    if (shake > 0) { cx += (Math.random() - 0.5) * shake; cy += (Math.random() - 0.5) * shake; cz += (Math.random() - 0.5) * shake * 0.6; shake *= Math.pow(0.001, dt); if (shake < 0.001) shake = 0; }
-    camera.position.set(cx, cy, cz); camera.lookAt(camLook);
+    let px = Math.sin(t * 0.35) * 0.12, py = Math.sin(t * 0.5) * 0.05, pz = Math.sin(t * 0.27) * 0.14;
+    if (shake > 0) { px += (Math.random() - 0.5) * shake; py += (Math.random() - 0.5) * shake; pz += (Math.random() - 0.5) * shake * 0.6; shake *= Math.pow(0.001, dt); if (shake < 0.001) shake = 0; }
+    camera.position.set(
+      camLook.x + camDir.x * camZoom + px,
+      camLook.y + camDir.y * camZoom + py,
+      camLook.z + camDir.z * camZoom + pz
+    );
+    camera.lookAt(camLook);
 
     let ang; const rest = -0.16;
     if (u < 0.30) ang = rest;
@@ -364,21 +373,24 @@ export function buildForge(canvas, container, opts = {}) {
     groundGlow.material.opacity = 0.28 + hb * 0.6;
     groundGlow.scale.setScalar(1 + hb * 0.18);
 
-    const fan = [[-1.75, 0.95, -9], [-0.05, 1.4, 0], [1.7, 0.95, 9]];
+    // tighter, less forward fan on phones so the cards stay in the narrow frame
+    const fan = MOBILE ? [[-1.28, 0.98, -9], [-0.05, 1.34, 0], [1.28, 0.98, 9]]
+                       : [[-1.75, 0.95, -9], [-0.05, 1.4, 0], [1.7, 0.95, 9]];
+    const fanZ = MOBILE ? 1.05 : 1.5;
     for (let i = 0; i < 3; i++) { const c = clips[i], born = 0.455 + i * 0.022, out = born + 0.16, hold = 0.9;
       if (u < born) { c.mesh.visible = false; continue; }
       c.mesh.visible = true;
       const fx = fan[i][0], fy = fan[i][1], rz = (fan[i][2] * Math.PI) / 180;
       if (u < out) { const p = eOutBack(clamp(born, out, u));
-        c.mesh.position.set(lerp(0, fx, p), lerp(0.9, fy, p) + (1 - p) * 0.6, lerp(0.1, 1.5, p));
+        c.mesh.position.set(lerp(0, fx, p), lerp(0.9, fy, p) + (1 - p) * 0.6, lerp(0.1, fanZ, p));
         c.mesh.rotation.set(0, lerp(2.4, 0, p) * (i - 1 || 1), lerp(0, rz, p));
         c.mesh.scale.setScalar(lerp(0.2, 1, Math.min(1, p)));
         c.hot.material.opacity = lerp(1.0, 0.0, clamp(born, out + 0.06, u));
       } else if (u < hold) {
-        c.mesh.position.set(fx, fy, 1.5); c.mesh.rotation.set(0, 0, rz); c.mesh.scale.setScalar(1);
+        c.mesh.position.set(fx, fy, fanZ); c.mesh.rotation.set(0, 0, rz); c.mesh.scale.setScalar(1);
         c.hot.material.opacity = Math.max(0, lerp(0.4, 0, clamp(out, out + 0.1, u)));
       } else { const q = clamp(hold, 1.0, u);
-        c.mesh.position.set(fx, fy + q * 0.5, 1.5); c.mesh.scale.setScalar(1 - q * 0.06);
+        c.mesh.position.set(fx, fy + q * 0.5, fanZ); c.mesh.scale.setScalar(1 - q * 0.06);
         c.face.material.opacity = 1 - q; c.mesh.material.opacity = 1 - q;
       }
       if (u < hold) { c.face.material.opacity = 1; c.mesh.material.opacity = 1; }

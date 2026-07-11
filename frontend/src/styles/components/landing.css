@@ -322,7 +322,7 @@
 }
 @media (max-width: 767px) {
   .lhero__reveal {
-    min-height: clamp(260px, 68vw, 360px);
+    min-height: clamp(330px, 88vw, 440px);
   }
 }
 

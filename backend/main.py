@@ -2443,6 +2443,458 @@ def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list
     return None
 
 
+def _pick_panel_speakers(clusters: list, n_ok: int, src_w: int, src_h: int,
+                         max_panel: int = 6) -> Optional[list]:
+    """N co-present speaker faces for the Dynamic layout (generalizes
+    _pick_split_speakers beyond two). Members must be persistent, positionally
+    stable, big enough that mouth motion is judgeable, and mutually co-present
+    (largest connected component of the co-presence graph — two clusters that
+    never share a frame are one person who moved seats). Returns the panel
+    sorted left-to-right (deterministic tile slots), or None if fewer than 2."""
+    if n_ok == 0:
+        return None
+    cands = [c for c in clusters
+             if c["hits"] >= max(3, int(0.35 * n_ok))
+             and c.get("pos_std", 0.0) < src_w * 0.05
+             and c["fh"] >= 0.045 * src_h]
+    if len(cands) < 2:
+        return None
+    cands = cands[:max_panel]
+    # Co-presence graph → largest connected component. Threshold matches the
+    # split picker: pairs must share ≥30% of sampled frames.
+    n = len(cands)
+    adj = [set() for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if len(cands[i]["frames"] & cands[j]["frames"]) >= 0.3 * n_ok:
+                adj[i].add(j); adj[j].add(i)
+    seen, best = set(), []
+    for s in range(n):
+        if s in seen:
+            continue
+        comp, stack = [], [s]
+        while stack:
+            v = stack.pop()
+            if v in seen:
+                continue
+            seen.add(v); comp.append(v)
+            stack.extend(adj[v] - seen)
+        if len(comp) > len(best):
+            best = comp
+    panel = [cands[i] for i in best]
+    if len(panel) < 2:
+        return None
+    return sorted(panel, key=lambda c: c["fcx"])
+
+
+def _dyn_scan(clip_path: Path, ffmpeg_bin: str, hz: float = 5.0) -> Optional[dict]:
+    """Raw detection pass for the Dynamic layout: ONE sequential decode of the
+    clip intermediate collecting, at ~hz sample points, every YuNet face with
+    its mouth activity (adjacent-frame-pair diffs — a 200ms-apart diff would
+    saturate on any head/camera motion). No identity/clustering here — shots
+    are clustered independently later (_dyn_shot_faces), so a source camera
+    cut can completely rearrange faces without corrupting identities.
+      {"times": [...], "audio": [rms...],
+       "faces": [[(cx, cy, w, h, r, mouth_d), ...] per sample]}
+    Coordinates in SOURCE pixels; r = mouth/(face+eps) activity ratio.
+    Returns None when the probe can't run. Runs in a worker thread."""
+    face_det = _yunet_detector()
+    if face_det is None:
+        return None
+    import cv2 as _cv2
+    import numpy as _np
+
+    cap = _cv2.VideoCapture(str(clip_path))
+    fps = cap.get(_cv2.CAP_PROP_FPS) or 30.0
+    n_frames = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if fps <= 0 or n_frames <= 0:
+        cap.release()
+        return None
+    step = max(2, int(round(fps / hz)))     # ≥2 so a prev frame always exists
+
+    try:
+        rms = _audio_rms_per_frame(clip_path, fps, ffmpeg_bin)
+    except Exception:
+        rms = None
+
+    src_w = cap.get(_cv2.CAP_PROP_FRAME_WIDTH) or 1920
+    scale = min(1.0, 960.0 / max(1.0, src_w))
+
+    times, audio, samples = [], [], []
+    prev_gray = None
+    fi = 0
+    while True:
+        at_sample = (fi % step) == step - 1
+        if at_sample or ((fi + 1) % step) == step - 1:
+            ret, frame = cap.read()          # need pixels for prev or current
+        else:
+            ret = cap.grab()
+            frame = None
+        if not ret:
+            break
+        if frame is not None and scale < 1.0:
+            frame = _cv2.resize(frame, None, fx=scale, fy=scale,
+                                interpolation=_cv2.INTER_AREA)
+        gray = _cv2.cvtColor(frame, _cv2.COLOR_BGR2GRAY) if frame is not None else None
+
+        if at_sample and gray is not None and prev_gray is not None \
+                and gray.shape == prev_gray.shape:
+            times.append(round(fi / fps, 3))
+            audio.append(float(rms[fi]) if rms is not None and fi < len(rms) else 0.0)
+            try:
+                face_det.setInputSize((frame.shape[1], frame.shape[0]))
+                _c, faces = face_det.detect(frame)
+            except Exception:
+                faces = None
+            found = []
+            H, W = gray.shape
+            for f in (faces if faces is not None else []):
+                x, y, w, h = float(f[0]), float(f[1]), float(f[2]), float(f[3])
+                if w <= 4 or h <= 4:
+                    continue
+                # Mouth ROI: lower 40% of the face box, middle 70% width.
+                mx0 = int(max(0, x + 0.15 * w)); mx1 = int(min(W, x + 0.85 * w))
+                my0 = int(max(0, y + 0.60 * h)); my1 = int(min(H, y + h))
+                fx0 = int(max(0, x)); fx1 = int(min(W, x + w))
+                fy0 = int(max(0, y)); fy1 = int(min(H, y + h))
+                if mx1 - mx0 < 3 or my1 - my0 < 3 or fx1 - fx0 < 4 or fy1 - fy0 < 4:
+                    continue
+                d_all = _cv2.absdiff(gray[fy0:fy1, fx0:fx1], prev_gray[fy0:fy1, fx0:fx1])
+                d_mou = _cv2.absdiff(gray[my0:my1, mx0:mx1], prev_gray[my0:my1, mx0:mx1])
+                face_d = float(_np.mean(d_all))
+                mouth_d = float(_np.mean(d_mou))
+                # Appearance fingerprint: a coarse color histogram of the face
+                # crop. Position alone cannot tell people apart — across a
+                # whip-pan cut, or when someone drifts into a neighbor's
+                # window, a DIFFERENT face can occupy the SAME position.
+                # Identity-gated clustering needs this to break such links.
+                roi = frame[fy0:fy1, fx0:fx1]
+                hist = _cv2.calcHist([roi], [0, 1, 2], None, [4, 4, 4],
+                                     [0, 256, 0, 256, 0, 256])
+                _cv2.normalize(hist, hist)
+                # eps well below real diff magnitudes: small faces (30px at
+                # 720p) produce sub-1.0 mean diffs — a large eps swamps the
+                # denominator and flattens the ratio (measured: r collapsed
+                # to 0.2-0.7 with eps=1.0 on a 6-face panel).
+                found.append(((x + w / 2) / scale, (y + h / 2) / scale,
+                              w / scale, h / scale,
+                              mouth_d / (face_d + 0.05), mouth_d,
+                              hist.flatten()))
+            samples.append(found)
+        if gray is not None:
+            prev_gray = gray
+        fi += 1
+    cap.release()
+    if len(times) < 4:
+        return None
+    return {"times": times, "audio": audio, "faces": samples}
+
+
+def _dyn_shot_faces(scan: dict, i0: int, i1: int, src_w: int, src_h: int,
+                    min_fh_frac: float = 0.045, dedupe: bool = True) -> list:
+    """PURE: cluster the scan's raw detections within sample range [i0, i1)
+    into per-shot faces. Each face: {"fcx","fcy","fw","fh","hits","act",
+    "mouth","pos"} with series indexed over the shot's samples (0 where the
+    face wasn't seen). Faces smaller than min_fh_frac·src_h or seen in <15%
+    of the shot's samples are dropped (15%, not higher: someone can argue for
+    the first third of a long shot then walk off — attribution handles their
+    absence, but only if they survive as a candidate). Sorted left-to-right."""
+    import statistics as _st
+    n = i1 - i0
+    if n <= 0:
+        return []
+
+    def _radius(fw):
+        return max(fw * 1.2, src_w * 0.05)
+
+    clusters = []
+    for si in range(i0, i1):
+        for det in scan["faces"][si]:
+            cx, cy, w, h, r, m = det[:6]
+            hist = det[6] if len(det) > 6 else None
+            best, best_d = None, None
+            for c in clusters:
+                d = ((cx - c["_sx"] / c["hits"]) ** 2 + (cy - c["_sy"] / c["hits"]) ** 2) ** 0.5
+                if d > _radius(max(w, c["_sw"] / c["hits"])) or (best_d is not None and d >= best_d):
+                    continue
+                # Identity gate: position coincidence is NOT identity. Across
+                # a whip-pan cut (or a face drifting into a neighbor's spot) a
+                # DIFFERENT face can land on this cluster's position — the
+                # appearance fingerprint must agree before linking.
+                if hist is not None and c.get("_h") is not None:
+                    hn = c["_h"] / (float((c["_h"] ** 2).sum()) ** 0.5 + 1e-9)
+                    sim = float((hist * hn).sum())
+                    if sim < 0.4:
+                        continue
+                best, best_d = c, d
+            if best is None:
+                clusters.append({"_m": [(si, cx, cy, w, h, r, m)],
+                                 "_sx": cx, "_sy": cy, "_sw": w, "hits": 1,
+                                 "_h": (hist.copy() if hist is not None else None)})
+            else:
+                best["_m"].append((si, cx, cy, w, h, r, m))
+                best["_sx"] += cx; best["_sy"] += cy; best["_sw"] += w
+                best["hits"] += 1
+                # _h stays the FIRST fingerprint (identity anchor): a running
+                # mean drifts toward an intruder after one borderline leak,
+                # easing every subsequent join until the cluster is stolen.
+
+    out = []
+    for c in clusters:
+        m = c["_m"]
+        fh_med = _st.median(v[4] for v in m)
+        if fh_med < min_fh_frac * src_h or len(m) < max(2, 0.15 * n):
+            continue
+        act = [0.0] * n; mouth = [0.0] * n; pos = [None] * n
+        for (si, cx, cy, w, h, r, md) in m:
+            k = si - i0
+            act[k] = max(act[k], r); mouth[k] = max(mouth[k], md)
+            pos[k] = (cx, cy)
+        out.append({
+            "fcx": float(_st.median(v[1] for v in m)),
+            "fcy": float(_st.median(v[2] for v in m)),
+            "fw": int(_st.median(v[3] for v in m)),
+            "fh": int(fh_med),
+            "hits": len(m),
+            "act": act, "mouth": mouth, "pos": pos,
+        })
+
+    if not dedupe:
+        out.sort(key=lambda c: c["fcx"])
+        return out
+    # Dedupe SAME-PERSON clusters: one person who moves during the shot
+    # (stands up, walks) leaves two position-clusters whose presence is
+    # DISJOINT IN TIME — a real pair co-occurs whenever both are on screen.
+    # Without this, a moving speaker gets tiled next to themselves. (The
+    # planner first tries to SPLIT the shot at such transitions — this
+    # dedupe is the in-range guard for whatever remains.)
+    out.sort(key=lambda c: c["hits"], reverse=True)
+    kept = []
+    for f in out:
+        dup = False
+        for g in kept:
+            co = sum(1 for k in range(n) if f["pos"][k] and g["pos"][k])
+            if co < 0.15 * min(f["hits"], g["hits"]):
+                dup = True
+                break
+        if not dup:
+            kept.append(f)
+    kept.sort(key=lambda c: c["fcx"])
+    return kept
+
+
+# WIDE sentinel for the segment builder: "show the whole scene, letterboxed".
+DYN_WIDE = None
+
+
+def _active_speaker_segments(times: list, audio: list, act: dict, mouth: dict,
+                             dur: float, cuts: Optional[list] = None,
+                             r_min: float = 1.10, mouth_floor: float = 0.3,
+                             join_s: float = 0.5, leave_s: float = 1.3,
+                             min_seg_s: float = 2.2, max_tiles: int = 4,
+                             max_segs: int = 20,
+                             empty_to_wide: bool = False) -> list:
+    """PURE function: turn per-face activity series into a layout timeline
+    [(t0, t1, ids)] where ids is a tuple of panel indices (1 → full-frame crop,
+    2-4 → grid) or DYN_WIDE (>max_tiles simultaneous → wide shot). All the
+    anti-flicker logic lives here so it is unit-testable without video:
+    smoothing, audio gating, per-face adaptive thresholds, join/leave
+    hysteresis, min-segment merging, boundary snapping to cuts, no switch in
+    the final 1.5s, and a hard segment cap."""
+    n = len(times)
+    if n == 0 or dur <= 0:
+        return [(0.0, dur, DYN_WIDE)]
+    hz = max(1.0, (n - 1) / max(0.001, times[-1] - times[0])) if n > 1 else 5.0
+
+    def _smooth(v, w):
+        # Trailing MEDIAN, not mean: a moving average smears a 0.4s laugh
+        # burst across the window (it preserves area), while a median simply
+        # rejects it — only sustained activity survives.
+        if w <= 1:
+            return list(v)
+        import statistics as _st
+        out = []
+        for i in range(len(v)):
+            a = max(0, i - w + 1)
+            out.append(float(_st.median(v[a:i + 1])))
+        return out
+
+    win = int(round(0.8 * hz))
+    if win % 2 == 0:
+        win += 1                      # odd window → true middle element
+    sm = {ci: _smooth(act[ci], max(1, win)) for ci in act}
+
+    # Global speech gate: audio present above the quietest ~35% of samples.
+    pos_audio = sorted(a for a in audio if a > 0)
+    a_thr = pos_audio[int(0.35 * len(pos_audio))] if pos_audio else 0.0
+    speech = [a >= a_thr and a > 0 for a in audio]
+
+    # AV correlation: does this face's mouth motion co-move with the audio?
+    # Rolling window ±1.5s/2; boosts co-moving faces, damps nodding listeners.
+    cw = max(2, int(round(0.75 * hz)))
+
+    def _corr(x, y, i):
+        a0, a1 = max(0, i - cw), min(n, i + cw + 1)
+        xs, ys = x[a0:a1], y[a0:a1]
+        mx = sum(xs) / len(xs); my = sum(ys) / len(ys)
+        sx = (sum((v - mx) ** 2 for v in xs)) ** 0.5
+        sy = (sum((v - my) ** 2 for v in ys)) ** 0.5
+        if sx < 1e-6 or sy < 1e-6:
+            return 0.0
+        return sum((a - mx) * (b - my) for a, b in zip(xs, ys)) / (sx * sy)
+
+    # Per-face threshold. Adaptive ONLY when the face's activity is bimodal
+    # (it has distinct quiet and speaking modes — then the quiet mode is a
+    # meaningful noise floor to rise above). A face that talks the whole clip
+    # is unimodal-high: deriving a baseline from its own distribution would
+    # put the bar above its own speech, so unimodal faces use the absolute
+    # r_min (mouth moving ~1.5x more than the face IS what speech looks like).
+    def _band(vals):
+        nz = sorted(v for v in vals if v > 0)
+        if not nz:
+            return 0.0, 0.0
+        return nz[int(0.10 * len(nz))], nz[min(len(nz) - 1, int(0.90 * len(nz)))]
+
+    score = {}
+    for ci in sm:
+        # The r ratio is scale-free by construction (mouth motion relative to
+        # whole-face motion), so the threshold is ABSOLUTE. No per-face raise:
+        # deriving a baseline from a face's own distribution silences anyone
+        # who talks most of the clip (measured twice on real panels).
+        # Mouth floor IS bimodality-aware: absolute diffs scale with face size
+        # and resolution (a 30px face at 720p peaks ~1.2 where a 200px face
+        # reaches 6+); the absolute mouth_floor only rejects sensor noise.
+        m_lo, m_hi = _band(mouth[ci])
+        m_bimodal = m_hi >= m_lo * 1.8 and m_lo > 0
+        m_floor = max(mouth_floor, m_lo * 1.5) if m_bimodal else mouth_floor
+        s = []
+        for i in range(n):
+            # AV boost is neutral-at-worst (1.0–1.5x): a multiplier below 1
+            # would silently raise the effective r_min for any face whose
+            # mouth series doesn't co-vary with the audio envelope.
+            v = sm[ci][i] * (1.0 + 0.5 * max(0.0, _corr(mouth[ci], audio, i)))
+            ok = (v >= r_min and mouth[ci][i] >= m_floor and speech[i])
+            s.append(v if ok else 0.0)
+        score[ci] = s
+
+    # Join/leave hysteresis → per-sample active sets.
+    join_n = max(1, int(round(join_s * hz)))
+    leave_n = max(1, int(round(leave_s * hz)))
+    active_sets, state, run_on, run_off = [], {}, {}, {}
+    for i in range(n):
+        cur = set()
+        for ci in score:
+            hot = score[ci][i] > 0
+            run_on[ci] = run_on.get(ci, 0) + 1 if hot else 0
+            run_off[ci] = run_off.get(ci, 0) + 1 if not hot else 0
+            if not state.get(ci) and run_on[ci] >= join_n:
+                state[ci] = True
+            elif state.get(ci) and run_off[ci] >= leave_n:
+                state[ci] = False
+            if state.get(ci):
+                cur.add(ci)
+        active_sets.append(cur)
+
+    # Empty-set handling. Two modes:
+    #  - carry (default): backfill leading empties from the first non-empty
+    #    set and hold the last speaker through gaps — right for continuous
+    #    single-camera scenes where SOMEONE on the panel is always the talker.
+    #  - empty_to_wide: an empty set WHILE SPEECH IS AUDIBLE means the talker
+    #    is someone we cannot see/attribute (off-panel host, back turned) —
+    #    guessing here is how the wrong person ends up on screen, so show the
+    #    WIDE shot instead. Quiet gaps still carry (pauses shouldn't flicker).
+    WIDE_MARK = "__wide__"
+    first = next((s for s in active_sets if s), None)
+    carry = set(first) if first else set()
+    for i in range(n):
+        if active_sets[i]:
+            carry = active_sets[i]
+        elif empty_to_wide and speech[i]:
+            active_sets[i] = WIDE_MARK
+        else:
+            active_sets[i] = set(carry)
+    if empty_to_wide:
+        # A lone non-wide sample sandwiched in wide runs would flash a face.
+        for i in range(n):
+            if active_sets[i] == WIDE_MARK:
+                continue
+            prev_w = i > 0 and active_sets[i - 1] == WIDE_MARK
+            next_w = i < n - 1 and active_sets[i + 1] == WIDE_MARK
+            if prev_w and next_w:
+                active_sets[i] = WIDE_MARK
+
+    # Cap tiles: >max_tiles simultaneous → WIDE; else sorted tuple (fcx order =
+    # panel index order, so slots stay stable across adjacent segments).
+    def _key(s):
+        if s == WIDE_MARK or not s:
+            return DYN_WIDE
+        if len(s) > max_tiles:
+            return DYN_WIDE
+        return tuple(sorted(s))
+
+    # Collapse samples → segments.
+    segs = []
+    seg_start, seg_key = 0.0, _key(active_sets[0])
+    for i in range(1, n):
+        k = _key(active_sets[i])
+        if k != seg_key:
+            t = times[i]
+            segs.append([seg_start, t, seg_key])
+            seg_start, seg_key = t, k
+    segs.append([seg_start, dur, seg_key])
+
+    # Snap boundaries to hard cuts (scene/trim cuts read as intentional edits).
+    for c in (cuts or []):
+        for s in segs:
+            if abs(s[0] - c) <= 0.4 and s[0] > 0:
+                s[0] = c
+    for i in range(len(segs) - 1):
+        segs[i][1] = segs[i + 1][0]
+
+    def _merge_short(min_len):
+        i = 0
+        while len(segs) > 1 and i < len(segs):
+            a, b, k = segs[i]
+            if b - a >= min_len:
+                i += 1
+                continue
+            # Merge into the neighbor sharing more members (ties → previous).
+            prev_k = segs[i - 1][2] if i > 0 else None
+            next_k = segs[i + 1][2] if i < len(segs) - 1 else None
+            def _shared(other):
+                if other is DYN_WIDE or k is DYN_WIDE:
+                    return 0
+                return len(set(k) & set(other)) if other else 0
+            into_prev = i > 0 and (i >= len(segs) - 1 or _shared(prev_k) >= _shared(next_k))
+            if into_prev:
+                segs[i - 1][1] = b
+                del segs[i]
+            else:
+                segs[i + 1][0] = a
+                del segs[i]
+            i = max(0, i - 1)
+
+    _merge_short(min_seg_s)
+    # No layout switch in the final 1.5s — a last-moment cut reads as a glitch.
+    while len(segs) > 1 and segs[-1][1] - segs[-1][0] < 1.5:
+        segs[-2][1] = segs[-1][1]
+        del segs[-1]
+    # Hard cap on segment count: relax minimum length until it fits.
+    lim = min_seg_s
+    while len(segs) > max_segs:
+        lim *= 1.5
+        _merge_short(lim)
+
+    # Adjacent segments can end up identical after merging — coalesce.
+    out = []
+    for a, b, k in segs:
+        if out and out[-1][2] == k:
+            out[-1] = (out[-1][0], b, k)
+        else:
+            out.append((a, b, k))
+    return [(round(a, 3), round(b, 3), k) for a, b, k in out]
+
+
 def _facecam_region_from_clusters(clusters: list, n_ok: int,
                                   src_w: int, src_h: int) -> Optional[dict]:
     """Pick the webcam from pre-computed face clusters: the persistent SMALL
@@ -3279,6 +3731,7 @@ class ClipRenderCtx:
     clip_title: str = ""
     facecam_region: Optional[dict] = None
     split_speakers: Optional[list] = None
+    panel_speakers: Optional[list] = None   # N-face panel for the Dynamic layout
 
 
 @_dataclass
@@ -3613,10 +4066,653 @@ def _plan_fit(ctx: ClipRenderCtx) -> LayoutPlan:
     return LayoutPlan(filter_complex=fc)
 
 
+def _fit_chain(ctx: ClipRenderCtx) -> str:
+    """The Fit crop/scale/pad chain WITHOUT input/output labels — reused by
+    the Dynamic layout's WIDE segments."""
+    fit_h = ctx.src_h - (ctx.src_h % 2)
+    fit_w = min(int(ctx.src_h * 4 / 3), ctx.src_w); fit_w -= fit_w % 2
+    fit_x = max(0, (ctx.src_w - fit_w) // 2)
+    return (f"crop={fit_w}:{fit_h}:{fit_x}:0,scale={ctx.out_w}:-2,"
+            f"pad={ctx.out_w}:{ctx.out_h}:0:(oh-ih)/2:black")
+
+
+def _second_person_present(clip_path: Path, a: float, b: float) -> bool:
+    """YOLO check for a solo close-up segment: is there a SECOND comparable
+    person in frame? A companion leaning in from behind/beside the primary
+    can be speaking with their mouth never visible to the camera — face-based
+    attribution is physically blind to them, but their body isn't. Runs in a
+    worker thread."""
+    if not _REFRAME_AVAILABLE:
+        return False
+    import cv2 as _cv2
+    model = _get_yolo()
+    if model is None:
+        return False
+    cap = _cv2.VideoCapture(str(clip_path))
+    hits = 0
+    try:
+        for f in (0.3, 0.5, 0.7):
+            cap.set(_cv2.CAP_PROP_POS_MSEC, (a + (b - a) * f) * 1000.0)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            cands = _person_candidates(frame, frame, model)
+            if len(cands) < 2:
+                continue
+            areas = sorted((c[1] for c in cands), reverse=True)
+            if areas[1] >= 0.45 * areas[0]:
+                hits += 1
+    except Exception:
+        return False
+    finally:
+        cap.release()
+    return hits >= 2
+
+
+def _two_shot_pieces(mine: dict, other: dict, rel_times: list,
+                     a: float, b: float, competitive: float = 0.55,
+                     min_piece_s: float = 1.6) -> list:
+    """PURE: split a two-shot solo segment [a, b) into pieces by the OTHER
+    face's presence runs, marking each piece both=True when the other face's
+    activity is competitive there (≥ competitive × the primary's). Pieces
+    shorter than min_piece_s merge into their left neighbor (right for the
+    first). Returns [(t0, t1, both)] tiling [a, b)."""
+    from bisect import bisect_left
+    j0 = bisect_left(rel_times, a)
+    j1 = max(j0 + 1, bisect_left(rel_times, b))
+    n = len(rel_times)
+    if n > 1:
+        hz = max(1.0, (n - 1) / max(0.001, rel_times[-1] - rel_times[0]))
+    else:
+        hz = 5.0
+    min_n = max(1, int(round(min_piece_s * hz)))
+
+    pieces = []
+    k = j0
+    while k < j1:
+        pres = other["pos"][k] is not None
+        k2 = k
+        while k2 < j1 and (other["pos"][k2] is not None) == pres:
+            k2 += 1
+        both = False
+        if pres:
+            m = sum(mine["act"][k:k2]) or 1e-6
+            t = sum(other["act"][k:k2])
+            both = t >= competitive * m
+        pieces.append([k, k2, both])
+        k = k2
+    # Merge sub-minimum pieces (flicker guards).
+    i = 0
+    while len(pieces) > 1 and i < len(pieces):
+        if pieces[i][1] - pieces[i][0] >= min_n:
+            i += 1
+            continue
+        if i > 0:
+            pieces[i - 1][1] = pieces[i][1]
+        else:
+            pieces[i + 1][0] = pieces[i][0]
+        del pieces[i]
+        i = max(0, i - 1)
+    # Coalesce equal neighbors, map back to times (endpoints exact).
+    out = []
+    for (k, k2, both) in pieces:
+        if out and out[-1][2] == both:
+            out[-1][1] = k2
+        else:
+            out.append([k, k2, both])
+    res = []
+    for idx, (k, k2, both) in enumerate(out):
+        t0 = a if idx == 0 else rel_times[k]
+        t1 = b if idx == len(out) - 1 else rel_times[k2]
+        res.append((t0, t1, both))
+    return res
+
+
+def _dyn_shot_plan(scan: dict, shots: list, dur: float, src_w: int, src_h: int,
+                   r_min: float = 1.10, mouth_floor: float = 0.3,
+                   join_s: float = 0.5, leave_s: float = 1.3,
+                   min_seg_s: float = 2.2, max_tiles: int = 4) -> list:
+    """PURE: turn the raw scan + source shot list into a layout timeline
+    [(t0, t1, spec)] where spec is DYN_WIDE or a list of face dicts to tile.
+    Each SOURCE SHOT is planned independently (the editor's cuts are natural
+    layout boundaries and camera angles change identities across them):
+      0 usable faces → WIDE · 1 face → solo crop on them (the editor already
+      framed the speaker) · exactly 2 faces → a two-shot means BOTH are in
+      the conversation: solo when one is clearly the talker, else the 2-up
+      split (never wide) · 3+ faces → per-face speaking attribution, with
+      UNATTRIBUTED SPEECH → WIDE (if we can't tell who's talking, show the
+      room — never guess a face)."""
+    from bisect import bisect_left
+    times = scan["times"]
+    hz = max(1.0, (len(times) - 1) / max(0.001, times[-1] - times[0])) if len(times) > 1 else 5.0
+    out = []
+
+    def _seg_localized(spec, rel, j0, j1):
+        """Copies of the spec's face dicts re-aimed at their SEGMENT-LOCAL
+        median position. Tiles aimed at shot-level medians point at where a
+        person was on average across the whole shot — someone who leans or
+        steps aside mid-shot drifts out of their own tile and into a
+        neighbor's (the 'same person in two tiles' complaint)."""
+        import statistics as _st
+        loc = []
+        for f in spec:
+            xs = [f["pos"][k][0] for k in range(j0, j1) if f.get("pos") and f["pos"][k]]
+            ys = [f["pos"][k][1] for k in range(j0, j1) if f.get("pos") and f["pos"][k]]
+            g = dict(f)
+            if xs:
+                g["fcx"] = float(_st.median(xs))
+                g["fcy"] = float(_st.median(ys))
+            loc.append(g)
+        return loc
+
+    def _emit(local_segs, i0, i1, sa):
+        """Append per-range segments to `out`: trim leading/trailing
+        stretches where ALL of a segment's faces are absent (≥0.8s) to WIDE
+        (guards against UNDETECTED whip-pan cuts — tiles from one scene must
+        not render over another scene's pixels); CHUNK multi-tile segments
+        to ≤3s so tile windows re-center as people move; and re-aim every
+        tile at segment-local positions."""
+        rel = [times[i] for i in range(i0, i1)]
+
+        def _chunk_spec(spec, cj0, cj1):
+            """Members must EARN their tile per chunk: someone who leaned in
+            for a moment then retreated leaves an empty window that the
+            remaining person drifts into (the 'same face in two tiles'
+            complaint). Presence <60% of the chunk → no tile this chunk."""
+            n_c = max(1, cj1 - cj0)
+            present = [f for f in spec
+                       if sum(1 for k in range(cj0, cj1)
+                              if f.get("pos") and f["pos"][k]) >= 0.6 * n_c]
+            if not present:
+                return DYN_WIDE
+            return _seg_localized(present, rel, cj0, cj1)
+
+        def _push(a, b, spec):
+            step_max = 2.0 if len(spec) >= 2 else 3.0
+            if b - a > step_max:
+                nchunks = int((b - a) / step_max) + 1
+                step = (b - a) / nchunks
+            else:
+                nchunks, step = 1, b - a
+            for c in range(nchunks):
+                ca = a + c * step
+                cb = (a + (c + 1) * step) if c < nchunks - 1 else b
+                cj0 = bisect_left(rel, ca)
+                cj1 = max(cj0 + 1, bisect_left(rel, cb))
+                out.append([ca, cb, _chunk_spec(spec, cj0, cj1)])
+
+        for a, b, spec in local_segs:
+            if spec is DYN_WIDE:
+                out.append([a, b, spec])
+                continue
+            j0 = bisect_left(rel, a)
+            j1 = max(j0 + 1, bisect_left(rel, b))
+            pres = [any(f.get("pos") and f["pos"][k] for f in spec)
+                    for k in range(j0, j1)]
+            first = next((x for x, p in enumerate(pres) if p), None)
+            last = next((len(pres) - 1 - x for x, p in enumerate(reversed(pres)) if p), None)
+            if first is None:
+                out.append([a, b, DYN_WIDE])
+                continue
+            t_first = rel[j0 + first]
+            t_last = rel[j0 + last]
+            if t_first - a >= 0.8:
+                out.append([a, t_first, DYN_WIDE])
+                a = t_first
+            if b - t_last >= 1.0:
+                _push(a, t_last, spec)
+                out.append([t_last, b, DYN_WIDE])
+            else:
+                _push(a, b, spec)
+
+    def _plan_range(i0: int, i1: int, sa: float, sb: float):
+        local = []
+        all_faces = _dyn_shot_faces(scan, i0, i1, src_w, src_h)
+        n_shot = i1 - i0
+        # Grammar is chosen by SUBSTANTIAL faces (on screen ≥35% of the shot).
+        # Semi faces (15–35%, comparably sized) don't change the grammar —
+        # they only matter as the walk-off partner in a two-shot: someone who
+        # argues for the first third of a long shot then leaves. Background
+        # heads (small or barely-present) never inflate the face count.
+        substantial = [f for f in all_faces if f["hits"] >= 0.35 * n_shot]
+        max_fh = max((f["fh"] for f in substantial), default=0)
+        # Phantom guard: a close-up face spawns spurious detections (eye
+        # region, hair, posters) that can fake a multi-person grid — one real
+        # tile plus garbage tiles. Real co-panelists in one shot have
+        # comparable face sizes; anything under half the biggest face is
+        # background, not a grid member.
+        substantial = [f for f in substantial if f["fh"] >= 0.5 * max_fh]
+        # Same-person guard: double-detections of ONE face — different scales
+        # (cap/forehead/chin "faces" on a big close-up) — must not become
+        # tiles of the same person. Scale-aware: on a 300px close-up face the
+        # phantoms sit a full face-height apart, so tolerate the whole head
+        # COLUMN (no real co-panelist sits directly above someone's face
+        # within ~2 face-heights; couch rows are farther apart than that
+        # relative to their small faces, and are offset horizontally).
+        dedup = []
+        for f in sorted(substantial, key=lambda x: -x["hits"]):
+            if any(abs(f["fcx"] - g["fcx"]) < 1.2 * max(f["fw"], g["fw"])
+                   and abs(f["fcy"] - g["fcy"]) < 2.2 * max(f["fh"], g["fh"])
+                   for g in dedup):
+                continue
+            dedup.append(f)
+        substantial = sorted(dedup, key=lambda x: x["fcx"])
+        # Fragment guard: a person WALKING through the shot leaves several
+        # same-sized clusters along their path. Real co-panelists CO-OCCUR;
+        # path fragments never do. Keep the largest co-occurrence component
+        # (edge = together in ≥30% of the smaller cluster's samples); if the
+        # clusters never co-occur at all, this is one moving person — WIDE
+        # keeps them fully visible (a static tile grid of their path would
+        # show the same person 3-4 times / empty space).
+        if len(substantial) >= 2:
+            m = len(substantial)
+            adj = [set() for _ in range(m)]
+            for x in range(m):
+                for y in range(x + 1, m):
+                    co = sum(1 for k in range(n_shot)
+                             if substantial[x]["pos"][k] and substantial[y]["pos"][k])
+                    if co >= 0.3 * min(substantial[x]["hits"], substantial[y]["hits"]):
+                        adj[x].add(y); adj[y].add(x)
+            seen, best = set(), []
+            for s0 in range(m):
+                if s0 in seen:
+                    continue
+                comp, stack = [], [s0]
+                while stack:
+                    v = stack.pop()
+                    if v in seen:
+                        continue
+                    seen.add(v); comp.append(v)
+                    stack.extend(adj[v] - seen)
+                if len(comp) > len(best) or (len(comp) == len(best) and comp and
+                                             substantial[comp[0]]["hits"] > substantial[best[0]]["hits"]):
+                    best = comp
+            if len(best) <= 1 and m >= 2:
+                local.append([sa, sb, DYN_WIDE])
+                _emit(local, i0, i1, sa)
+                return
+            substantial = sorted((substantial[i] for i in best), key=lambda f: f["fcx"])
+        semi = [f for f in all_faces
+                if f not in substantial and f["fh"] >= 0.6 * max_fh
+                and not any(abs(f["fcx"] - g["fcx"]) < 1.2 * max(f["fw"], g["fw"])
+                            and abs(f["fcy"] - g["fcy"]) < 2.2 * max(f["fh"], g["fh"])
+                            for g in substantial)]
+        if not substantial or n_shot < 2:
+            local.append([sa, sb, DYN_WIDE])
+            _emit(local, i0, i1, sa)
+            return
+        if len(substantial) == 1:
+            solo = substantial[0]
+            if semi:
+                # Possible walk-off two-shot: piece the shot by the largest
+                # semi face's presence.
+                partner = max(semi, key=lambda f: f["fh"])
+                rel_times = [times[i] - sa for i in range(i0, i1)]
+                for (pa, pb, both) in _two_shot_pieces(solo, partner, rel_times,
+                                                       0.0, sb - sa):
+                    order = sorted([solo, partner], key=lambda f: f["fcx"])
+                    local.append([sa + pa, sa + pb, order if both else [solo]])
+            else:
+                local.append([sa, sb, [solo]])
+            _emit(local, i0, i1, sa)
+            return
+        faces = substantial
+        rel_times = [times[i] - sa for i in range(i0, i1)]
+        segs = _active_speaker_segments(
+            rel_times, scan["audio"][i0:i1],
+            {ci: f["act"] for ci, f in enumerate(faces)},
+            {ci: f["mouth"] for ci, f in enumerate(faces)},
+            sb - sa, cuts=None, r_min=r_min, mouth_floor=mouth_floor,
+            join_s=join_s, leave_s=leave_s,
+            min_seg_s=min(min_seg_s, max(0.8, (sb - sa) / 2)),
+            max_tiles=max_tiles, empty_to_wide=True)
+        for (a, b, key) in segs:
+            if key is DYN_WIDE:
+                # In a two-shot the speech can only be coming from one of the
+                # two people on screen — show both rather than cutting wide.
+                if len(faces) == 2:
+                    local.append([sa + a, sa + b, [faces[0], faces[1]]])
+                else:
+                    local.append([sa + a, sa + b, DYN_WIDE])
+            elif len(faces) == 2 and len(key) == 1:
+                # Two-shot solo needs clear DOMINANCE — the cost is
+                # asymmetric: showing both while one talks is fine; showing
+                # one while both argue is the visible failure (the r-ratio
+                # under-reads animated speakers, so the "quiet" one may just
+                # be gesturing while talking). Evaluated over the OTHER
+                # face's PRESENCE RUNS within the segment, not the whole
+                # segment — a partner who argues then walks off mid-shot
+                # must yield 2-up-then-solo, and averaging over their
+                # absence would hide the argument entirely.
+                ci = key[0]
+                other = 1 - ci
+                for (pa, pb, both) in _two_shot_pieces(
+                        faces[ci], faces[other], rel_times, a, b):
+                    spec = [faces[0], faces[1]] if both else [faces[ci]]
+                    local.append([sa + pa, sa + pb, spec])
+            else:
+                local.append([sa + a, sa + b, [faces[ci] for ci in key]])
+        _emit(local, i0, i1, sa)
+
+    for (sa, sb) in shots:
+        i0, i1 = bisect_left(times, sa), bisect_left(times, sb)
+        if i1 - i0 < 2:
+            out.append([sa, sb, DYN_WIDE])
+            continue
+        # A person MOVING mid-shot (stands, walks over) leaves two disjoint
+        # position-clusters with a temporal handoff — a VIRTUAL CUT. Split
+        # the shot there and plan each half independently: the seated half
+        # and the standing half get their own face geometry (the alternative
+        # — deduping the moving person — deletes them from the second half).
+        raw = _dyn_shot_faces(scan, i0, i1, src_w, src_h, dedupe=False)
+        n_shot = i1 - i0
+        vbounds = set()
+        for x in range(len(raw)):
+            for y in range(len(raw)):
+                if x == y:
+                    continue
+                f, g = raw[x], raw[y]
+                co = sum(1 for k in range(n_shot) if f["pos"][k] and g["pos"][k])
+                if co >= 0.15 * min(f["hits"], g["hits"]):
+                    continue
+                det_f = [k for k in range(n_shot) if f["pos"][k]]
+                det_g = [k for k in range(n_shot) if g["pos"][k]]
+                gap = det_g[0] - det_f[-1]
+                if -2 <= gap <= int(2.5 * hz):
+                    vbounds.add((det_f[-1] + det_g[0]) // 2)
+        # UNDETECTED source cuts (whip-pans defeat the scene detector): at a
+        # real cut the face SET changes discontinuously — the next sample's
+        # detections don't match the previous sample's positions. These are
+        # hard scene boundaries, so they may cut smaller pieces than the
+        # flicker-guard allows for layout changes. (A cross-cut position
+        # coincidence can even MERGE two people into one cluster, which no
+        # cluster-level guard can see — only this sample-level check can.)
+        dbounds = set()
+        last_nonempty = None
+        for k in range(i0, i1):
+            cur_f = scan["faces"][k]
+            if not cur_f:
+                continue                      # whip-pan blur yields empty samples;
+            if last_nonempty is None:         # compare across them, not just k-1
+                last_nonempty = k
+                continue
+            prev_f = scan["faces"][last_nonempty]
+            gap_ok = (k - last_nonempty) <= max(2, int(1.2 * hz))
+            if gap_ok and max(len(prev_f), len(cur_f)) >= 2:
+                matched = 0
+                for det in cur_f:
+                    cx, cy, w = det[0], det[1], det[2]
+                    rad = max(w * 1.2, src_w * 0.05)
+                    if any(((cx - p[0]) ** 2 + (cy - p[1]) ** 2) ** 0.5 <= rad
+                           for p in prev_f):
+                        matched += 1
+                if matched < 0.3 * max(len(prev_f), len(cur_f)):
+                    dbounds.add(max(1, (k + last_nonempty) // 2) - i0)
+            last_nonempty = k
+        min_gap = int(1.6 * hz)
+        min_gap_d = max(2, int(0.6 * hz))
+        cand = sorted([(bk, min_gap) for bk in vbounds - dbounds]
+                      + [(bk, min_gap_d) for bk in dbounds])
+        sub = [i0]
+        for bk, gap_req in cand:
+            k = i0 + bk
+            if k - sub[-1] >= gap_req and i1 - k >= gap_req:
+                sub.append(k)
+        sub.append(i1)
+        for (j0, j1) in zip(sub[:-1], sub[1:]):
+            _plan_range(j0, j1,
+                        sa if j0 == i0 else times[j0],
+                        sb if j1 == i1 else times[j1])
+
+    # With tiles re-aimed at segment-local positions, members who CONVERGED
+    # during the segment (one leaned over to the other) end up with windows
+    # on the same region — showing the same person twice. Drop the
+    # lower-evidence duplicate; the layout shrinks accordingly (3up→2up etc).
+    for seg in out:
+        spec = seg[2]
+        if spec is DYN_WIDE or len(spec) < 2:
+            continue
+        keep = []
+        for f in sorted(spec, key=lambda x: -x.get("hits", 0)):
+            if any(abs(f["fcx"] - g["fcx"]) < 1.1 * max(f["fw"], g["fw"])
+                   and abs(f["fcy"] - g["fcy"]) < 1.6 * max(f["fh"], g["fh"])
+                   for g in keep):
+                continue
+            keep.append(f)
+        seg[2] = sorted(keep, key=lambda x: x["fcx"])
+
+    # Two people who FIT IN ONE 9:16 CROP (back-to-back, huddled, side by
+    # side) read better as a single two-person frame than as a split of two
+    # near-identical crops. Replace such 2-face specs with one GROUP window
+    # (a synthetic face dict carrying min_w so the solo renderer covers both).
+    crop_w_limit = src_h * 0.5625          # widest 9:16 window in this source
+    for seg in out:
+        spec = seg[2]
+        if spec is DYN_WIDE or len(spec) != 2:
+            continue
+        a, b = spec
+        needed_w = abs(a["fcx"] - b["fcx"]) + 1.3 * (a["fw"] + b["fw"])
+        if needed_w <= crop_w_limit * 0.98 and abs(a["fcy"] - b["fcy"]) <= 0.35 * src_h:
+            seg[2] = [{
+                "fcx": (a["fcx"] + b["fcx"]) / 2.0,
+                "fcy": (a["fcy"] + b["fcy"]) / 2.0,
+                "fw": max(a["fw"], b["fw"]),
+                "fh": max(a["fh"], b["fh"]),
+                "min_w": needed_w,
+            }]
+
+    # Coalesce identical adjacent layouts (WIDE runs across shots; repeated
+    # same-face specs within a shot — same crops, invisible boundary).
+    merged = []
+    for seg in out:
+        if merged and ((merged[-1][2] is DYN_WIDE and seg[2] is DYN_WIDE)
+                       or (merged[-1][2] is not DYN_WIDE and merged[-1][2] == seg[2])):
+            merged[-1][1] = seg[1]
+        else:
+            merged.append(seg)
+    # Clamp/butt segments and drop empties.
+    for i in range(len(merged) - 1):
+        merged[i][1] = merged[i + 1][0]
+    if merged:
+        merged[0][0] = 0.0
+        merged[-1][1] = dur
+    return [(round(a, 3), round(b, 3), spec) for a, b, spec in merged if b - a > 0.05]
+
+
+async def _plan_dynamic(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
+    """Dynamic layout (Opus-style): shot-aware active-speaker framing.
+    The source's own scene cuts define shots; within each shot the people
+    ACTIVELY SPEAKING are shown — 1 active → full-frame 9:16 crop; 2 → stacked
+    rows; 3 → 3 rows; 4 → 2×2 grid; unattributable/crowded → wide letterbox.
+    Rendered as ONE trim/concat filter graph (no sendcmd, audio untouched,
+    captions burned on the same timeline → A/V sync by construction). Returns
+    None when the clip isn't dynamic-suitable — caller falls back."""
+    if not _REFRAME_AVAILABLE:
+        return None
+    if ctx.src_w < ctx.src_h * 1.3:
+        log(ctx.job_id, "  Dynamic: portrait/square source — falling back")
+        return None
+
+    max_tiles = int(os.getenv("DYN_MAX_TILES", "4"))
+    max_segs = int(os.getenv("DYN_MAX_SEGS", "48"))
+
+    # One H.264 intermediate of the clip window (audio kept for the RMS
+    # envelope) feeds every probe — same pattern as fill's YOLO extract.
+    dyn_tmp = ctx.job_dir / f"clip_{ctx.idx}_dyn.mp4"
+    await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
+                         "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
+                         "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(dyn_tmp)])
+    if not dyn_tmp.exists():
+        return None
+    try:
+        # Source cuts → shots. Cuts under 1.2s apart merge (flash cuts keep
+        # the running layout); truly frenetic montages are refused.
+        cuts = await asyncio.to_thread(_compute_scene_cuts, dyn_tmp)
+        if len(cuts) > 0.8 * ctx.render_dur:
+            log(ctx.job_id, f"  Dynamic: {len(cuts)} cuts in {ctx.render_dur:.0f}s (montage) — falling back")
+            return None
+        bounds = [0.0]
+        for c in sorted(cuts):
+            if c - bounds[-1] >= 1.2 and ctx.render_dur - c >= 0.8:
+                bounds.append(c)
+        bounds.append(ctx.render_dur)
+        shots = list(zip(bounds[:-1], bounds[1:]))
+
+        scan = await asyncio.to_thread(_dyn_scan, dyn_tmp, FFMPEG)
+        if not scan:
+            log(ctx.job_id, "  Dynamic: scan failed — falling back")
+            return None
+
+        segs = _dyn_shot_plan(
+            scan, shots, ctx.render_dur, ctx.src_w, ctx.src_h,
+            r_min=float(os.getenv("DYN_R_MIN", "1.10")),
+            mouth_floor=float(os.getenv("DYN_MOUTH_FLOOR", "0.3")),
+            join_s=float(os.getenv("DYN_JOIN_S", "0.5")),
+            leave_s=float(os.getenv("DYN_LEAVE_S", "1.3")),
+            min_seg_s=float(os.getenv("DYN_MIN_SEG_S", "2.2")),
+            max_tiles=max_tiles)
+
+        # Confidence gates: dynamic must EARN the render. Mostly-wide output
+        # means we couldn't attribute speech (or it's all crowd shots) — the
+        # regular layouts handle that content better.
+        framed = sum(b - a for a, b, s in segs if s is not DYN_WIDE)
+        if framed < 0.30 * ctx.render_dur:
+            log(ctx.job_id, f"  Dynamic: only {framed:.0f}s of {ctx.render_dur:.0f}s attributable — falling back")
+            return None
+        # Cap segment count (graph size). NEVER merge a face layout into a
+        # DIFFERENT face layout — that silently extends tiles across scene
+        # boundaries (cross-scene fragments were traced to exactly this).
+        # Safe merges only: identical specs, or absorption into WIDE; when
+        # neither neighbor is safe, DEMOTE the shortest segment to WIDE
+        # (a wide moment is never wrong, just conservative).
+        def _coalesce_wides():
+            i = 1
+            while i < len(segs):
+                if segs[i][2] is DYN_WIDE and segs[i - 1][2] is DYN_WIDE:
+                    segs[i - 1] = (segs[i - 1][0], segs[i][1], DYN_WIDE)
+                    del segs[i]
+                else:
+                    i += 1
+        while len(segs) > max_segs:
+            # The ONLY safe cap reductions: merge same-spec/wide-wide
+            # neighbors, else demote the SHORTEST segment itself to WIDE.
+            # Never extend a segment over a neighbor with a different layout
+            # (stretches tiles across scene boundaries) and never let a short
+            # wide swallow a long face segment (wipes out good layouts).
+            merged_any = False
+            for k in range(len(segs) - 1):
+                if segs[k][2] == segs[k + 1][2] or \
+                        (segs[k][2] is DYN_WIDE and segs[k + 1][2] is DYN_WIDE):
+                    segs[k] = (segs[k][0], segs[k + 1][1], segs[k][2])
+                    del segs[k + 1]
+                    merged_any = True
+                    break
+            if merged_any:
+                continue
+            # Demote the shortest NON-wide segment (demoting a wide is a
+            # no-op → infinite loop). If everything mergeable is exhausted
+            # and nothing can be demoted, accept being over the cap.
+            face_idx = [i for i in range(len(segs)) if segs[i][2] is not DYN_WIDE]
+            if not face_idx:
+                break
+            k = min(face_idx, key=lambda i: segs[i][1] - segs[i][0])
+            segs[k] = (segs[k][0], segs[k][1], DYN_WIDE)
+            _coalesce_wides()   # terminates: each pass merges or reduces
+                                # the (finite) number of non-wide segments
+
+        # Mouth-invisible companions: a solo CLOSE-UP crop can hide a second
+        # person talking from behind/beside the primary (mouth never faces
+        # the camera — attribution is blind to them, their body isn't). If
+        # YOLO sees a comparable second person, keep the full shot instead.
+        segs = [list(s) for s in segs]
+        for s in segs:
+            a, b, spec = s
+            # (group windows — min_w set — already deliberately frame 2 people)
+            if spec is not DYN_WIDE and len(spec) == 1 and not spec[0].get("min_w") \
+                    and spec[0]["fh"] >= 0.22 * ctx.src_h and b - a >= 1.0:
+                if await asyncio.to_thread(_second_person_present, dyn_tmp, a, b):
+                    log(ctx.job_id, f"  Dynamic: second person in close-up @{a:.1f}s — keeping full shot")
+                    s[2] = DYN_WIDE
+        segs = [tuple(s) for s in segs]
+
+        # Build the single trim/concat graph.
+        parts, labels = [], []
+        half_w, half_h = ctx.out_w // 2, ctx.out_h // 2
+        for si, (a, b, spec) in enumerate(segs):
+            head = f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS"
+            if spec is DYN_WIDE:
+                # Wide shot over a blurred fill of itself (blur_bg treatment —
+                # black bars read as dead space on a phone). Blur at half-res:
+                # ~4x faster and the upscale smears the blur further.
+                parts.append(f"{head},split=2[s{si}a][s{si}b]")
+                parts.append(f"[s{si}a]scale={half_w}:{half_h}:force_original_aspect_ratio=increase,"
+                             f"crop={half_w}:{half_h},boxblur=10:2,"
+                             f"scale={ctx.out_w}:{ctx.out_h}[s{si}bg]")
+                parts.append(f"[s{si}b]scale={ctx.out_w}:-2:force_original_aspect_ratio=decrease[s{si}fg]")
+                parts.append(f"[s{si}bg][s{si}fg]overlay=(W-w)/2:(H-h)/2,setsar=1[s{si}]")
+            elif len(spec) == 1:
+                sp = spec[0]
+                if sp["fh"] < 0.15 * ctx.src_h:
+                    # Distant speaker (wide master shot): a full-height crop
+                    # leaves them tiny in empty space — punch in to a MEDIUM
+                    # shot. Floor at 52% of source height: any tighter and
+                    # the upscale visibly degrades (user-reported at 42%).
+                    # Group windows carry min_w: never crop tighter than the
+                    # width that keeps both people in frame.
+                    wh = int(min(ctx.src_h, max(sp["fh"] * 5.0, ctx.src_h * 0.52)))
+                    wh -= wh % 2
+                    ww = int(wh * ctx.out_w / ctx.out_h); ww -= ww % 2
+                    if sp.get("min_w") and ww < sp["min_w"]:
+                        ww = int(min(sp["min_w"] + 2, ctx.src_w)); ww -= ww % 2
+                        wh = int(min(ctx.src_h, ww * ctx.out_h / ctx.out_w)); wh -= wh % 2
+                    wx = int(max(0, min(sp["fcx"] - ww / 2, ctx.src_w - ww)))
+                    wy = int(max(0, min(sp["fcy"] - wh * 0.32, ctx.src_h - wh)))
+                    parts.append(f"{head},crop={ww}:{wh}:{wx}:{wy},"
+                                 f"scale={ctx.out_w}:{ctx.out_h},setsar=1[s{si}]")
+                else:
+                    cx = int(max(0, min(sp["fcx"] - ctx.crop_w / 2, ctx.src_w - ctx.crop_w)))
+                    parts.append(f"{head},crop={ctx.crop_w}:{ctx.crop_h}:{cx}:0,"
+                                 f"scale={ctx.out_w}:{ctx.out_h},setsar=1[s{si}]")
+            elif len(spec) <= 3:                      # 2 or 3 stacked rows
+                k = len(spec)
+                tile_h = (ctx.out_h // k) - ((ctx.out_h // k) % 2)
+                last_h = ctx.out_h - tile_h * (k - 1)
+                tl = []
+                for ti, sp in enumerate(spec):
+                    th = last_h if ti == k - 1 else tile_h
+                    wx, wy, ww, wh = _speaker_window(sp, ctx.out_w, th, ctx.src_w, ctx.src_h)
+                    parts.append(f"{head},crop={ww}:{wh}:{wx}:{wy},"
+                                 f"scale={ctx.out_w}:{th}[s{si}t{ti}]")
+                    tl.append(f"[s{si}t{ti}]")
+                parts.append("".join(tl) + f"vstack=inputs={k},setsar=1[s{si}]")
+            else:                                     # 4 → 2×2 grid
+                tw = ctx.out_w // 2 - ((ctx.out_w // 2) % 2)
+                th = ctx.out_h // 2 - ((ctx.out_h // 2) % 2)
+                tl = []
+                for ti, sp in enumerate(spec[:4]):
+                    wx, wy, ww, wh = _speaker_window(sp, tw, th, ctx.src_w, ctx.src_h)
+                    parts.append(f"{head},crop={ww}:{wh}:{wx}:{wy},"
+                                 f"scale={tw}:{th}[s{si}t{ti}]")
+                    tl.append(f"[s{si}t{ti}]")
+                parts.append("".join(tl) + f"xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0,"
+                             f"scale={ctx.out_w}:{ctx.out_h},setsar=1[s{si}]")
+            labels.append(f"[s{si}]")
+        fc = ";".join(parts) + ";" + "".join(labels) + f"concat=n={len(segs)}:v=1:a=0[vmain]"
+
+        _summary = " ".join(
+            ("wide" if s is DYN_WIDE else f"{len(s)}up") + f"@{a:.1f}"
+            for a, _, s in segs)
+        log(ctx.job_id, f"  Dynamic: {len(shots)} shots → {len(segs)} segments "
+                        f"({framed:.0f}s framed): {_summary}")
+        return LayoutPlan(filter_complex=fc)
+    finally:
+        dyn_tmp.unlink(missing_ok=True)
+
+
 # clip_style names kept as accepted aliases for saved channels/backfills.
 _LAYOUT_ALIASES = {"reframe": "fill", "facecam": "gameplay"}
 # Layouts that stack multiple source regions — locked to 9:16 output in V1.
-_PORTRAIT_ONLY_LAYOUTS = {"gameplay", "split", "screenshare"}
+_PORTRAIT_ONLY_LAYOUTS = {"gameplay", "split", "screenshare", "dynamic"}
 _ASPECT_RATIOS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 
 
@@ -3628,6 +4724,12 @@ async def _build_layout_plan(ctx: ClipRenderCtx, clip_style: str) -> LayoutPlan:
         if plan is not None:
             return plan
         log(ctx.job_id, "  No facecam detected — using center crop instead")
+    if layout == "dynamic" and _REFRAME_AVAILABLE:
+        plan = await _plan_dynamic(ctx)
+        if plan is not None:
+            return plan
+        # Ladder: a validated 2-up beats a one-speaker follow; then Fill.
+        layout = "split"
     if layout == "split" and _REFRAME_AVAILABLE:
         plan = await _plan_split(ctx)
         if plan is not None:
@@ -3658,14 +4760,28 @@ async def _resolve_auto_layout(video_path: Path, src_w: int, src_h: int,
     decision; a motion/edge probe of the non-cam region separates screenshare
     (static, edge-dense) from gameplay (high motion). Ambiguity always
     resolves to fill — a wrong fill is watchable, a wrong split is not.
-    Returns (layout, facecam_region, split_speakers). Thresholds measured on
-    the 12-video calibration corpus (tests/layout_corpus.json, 2026-07-06)."""
+    Returns (layout, facecam_region, split_speakers, panel_speakers).
+    Thresholds measured on the 12-video calibration corpus
+    (tests/layout_corpus.json, 2026-07-06)."""
     _clusters, _n_ok = await asyncio.to_thread(
         _detect_face_clusters, video_path, src_w, src_h, duration, n_samples, t0, t1)
     split_speakers = _pick_split_speakers(_clusters, _n_ok, src_w)
+
+    # Dynamic beats a static layout whenever a stable multi-person panel is on
+    # screen: it cuts between whoever is speaking (grid when several talk at
+    # once) instead of following one person or freezing a 2-up. Split remains
+    # both the explicit-chip behavior and the fallback if Dynamic's per-clip
+    # gates (scene cuts, speaking probe) refuse. AUTO_DYNAMIC=0 reverts AUTO
+    # to the pre-Dynamic decision tree.
+    if os.getenv("AUTO_DYNAMIC", "1") != "0":
+        panel_speakers = _pick_panel_speakers(_clusters, _n_ok, src_w, src_h)
+        if panel_speakers and len(panel_speakers) >= 2:
+            log(job_id, f"  Auto layout{label} → dynamic ({len(panel_speakers)} panel faces)")
+            return "dynamic", None, split_speakers, panel_speakers
+
     if split_speakers:
         log(job_id, f"  Auto layout{label} → split")
-        return "split", None, split_speakers
+        return "split", None, split_speakers, None
 
     _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
     _e_high = float(os.getenv("AUTO_EDGE_HIGH", "5.0"))
@@ -3689,7 +4805,7 @@ async def _resolve_auto_layout(video_path: Path, src_w: int, src_h: int,
         else:
             layout = "fill"
         log(job_id, f"  Auto layout{label} → {layout}")
-        return layout, facecam_region, None
+        return layout, facecam_region, None, None
 
     # No cam found. A no-facecam screencast (pure code/slides — near-zero face
     # evidence, static frame, edge-dense) must NOT be center-cropped by fill;
@@ -3704,7 +4820,7 @@ async def _resolve_auto_layout(video_path: Path, src_w: int, src_h: int,
         if _motion is not None and _motion < _m_low and (_edges or 0) > _e_high:
             layout = "fit"
     log(job_id, f"  Auto layout{label} → {layout}")
-    return layout, None, None
+    return layout, None, None, None
 
 
 async def create_clips(
@@ -3775,6 +4891,7 @@ async def create_clips(
     # splits the same way (per-clip detection was inconsistent across clips).
     facecam_region = None
     split_speakers = None
+    panel_speakers = None
     layout_resolved = None
     _manual_cam = False        # user-drawn box beats ALL detection, incl. per-clip auto
     _auto_src_dims = None      # (w, h, dur) — set when the auto video-level probe ran
@@ -3828,7 +4945,7 @@ async def create_clips(
                     # AUTO, video-level pass: the fallback answer when a
                     # per-clip probe fails, and the source of the video dims
                     # for the per-clip passes below.
-                    layout_resolved, facecam_region, split_speakers = await _resolve_auto_layout(
+                    layout_resolved, facecam_region, split_speakers, panel_speakers = await _resolve_auto_layout(
                         video_path, _fw, _fh, _fd, job_id, label=" (video)")
                     _auto_src_dims = (_fw, _fh, _fd)
         except Exception as _fe:
@@ -3857,14 +4974,14 @@ async def create_clips(
         # cam layout before auto is ever probed). Explicit layouts are
         # untouched: one layout for all clips, exactly as the user asked.
         clip_layout, clip_reframe = clip_style, reframe
-        clip_cam, clip_split = facecam_region, split_speakers
+        clip_cam, clip_split, clip_panel = facecam_region, split_speakers, panel_speakers
         if _probe_layout == "auto" and _auto_src_dims and not _manual_cam:
             try:
                 _aw, _ah, _ad = _auto_src_dims
-                _l, _cam, _spl = await _resolve_auto_layout(
+                _l, _cam, _spl, _pnl = await _resolve_auto_layout(
                     video_path, _aw, _ah, _ad, job_id,
                     t0=start, t1=end, n_samples=24, label=f" (clip {idx+1})")
-                clip_layout, clip_cam, clip_split = _l, _cam, _spl
+                clip_layout, clip_cam, clip_split, clip_panel = _l, _cam, _spl, _pnl
                 clip_reframe = (True if _REFRAME_AVAILABLE else reframe) if _l == "fill" else reframe
             except Exception as _pe:
                 log(job_id, f"  Per-clip auto probe failed (clip {idx+1}) — using video-level '{clip_style}': {_pe}")
@@ -4037,6 +5154,7 @@ async def create_clips(
             reframe=clip_reframe, n_clips=len(clip_defs),
             clip_title=clip.get("title", ""), facecam_region=clip_cam,
             split_speakers=clip_split,
+            panel_speakers=clip_panel,
         )
         plan = await _build_layout_plan(ctx, clip_layout)
         # One sendcmd-driven crop per graph — more cross-talk (sendcmd hits
@@ -5028,7 +6146,7 @@ async def start_clip(request: Request, req: ClipRequest, user=Depends(require_au
         raise HTTPException(403, "Auto-reframe (9:16) requires a Pro plan. Upgrade to unlock.")
     _effective_layout = _LAYOUT_ALIASES.get(req.layout or req.clip_style, req.layout or req.clip_style)
     if plan != "pro":
-        if _effective_layout in ("blur_bg", "gameplay", "fit", "split", "screenshare", "auto"):
+        if _effective_layout in ("blur_bg", "gameplay", "fit", "split", "screenshare", "dynamic", "auto"):
             raise HTTPException(403, "This layout requires a Pro plan. Upgrade to unlock.")
         if req.aspect_ratio and req.aspect_ratio != "9:16":
             raise HTTPException(403, "1:1 and 16:9 output formats require a Pro plan. Upgrade to unlock.")

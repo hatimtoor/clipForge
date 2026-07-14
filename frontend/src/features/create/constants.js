@@ -4,6 +4,7 @@
 export const LAYOUTS = [
   { id: "auto", label: "Auto ✨", hint: "AI picks the best layout per clip", pro: true },
   { id: "reframe", label: "Fill", hint: "9:16 crop (tracked with Reframe)", pro: false },
+  { id: "dynamic", label: "Dynamic 🎙", hint: "Cuts between whoever is speaking", pro: true },
   { id: "fit", label: "Fit", hint: "Whole frame, letterboxed", pro: true },
   { id: "blur_bg", label: "Blur BG", hint: "Centered on blurred fill", pro: true },
   { id: "split", label: "Split", hint: "2 speakers stacked 50/50", pro: true },
@@ -12,7 +13,7 @@ export const LAYOUTS = [
 ];
 
 /* Layouts that force 9:16 output (backend renders these vertical-only). */
-export const VERTICAL_ONLY_LAYOUTS = ["facecam", "split", "screenshare", "auto"];
+export const VERTICAL_ONLY_LAYOUTS = ["facecam", "split", "screenshare", "dynamic", "auto"];
 
 /* Layouts where marking the facecam helps (otherwise auto-detected). */
 export const CAM_BOX_LAYOUTS = ["facecam", "screenshare", "auto"];

@@ -2,11 +2,12 @@ import { useState } from "react";
 import { SettingsChip, Field, TextInput, SegmentedControl } from "../../components/kit";
 import { CAPTION_TEMPLATE_PREVIEWS, CUSTOMIZABLE_CAPTION_STYLES } from "../../components/CaptionPreviews";
 import FacecamBoxModal from "../../components/FacecamBoxModal";
-import { STYLE_FONT_DEFAULTS, VERTICAL_ONLY_LAYOUTS, MUSIC_VOLUMES, layoutLabel } from "./constants";
+import { STYLE_FONT_DEFAULTS, VERTICAL_ONLY_LAYOUTS, MUSIC_VOLUMES, layoutLabel, filterLabel } from "./constants";
 import ClipsLengthModal from "./modals/ClipsLengthModal";
 import LayoutFormatModal from "./modals/LayoutFormatModal";
 import CaptionsModal from "./modals/CaptionsModal";
 import EnhanceModal from "./modals/EnhanceModal";
+import FilterModal from "./modals/FilterModal";
 
 /* Channel/backfill clip settings in the SAME chip-strip + modal format as the
    create (Hello) page, reusing the very same modal components.
@@ -35,6 +36,7 @@ const FORM_TO_PATCH = {
   captionEmoji: (v) => ({ caption_emoji: v }),
   bgMusicUrl: (v) => ({ bg_music_url: String(v).trim() || null }),
   bgMusicVolume: (v) => ({ bg_music_volume: v }),
+  filter: (v) => ({ filter: v === "none" ? null : v }),
 };
 
 export function useChannelSettingsForm(source, patchFn) {
@@ -57,6 +59,7 @@ export function useChannelSettingsForm(source, patchFn) {
     captionEmoji: opt.caption_emoji !== false,
     bgMusicUrl: source.bg_music_url ?? "",
     bgMusicVolume: source.bg_music_volume ?? 0.15,
+    filter: opt.filter ?? "none",
     reframe: false, // channels have no per-job reframe flag
   }));
 
@@ -169,6 +172,12 @@ export function ChannelSettingsChips({ settings, videoId, minDurMax = 120, idPre
           onClick={() => setOpenModal("captions")}
         />
         <SettingsChip
+          icon="🎨"
+          label="Filter"
+          value={filterLabel(form.filter)}
+          onClick={() => setOpenModal("filter")}
+        />
+        <SettingsChip
           icon="✨"
           label="Enhance"
           value={`${enhanceCount} active`}
@@ -201,6 +210,9 @@ export function ChannelSettingsChips({ settings, videoId, minDurMax = 120, idPre
           effectiveFontSize={effectiveFontSize}
           onClose={() => setOpenModal(null)}
         />
+      )}
+      {openModal === "filter" && (
+        <FilterModal form={form} set={set} onClose={() => setOpenModal(null)} />
       )}
       {openModal === "enhance" && (
         <EnhanceModal form={form} set={set} isPro showReframe={false} onClose={() => setOpenModal(null)} />

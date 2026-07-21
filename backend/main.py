@@ -2093,19 +2093,23 @@ def _select_crop_center(cands: list, crop_w: int, state: dict) -> Optional[float
     return target
 
 
-def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -> list:
+def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -> tuple:
     """
     Sample frames SEQUENTIALLY from a pre-extracted clip (no random seeking).
     Sequential reading is reliable across all codecs; time-based seeking in the
     source video can silently land on wrong/corrupt frames for yt-dlp merges.
-    Returns [(rel_time, crop_x), ...] compatible with smooth_crop_trajectory.
+    Returns (detections, absent_times):
+      detections   = [(rel_time, crop_x), ...] for smooth_crop_trajectory
+      absent_times = [rel_time, ...] speech samples where NO person was on
+                     screen (full-frame slides/graphics — the caller letterboxes
+                     those stretches instead of center-cropping slide text).
     """
     if not _REFRAME_AVAILABLE:
-        return []
+        return [], []
     try:
         import cv2 as _cv2
     except ImportError:
-        return []
+        return [], []
 
     crop_w = min(int(src_h * 9 / 16), src_w)
     model  = _get_yolo()
@@ -2124,6 +2128,7 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
     speech_threshold = float(_np.percentile(rms, 35)) if len(rms) else 0.0
 
     results: list = []
+    absent: list = []
     prev_frame = None
     frame_idx  = 0
     frames_tried = 0
@@ -2138,9 +2143,11 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
             if is_speech:
                 frames_tried += 1
                 cands = _person_candidates(frame, prev_frame, model)
+                t = frame_idx / fps
+                if not cands:
+                    absent.append(round(t, 3))
                 cx = _select_crop_center(cands, crop_w, sel_state)
                 if cx is not None:
-                    t = frame_idx / fps
                     crop_x = max(0, min(int(cx - crop_w / 2), src_w - crop_w))
                     results.append((round(t, 3), crop_x))
             prev_frame = frame  # update regardless so motion diff stays consistent
@@ -2148,7 +2155,7 @@ def _yolo_sample_positions_sequential(clip_path: Path, src_w: int, src_h: int) -
 
     cap.release()
     print(f"[reframe] {len(results)}/{frames_tried} speech-frame samples detected a person (audio-gated)", flush=True)
-    return results
+    return results, absent
 
 
 def smooth_crop_trajectory(
@@ -2424,7 +2431,11 @@ def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list
              if c["hits"] >= max(3, int(0.35 * n_ok))
              and c.get("pos_std", 0.0) < src_w * 0.05]
     from itertools import combinations
-    total_ev = sum(c["hits"] for c in clusters) or 1
+    # Evidence is AREA-weighted: reaction-style sources play other footage on
+    # screen whose tiny background faces rack up raw hits and would dilute two
+    # huge co-present hosts below dominance; a gym crowd's fragments are all
+    # comparable in size, so area-weighting leaves that refusal intact.
+    total_ev = sum(c["hits"] * c["fw"] * c["fh"] for c in clusters) or 1
     for a, b in combinations(cands[:6], 2):
         co_present = len(a["frames"] & b["frames"])
         if co_present < 0.3 * n_ok:
@@ -2437,7 +2448,7 @@ def _pick_split_speakers(clusters: list, n_ok: int, src_w: int) -> Optional[list
         # Pair dominance: in a real two-shot the two hosts ARE the video's face
         # evidence. A crowd (gym: 4 movers → 24 fragment clusters) can produce
         # two stable-looking fragments, but they own a sliver of the total.
-        if a["hits"] + b["hits"] < 0.55 * total_ev:
+        if a["hits"] * area_a + b["hits"] * area_b < 0.55 * total_ev:
             continue
         return sorted([a, b], key=lambda c: c["fcx"])
     return None
@@ -2895,29 +2906,90 @@ def _active_speaker_segments(times: list, audio: list, act: dict, mouth: dict,
     return [(round(a, 3), round(b, 3), k) for a, b, k in out]
 
 
+def _box_liveliness(video_path: Path, box: tuple, n_pairs: int = 8) -> float:
+    """Median adjacent-frame pixel change inside `box` — REAL webcam footage
+    is alive (a person constantly moves); game-UI character portraits and
+    logos are static art that face detectors happily fire on (measured: a
+    Valorant agent portrait beat a real streamer cam on every geometry
+    heuristic — anchored, constant size, frontal face). Median over sampled
+    pairs rejects HUD flash spikes. Returns 0.0 when unreadable."""
+    try:
+        import cv2 as _cv2
+        import numpy as _np
+    except ImportError:
+        return 0.0
+    x, y, w, h = [int(v) for v in box]
+    cap = _cv2.VideoCapture(str(video_path))
+    fps = cap.get(_cv2.CAP_PROP_FPS) or 30.0
+    total = cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0
+    dur = total / fps if fps else 0.0
+    if dur <= 0 or w < 4 or h < 4:
+        cap.release()
+        return 0.0
+    diffs = []
+    for i in range(n_pairs):
+        t = dur * (i + 0.5) / n_pairs
+        cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+        ok1, f1 = cap.read()
+        # Compare ~0.3s apart, NOT adjacent frames: webcam overlays are often
+        # embedded at a lower framerate than the stream (adjacent 60fps frames
+        # repeat the same 30fps cam frame → diff≈0, indistinguishable from
+        # art). Over 0.3s a live person always moves; static art never does.
+        cap.set(_cv2.CAP_PROP_POS_MSEC, (t + 0.3) * 1000.0)
+        ok2, f2 = cap.read()
+        if not (ok1 and ok2):
+            continue
+        H, W = f1.shape[:2]
+        x0, y0 = max(0, min(x, W - 4)), max(0, min(y, H - 4))
+        x1, y1 = min(W, x0 + w), min(H, y0 + h)
+        a = _cv2.cvtColor(f1[y0:y1, x0:x1], _cv2.COLOR_BGR2GRAY)
+        b = _cv2.cvtColor(f2[y0:y1, x0:x1], _cv2.COLOR_BGR2GRAY)
+        diffs.append(float(_np.mean(_cv2.absdiff(a, b))))
+    cap.release()
+    if not diffs:
+        return 0.0
+    diffs.sort()
+    return diffs[len(diffs) // 2]
+
+
 def _facecam_region_from_clusters(clusters: list, n_ok: int,
-                                  src_w: int, src_h: int) -> Optional[dict]:
+                                  src_w: int, src_h: int,
+                                  video_path: Optional[Path] = None) -> Optional[dict]:
     """Pick the webcam from pre-computed face clusters: the persistent SMALL
     face (a large face is the main subject, not a cam) that is also ANCHORED —
     a real cam overlay is pinned in place with a constant size, while a person
-    who happens to linger near a corner (gym crowds!) drifts and scales."""
+    who happens to linger near a corner (gym crowds!) drifts and scales.
+    When video_path is given, candidates must also be ALIVE (see
+    _box_liveliness) — static game-art faces are rejected."""
     if n_ok == 0:
         return None
     frame_area = src_w * src_h
+    # Face-size floor: game-HUD agent portraits pass every persistence/anchor
+    # test but are tiny (17-24px at 1080p, measured on Valorant); a webcam
+    # face a human is meant to watch is far larger (real cam measured 51x68).
+    min_fh = max(24.0, 0.035 * src_h)
     small = [c for c in clusters
              if c["fw"] * c["fh"] < frame_area * 0.08
+             and c["fh"] >= min_fh
              and c["hits"] >= max(3, int(0.20 * n_ok))
              and c.get("pos_std", 0.0) < src_w * 0.03
              and c.get("size_std", 0.0) < max(4.0, c["fw"] * 0.35)]
-    if not small:
-        return None
-    best = small[0]
-    fcx, fcy, mfw, mfh = best["fcx"], best["fcy"], best["fw"], best["fh"]
-    bw, bh = int(mfw * 2.4), int(mfh * 3.0)
-    bx = int(max(0, min(fcx - bw / 2, src_w - bw)))
-    by = int(max(0, min(fcy - bh * 0.40, src_h - bh)))
-    return {"box": (bx, by, min(bw, src_w), min(bh, src_h)),
-            "fw": mfw, "fh": mfh, "fcx": float(fcx), "fcy": float(fcy)}
+    live_min = float(os.getenv("CAM_LIVELINESS_MIN", "1.0"))
+    for best in small:
+        fcx, fcy, mfw, mfh = best["fcx"], best["fcy"], best["fw"], best["fh"]
+        bw, bh = int(mfw * 2.4), int(mfh * 3.0)
+        bx = int(max(0, min(fcx - bw / 2, src_w - bw)))
+        by = int(max(0, min(fcy - bh * 0.40, src_h - bh)))
+        region = {"box": (bx, by, min(bw, src_w), min(bh, src_h)),
+                  "fw": mfw, "fh": mfh, "fcx": float(fcx), "fcy": float(fcy)}
+        if video_path is not None:
+            live = _box_liveliness(video_path, region["box"])
+            if live < live_min:
+                print(f"[facecam] candidate at ({fcx:.0f},{fcy:.0f}) rejected: "
+                      f"liveliness {live:.2f} < {live_min} (static art?)", flush=True)
+                continue
+        return region
+    return None
 
 
 def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
@@ -2926,10 +2998,11 @@ def _detect_facecam_region(video_path: Path, src_w: int, src_h: int,
     spread across it, so every clip uses the same cam and splits consistently.
 
     Returns {"box": (x,y,w,h), "fw": int, "fh": int, "fcx": float, "fcy": float}
-    or None. Face-primary: the persistent small face across the video = the cam.
+    or None. Face-primary: the persistent small face across the video = the cam,
+    liveliness-gated so static game art can't masquerade as one.
     """
     clusters, n_ok = _detect_face_clusters(video_path, src_w, src_h, duration, n_samples)
-    return _facecam_region_from_clusters(clusters, n_ok, src_w, src_h)
+    return _facecam_region_from_clusters(clusters, n_ok, src_w, src_h, video_path)
 
 
 def _probe_motion_edges(video_path: Path, duration: float,
@@ -3060,8 +3133,9 @@ def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int,
                         cx, cy = fx + fw / 2.0, fy + fh / 2.0
                         # Small persistent face = the webcam (no corner requirement —
                         # cams sit top-centre too; persistence clustering filters out
-                        # transient gameplay faces).
-                        if fw * fh < frame_area * 0.10:
+                        # transient gameplay faces). Size floor: HUD agent portraits
+                        # are ~20px faces — no real webcam face is that small.
+                        if fw * fh < frame_area * 0.10 and fh >= max(24, 0.035 * src_h):
                             face_hits.append((round(fidx / fps, 3), cx, cy, fw, fh))
         fidx += 1
     cap.release()
@@ -3083,6 +3157,14 @@ def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int,
             fx1, fy1 = max(0, fx1 - pad), max(0, fy1 - pad)
             fx2, fy2 = min(src_w, fx2 + pad), min(src_h, fy2 + pad)
             facecam = (fx1, fy1, fx2 - fx1, fy2 - fy1)
+            # Liveliness gate: static game art (agent portraits, logos) can
+            # pass every geometric test — a real cam's pixels move.
+            if _box_liveliness(clip_path, facecam) < float(os.getenv("CAM_LIVELINESS_MIN", "1.0")):
+                facecam = None
+
+    # A shared video-level box wins, so every clip of the video splits the same way.
+    if known_box is not None:
+        facecam = known_box
 
     # ── Facecam FACE (top framing + follow): persistent corner face cluster ──
     face_info = None
@@ -3091,25 +3173,39 @@ def _detect_facecam_and_track(clip_path: Path, src_w: int, src_h: int,
         fclusters = defaultdict(list)
         for hit in face_hits:
             fclusters[(int(hit[1] / gx), int(hit[2] / gy))].append(hit)
-        fbest = max(fclusters.values(), key=len)
-        if len(fbest) >= max(2, int(0.20 * len(per_frame))):
+        live_min = float(os.getenv("CAM_LIVELINESS_MIN", "1.0"))
+        for fbest in sorted(fclusters.values(), key=len, reverse=True):
+            if len(fbest) < max(2, int(0.20 * len(per_frame))):
+                break
             mfw = int(_np.median([h[3] for h in fbest]))
             mfh = int(_np.median([h[4] for h in fbest]))
+            mcx = float(_np.median([h[1] for h in fbest]))
+            mcy = float(_np.median([h[2] for h in fbest]))
+            # When a cam box is known, the tracked face must live INSIDE it:
+            # two-webcam sources (mock interviews, duo streams) have several
+            # persistent face clusters, and pairing the strip with a face from
+            # a DIFFERENT cam splits the layout across two people.
+            if facecam is not None:
+                fx0, fy0, fw0, fh0 = facecam
+                mx, my = fw0 * 0.10, fh0 * 0.10
+                if not (fx0 - mx <= mcx <= fx0 + fw0 + mx and
+                        fy0 - my <= mcy <= fy0 + fh0 + my):
+                    continue
+            # Liveliness gate on the face region — a Valorant agent portrait
+            # out-scored a real streamer cam on every geometric heuristic;
+            # only pixel motion separates art from a live camera.
+            gb_w, gb_h = int(mfw * 2.2), int(mfh * 2.8)
+            gb_x = int(max(0, min(mcx - gb_w / 2, src_w - gb_w)))
+            gb_y = int(max(0, min(mcy - gb_h * 0.40, src_h - gb_h)))
+            if _box_liveliness(clip_path, (gb_x, gb_y, gb_w, gb_h)) < live_min:
+                continue
             traj = sorted((h[0], h[1], h[2]) for h in fbest)
             face_info = {"traj": traj, "fw": mfw, "fh": mfh}
             # If the person pass missed the cam, derive the exclusion box from the
             # face (expanded to head + shoulders) so the bottom still drops it.
             if facecam is None:
-                mcx = float(_np.median([h[1] for h in fbest]))
-                mcy = float(_np.median([h[2] for h in fbest]))
-                bw, bh = int(mfw * 2.2), int(mfh * 2.8)
-                bx = int(max(0, min(mcx - bw / 2, src_w - bw)))
-                by = int(max(0, min(mcy - bh * 0.40, src_h - bh)))
-                facecam = (bx, by, min(bw, src_w), min(bh, src_h))
-
-    # A shared video-level box wins, so every clip of the video splits the same way.
-    if known_box is not None:
-        facecam = known_box
+                facecam = (gb_x, gb_y, min(gb_w, src_w), min(gb_h, src_h))
+            break
 
     def _in_facecam(b) -> bool:
         if not facecam:
@@ -3748,6 +3844,7 @@ class LayoutPlan:
 async def _plan_fill(ctx: ClipRenderCtx) -> LayoutPlan:
     """Fill layout: 9:16 crop of the source — YOLO speaker-tracked when
     reframe is on, static center crop otherwise."""
+    absent_times: list = []
     if ctx.reframe:
         if not _REFRAME_AVAILABLE:
             await update_job(ctx.job_id, message=f"Rendering clip {ctx.idx+1}/{ctx.n_clips}: {ctx.clip_title} (YOLO unavailable — using center crop)")
@@ -3762,7 +3859,8 @@ async def _plan_fill(ctx: ClipRenderCtx) -> LayoutPlan:
             await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
                                  "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
                                  "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(temp_yolo)])
-            detections = await asyncio.to_thread(_yolo_sample_positions_sequential, temp_yolo, ctx.src_w, ctx.src_h)
+            detections, absent_times = await asyncio.to_thread(
+                _yolo_sample_positions_sequential, temp_yolo, ctx.src_w, ctx.src_h)
             temp_yolo.unlink(missing_ok=True)
             log(ctx.job_id, f"  YOLO detections: {len(detections)} samples, source: {ctx.src_w}x{ctx.src_h}, crop: {ctx.crop_w}x{ctx.crop_h}")
             if len(detections) == 0:
@@ -3776,16 +3874,48 @@ async def _plan_fill(ctx: ClipRenderCtx) -> LayoutPlan:
     if is_dynamic:
         sendcmd_path = ctx.job_dir / f"clip_{ctx.idx}_crop.txt"
         write_sendcmd_file(trajectory, sendcmd_path, fps=ctx.clip_fps)
-        fc = (
-            f"[0:v]sendcmd=f={sendcmd_path.name},"
-            f"crop={ctx.crop_w}:{ctx.crop_h}:0:0,"
-            f"scale={ctx.out_w}:{ctx.out_h}[vmain]"
-        )
+        crop_chain = (f"sendcmd=f={sendcmd_path.name},"
+                      f"crop={ctx.crop_w}:{ctx.crop_h}:0:0,"
+                      f"scale={ctx.out_w}:{ctx.out_h}")
     else:
+        crop_chain = (f"crop={ctx.crop_w}:{ctx.crop_h}:{trajectory[0][1]}:0,"
+                      f"scale={ctx.out_w}:{ctx.out_h}")
+
+    # Full-frame graphics (slides, charts): no person on screen for a
+    # sustained stretch → letterbox those ranges over a blurred fill instead
+    # of center-cropping slide text (same treatment as Dynamic's WIDE).
+    graphic_ranges = []
+    if absent_times:
+        run_start, prev = None, None
+        for t in absent_times + [None]:
+            if run_start is None:
+                run_start, prev = t, t
+                continue
+            if t is not None and t - prev <= 1.5:
+                prev = t
+                continue
+            if prev - run_start >= 2.5:
+                graphic_ranges.append((max(0.0, run_start - 0.4),
+                                       min(ctx.render_dur, prev + 0.4)))
+            run_start, prev = t, t
+        graphic_ranges = graphic_ranges[:12]
+
+    if graphic_ranges:
+        half_w, half_h = ctx.out_w // 2, ctx.out_h // 2
+        enable = "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in graphic_ranges)
         fc = (
-            f"[0:v]crop={ctx.crop_w}:{ctx.crop_h}:{trajectory[0][1]}:0,"
-            f"scale={ctx.out_w}:{ctx.out_h}[vmain]"
+            f"[0:v]split=3[fm][fwa][fwb];"
+            f"[fm]{crop_chain}[fmain];"
+            f"[fwa]scale={half_w}:{half_h}:force_original_aspect_ratio=increase,"
+            f"crop={half_w}:{half_h},boxblur=10:2,scale={ctx.out_w}:{ctx.out_h}[fbg];"
+            f"[fwb]scale={ctx.out_w}:-2:force_original_aspect_ratio=decrease[ffg];"
+            f"[fbg][ffg]overlay=(W-w)/2:(H-h)/2[fwide];"
+            f"[fmain][fwide]overlay=0:0:enable='{enable}'[vmain]"
         )
+        log(ctx.job_id, f"  Fill: {len(graphic_ranges)} graphic range(s) letterboxed: "
+                        + " ".join(f"{a:.1f}-{b:.1f}" for a, b in graphic_ranges))
+    else:
+        fc = f"[0:v]{crop_chain}[vmain]"
     return LayoutPlan(filter_complex=fc)
 
 
@@ -3806,22 +3936,36 @@ def _plan_blur_bg(ctx: ClipRenderCtx) -> LayoutPlan:
 
 
 async def _render_face_strip(ctx: ClipRenderCtx, fh_med: int, face_pts: list,
-                             strip_h: int) -> tuple:
+                             strip_h: int, clamp_box: Optional[tuple] = None) -> tuple:
     """Pre-render a face-framed strip (head + shoulders, gently following the
     face) as its own pass — the follow needs its own sendcmd-driven crop, and
     only one sendcmd fits per graph. Returns (path, mode) where mode is
-    'tracked' or 'framed'. Shared by the gameplay and screenshare layouts."""
+    'tracked' or 'framed'. Shared by the gameplay and screenshare layouts.
+    clamp_box, when given, keeps the crop window fully inside that region —
+    a window overhanging the webcam overlay drags surrounding UI into the
+    strip (screenshare sources: the cam sits on top of the shared screen)."""
     import statistics as _stats
     src_w, src_h, out_w = ctx.src_w, ctx.src_h, ctx.out_w
     win_w = int(min(fh_med * 2.6 * out_w / strip_h, src_w)); win_w -= win_w % 2
     win_h = int(win_w * strip_h / out_w); win_h -= win_h % 2
     win_h = min(win_h, src_h - (src_h % 2))
     win_w = int(win_h * out_w / strip_h); win_w -= win_w % 2
+    x_lo, x_hi, y_lo, y_hi = 0, src_w, 0, src_h
+    if clamp_box:
+        bx, by, bw, bh = clamp_box
+        if win_h > bh:
+            win_h = bh - (bh % 2)
+            win_w = int(win_h * out_w / strip_h); win_w -= win_w % 2
+        if win_w > bw:
+            win_w = bw - (bw % 2)
+            win_h = int(win_w * strip_h / out_w); win_h -= win_h % 2
+        x_lo, x_hi = max(0, bx), min(src_w, bx + bw)
+        y_lo, y_hi = max(0, by), min(src_h, by + bh)
     cxs = [c for _, c, _ in face_pts]
     cys = [c for _, _, c in face_pts]
-    win_y = int(max(0, min(_stats.median(cys) - win_h * 0.42, src_h - win_h)))
-    f_dets = [(t, int(max(0, min(cx - win_w / 2, src_w - win_w)))) for t, cx, _ in face_pts]
-    f_fb   = int(max(0, min(_stats.median(cxs) - win_w / 2, src_w - win_w)))
+    win_y = int(max(y_lo, min(_stats.median(cys) - win_h * 0.42, y_hi - win_h)))
+    f_dets = [(t, int(max(x_lo, min(cx - win_w / 2, x_hi - win_w)))) for t, cx, _ in face_pts]
+    f_fb   = int(max(x_lo, min(_stats.median(cxs) - win_w / 2, x_hi - win_w)))
     f_traj = smooth_crop_trajectory(f_dets, ctx.render_dur, fallback_crop_x=f_fb, crop_w=win_w, src_w=src_w)
     if len(set(x for _, x in f_traj)) > 1:
         _f_cmd = ctx.job_dir / f"clip_{ctx.idx}_face.txt"
@@ -3841,6 +3985,27 @@ async def _render_face_strip(ctx: ClipRenderCtx, fh_med: int, face_pts: list,
     return strip_tmp, mode
 
 
+def _expand_cam_overlay(box: tuple, src_w: int, src_h: int) -> tuple:
+    """Grow a face-derived cam box to the likely FULL overlay rectangle.
+    The detected box covers the streamer's face, but cam overlays are much
+    larger (desk, monitor, room) — excluding only the face leaves the rest
+    of the overlay leaking into the gameplay crop. Overlays are corner-
+    anchored: expand the box's span from its nearest corner by 2x, clamped."""
+    x, y, w, h = box
+    cx, cy = x + w / 2, y + h / 2
+    # horizontal: anchored to left or right edge
+    if cx < src_w / 2:
+        nx, nw = 0, min(src_w, int((x + w) * 2.0))
+    else:
+        nx = max(0, src_w - int((src_w - x) * 2.0)); nw = src_w - nx
+    # vertical: anchored to top or bottom edge
+    if cy < src_h / 2:
+        ny, nh = 0, min(src_h, int((y + h) * 1.6))
+    else:
+        ny = max(0, src_h - int((src_h - y) * 1.6)); nh = src_h - ny
+    return (nx, ny, nw, nh)
+
+
 async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
     """Gameplay layout: streamer's cam (face-framed/tracked) on top, tracked
     gameplay on the bottom with the cam region excluded. Returns None when no
@@ -3857,16 +4022,26 @@ async def _plan_gameplay(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
         return None
 
     src_w, src_h, out_w, out_h = ctx.src_w, ctx.src_h, ctx.out_w, ctx.out_h
+    # Exclude the FULL overlay, not just the face box — the streamer's cam
+    # frame (desk/room) extends far beyond the face and was leaking into the
+    # gameplay crop (user-reported on a Valorant stream).
+    ex, ey, ew, eh = _expand_cam_overlay(facecam_box, src_w, src_h)
     fx, fy, fw, fh = facecam_box
     top_h = (out_h * 3 // 10); top_h -= top_h % 2     # 30% cam (Opus's Gameplay ratio)
     bot_h = out_h - top_h                              # 70% gameplay
     gp_h  = ctx.crop_h
     gp_w  = min(int(gp_h * out_w / bot_h), src_w); gp_w -= gp_w % 2
     gp_min_x, gp_max_x = 0, src_w - gp_w
-    if fx + fw <= src_w / 2:                            # facecam on the left
-        gp_min_x = min(fx + fw, gp_max_x)
-    elif fx >= src_w / 2:                              # facecam on the right
-        gp_max_x = max(fx - gp_w, gp_min_x)
+    if ex + ew <= src_w * 0.6:                          # facecam overlay on the left
+        gp_min_x = min(ex + ew, gp_max_x)
+    elif ex >= src_w * 0.4:                             # facecam overlay on the right
+        gp_max_x = max(ex - gp_w, gp_min_x)
+    # FPS/action gameplay centers on the crosshair — tracking a transient
+    # enemy model wanders the crop away from the action (user-reported).
+    # Only track when there is a genuinely PERSISTENT subject on screen.
+    expected_samples = max(1.0, ctx.render_dur * 2.0)   # sampler runs ~2/s
+    if len(game) < 0.4 * expected_samples:
+        game = []
     gp_dets  = [(t, max(gp_min_x, min(int(cx - gp_w / 2), gp_max_x))) for t, cx in game]
     gp_fb    = max(gp_min_x, min((src_w - gp_w) // 2, gp_max_x))
     gp_traj  = smooth_crop_trajectory(gp_dets, ctx.render_dur, fallback_crop_x=gp_fb, crop_w=gp_w, src_w=src_w)
@@ -3964,43 +4139,517 @@ def _speaker_window(sp: dict, tile_w: int, tile_h: int, src_w: int, src_h: int) 
     return wx, wy, win_w, win_h
 
 
+def _detect_content_inset(clip_path: Path, seats: list, src_w: int, src_h: int,
+                          times: list) -> Optional[tuple]:
+    """Reaction-source content inset: the rectangle of 'the thing they're
+    watching' composited into the frame. Found as the largest coherent
+    high-temporal-motion rectangle away from the two hosts (the set is
+    static, the hosts are masked out, the playing video always moves).
+    Returns (x, y, w, h) in source pixels or None. Runs in a worker thread."""
+    import cv2 as _cv2
+    import numpy as _np
+    if len(times) < 6:
+        return None
+    cap = _cv2.VideoCapture(str(clip_path))
+    dw = 480
+    scale = dw / src_w
+    dh = int(src_h * scale)
+    accum, n, grays = _np.zeros((dh, dw), _np.float32), 0, []
+    # Diff a TIGHT pair (150ms) at each sample point — diffing across distant
+    # samples straddles scene cuts and lights the whole frame up as "motion".
+    for t in times[:24]:
+        pair = []
+        for dt in (0.0, 0.15):
+            cap.set(_cv2.CAP_PROP_POS_MSEC, (t + dt) * 1000.0)
+            ret, frame = cap.read()
+            if ret:
+                pair.append(_cv2.cvtColor(_cv2.resize(frame, (dw, dh)),
+                                          _cv2.COLOR_BGR2GRAY))
+        if len(pair) == 2:
+            accum += _cv2.absdiff(pair[0], pair[1]).astype(_np.float32)
+            n += 1
+            grays.append(pair[0])
+    cap.release()
+    if n < 4:
+        return None
+    # Mask each host's HEAD only. Bodies must stay visible: the hosts sit
+    # close enough that body-column masks amputate the inset's flanks; torso
+    # motion is instead cut by the second Otsu stage below (measured: torso
+    # ≈ half the inset's temporal energy, heads ≈ 1.3× it). All dimensions
+    # carry ABSOLUTE caps — in a tight two-shot the faces are ~40% of frame
+    # height and uncapped face-relative masks devour the whole frame.
+    for sp in seats:
+        hw_ = min(sp["fh"] * 0.6, 0.12 * src_w)
+        mx0 = int(max(0, (sp["fcx"] - hw_) * scale))
+        mx1 = int(min(dw, (sp["fcx"] + hw_) * scale))
+        my0 = int(max(0, (sp["fcy"] - min(sp["fh"] * 1.2, 0.22 * src_h)) * scale))
+        my1 = int(min(dh, (sp["fcy"] + min(sp["fh"] * 1.8, 0.33 * src_h)) * scale))
+        accum[my0:my1, mx0:mx1] = 0.0
+    img = _cv2.normalize(accum / n, None, 0, 255, _cv2.NORM_MINMAX).astype(_np.uint8)
+    t1, _bw1 = _cv2.threshold(img, 0, 255, _cv2.THRESH_BINARY + _cv2.THRESH_OTSU)
+    hi = img[img > t1]
+    if hi.size < 50:
+        return None
+    t2, _bw2 = _cv2.threshold(hi, 0, 255, _cv2.THRESH_BINARY + _cv2.THRESH_OTSU)
+    _t, bw = _cv2.threshold(img, t2, 255, _cv2.THRESH_BINARY)
+    bw = _cv2.morphologyEx(bw, _cv2.MORPH_CLOSE, _np.ones((9, 9), _np.uint8))
+    contours, _h = _cv2.findContours(bw, _cv2.RETR_EXTERNAL, _cv2.CHAIN_APPROX_SIMPLE)
+    best, best_area = None, 0
+    for c in contours:
+        x, y, w, h = _cv2.boundingRect(c)
+        if w * h < 0.05 * dw * dh or h == 0:
+            continue
+        if not (1.1 <= w / h <= 2.8):
+            continue
+        if any(x <= sp["fcx"] * scale <= x + w and y <= sp["fcy"] * scale <= y + h
+               for sp in seats):
+            continue
+        if w * h > best_area:
+            best, best_area = (x, y, w, h), w * h
+    if best is None:
+        return None
+    x, y, w, h = best
+
+    # Snap to the player's hard borders. The motion blob over-reaches into
+    # whichever host leans toward the inset; the true border is the strongest
+    # vertical-edge PAIR (median frame) consistent with the inset sitting
+    # centred between the two hosts.
+    med = _np.median(_np.stack(grays), axis=0).astype(_np.uint8)
+    gx = _np.abs(_cv2.Sobel(med, _cv2.CV_32F, 1, 0, ksize=3))
+    colp = gx[y:y + h, :].mean(axis=0)
+    colp_n = colp / max(1e-6, float(colp.max()))
+    cexp = (seats[0]["fcx"] + seats[1]["fcx"]) / 2 * scale
+    sw_ = max(6, w // 6); inw = int(w * 0.30)
+    bl, br, best_s = x, x + w, -1e9
+    for l in range(max(0, x - sw_), min(dw - 2, x + inw)):
+        for r in range(max(0, x + w - inw), min(dw - 1, x + w + sw_)):
+            if r - l < 0.4 * w:
+                continue
+            s = colp_n[l] + colp_n[r] - 0.03 * abs((l + r) / 2 - cexp)
+            if s > best_s:
+                best_s, bl, br = s, l, r
+    gy = _np.abs(_cv2.Sobel(med, _cv2.CV_32F, 0, 1, ksize=3))
+    rowp = gy[:, bl:br].mean(axis=1)
+    sh_ = max(4, h // 8)
+    # Frame-edge borders stay put (no interior edge to snap to there).
+    if y > 3:
+        y0lo = max(0, y - sh_)
+        ny0 = y0lo + int(_np.argmax(rowp[y0lo: y + sh_ + 1]))
+    else:
+        ny0 = 0
+    if y + h < dh - 3:
+        y1lo = max(0, y + h - sh_)
+        ny1 = y1lo + int(_np.argmax(rowp[y1lo: y + h + sh_ + 1]))
+    else:
+        ny1 = dh
+    if ny1 - ny0 < 8 or br - bl < 8:
+        return None
+    x, y, w, h = bl, ny0, br - bl, ny1 - ny0
+
+    ix = int(x / scale); ix -= ix % 2
+    iy = int(y / scale); iy -= iy % 2
+    iw = int(min(src_w - ix, w / scale)); iw -= iw % 2
+    ih = int(min(src_h - iy, h / scale)); ih -= ih % 2
+    if iw < 64 or ih < 64:
+        return None
+    return (ix, iy, iw, ih)
+
+
+def _inset_presence(clip_path: Path, box: tuple, src_w: int, src_h: int,
+                    times: list) -> list:
+    """Is the content inset actually ON SCREEN at each sample time? Pre-roll
+    and outros show the hosts full-frame — the pane region then contains
+    their torsos, and motion there (a gesturing hand) fools a motion probe.
+    The player's own RECTANGLE is the reliable signal: when present, all
+    four border lines carry strong aligned gradients (measured: present
+    ≥1.7× the frame's mean gradient, absent ≤0.6×). Returns
+    [(t, border_ratio)]. Runs in a worker thread."""
+    import cv2 as _cv2
+    import numpy as _np
+    ix, iy, iw, ih = box
+    cap = _cv2.VideoCapture(str(clip_path))
+    dw, dh_ = 480, max(2, int(480 * src_h / src_w))
+    s = dw / src_w
+    x0, y0 = int(ix * s), int(iy * s)
+    x1, y1 = min(dw - 2, int((ix + iw) * s)), min(dh_ - 2, int((iy + ih) * s))
+    out = []
+    for t in times:
+        cap.set(_cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+        ret, fr = cap.read()
+        if not ret or fr is None:
+            continue
+        g = _cv2.cvtColor(_cv2.resize(fr, (dw, dh_)), _cv2.COLOR_BGR2GRAY).astype(_np.float32)
+        gx = _np.abs(_cv2.Sobel(g, _cv2.CV_32F, 1, 0, ksize=3))
+        gy = _np.abs(_cv2.Sobel(g, _cv2.CV_32F, 0, 1, ksize=3))
+        edges = [
+            float(gx[y0:y1, max(0, x0 - 1):x0 + 2].mean()),
+            float(gx[y0:y1, x1 - 1:x1 + 2].mean()),
+            float(gy[max(0, y0 - 1):y0 + 2, x0:x1].mean()),
+            float(gy[y1 - 1:y1 + 2, x0:x1].mean()),
+        ]
+        base = (float(gx.mean()) + float(gy.mean())) / 2
+        # 2nd-lowest edge: one border may sit on a busy background or be
+        # crossed by an arm; requiring 3 of 4 aligned edges is robust.
+        out.append((t, sorted(edges)[1] / max(1e-6, base)))
+    cap.release()
+    return out
+
+
 async def _plan_split(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
-    """Split layout: two co-present speakers stacked 50/50 (Opus's Split).
-    Requires the video-level speaker pair AND per-clip re-validation — if
-    either speaker isn't actually on screen during this clip's window, returns
-    None and the caller falls back to Fill (whose speaker tracking handles
-    two-person scenes gracefully)."""
+    """Split layout: two co-present speakers, SHOT-AWARE. Edited two-shots
+    (reaction channels, podcasts with punch-ins) cut between the wide base
+    shot and solo close-ups — static crops sample whoever happens to be
+    there, putting the same person in both tiles (user-reported). So the
+    clip is segmented per shot like the Dynamic layout: both seats on
+    screen → the 2-up (or reaction composition, below); one host → a solo
+    full-frame crop; neither (e.g. the reacted video fullscreen) → wide.
+
+    Reaction sources additionally get the genre's native composition: when
+    a content inset ('the thing they're watching') is detected, two-seat
+    segments render hosts SIDE BY SIDE on top with the content as its own
+    pane below (user-requested), instead of stacked rows.
+
+    Falls back to Fill (None) when the pair isn't actually co-present for
+    enough of this clip's window."""
     if not ctx.split_speakers or len(ctx.split_speakers) < 2:
         return None
-    tile_h = ctx.out_h // 2; tile_h -= tile_h % 2
-    windows = [_speaker_window(sp, ctx.out_w, tile_h, ctx.src_w, ctx.src_h)
-               for sp in ctx.split_speakers[:2]]
+    seats = ctx.split_speakers[:2]
+    src_w, src_h = ctx.src_w, ctx.src_h
 
-    # Re-validate on THIS clip segment (cheap H.264 intermediate, 16 frames).
     _sv_tmp = ctx.job_dir / f"clip_{ctx.idx}_split.mp4"
     await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
                          "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
                          "-crf", "28", "-an", str(_sv_tmp)])
-    fractions = await asyncio.to_thread(_faces_present_in_windows, _sv_tmp, windows)
-    _sv_tmp.unlink(missing_ok=True)
-    if min(fractions) < 0.3:
-        log(ctx.job_id, f"  Split re-validation failed ({[round(f, 2) for f in fractions]}) — falling back to Fill")
-        return None
+    try:
+        scan = await asyncio.to_thread(_dyn_scan, _sv_tmp, FFMPEG)
+        if not scan or not scan.get("times"):
+            return None
+        times = scan["times"]
+        dur = ctx.render_dur
 
-    parts = []
-    for i, (wx, wy, ww, wh) in enumerate(windows):
-        parts.append(f"[0:v]crop={ww}:{wh}:{wx}:{wy},scale={ctx.out_w}:{tile_h}[t{i}]")
-    fc = ";".join(parts) + f";[t0][t1]vstack[vmain]"
-    log(ctx.job_id, f"  Split: speakers at x={int(ctx.split_speakers[0]['fcx'])},{int(ctx.split_speakers[1]['fcx'])} "
-                    f"presence={[round(f, 2) for f in fractions]}")
-    return LayoutPlan(filter_complex=fc)
+        # ── Per-sample seat matching ──────────────────────────────────────
+        tol_x, tol_y = 0.09 * src_w, 0.13 * src_h
+        states, payloads = [], []
+        for faces in scan["faces"]:
+            fl = [f[:4] for f in faces]
+            match = [None, None]
+            for si_, sp in enumerate(seats):
+                cands = [f for f in fl
+                         if abs(f[0] - sp["fcx"]) < tol_x and abs(f[1] - sp["fcy"]) < tol_y
+                         and 0.45 <= f[3] / max(1.0, sp["fh"]) <= 2.2]
+                if cands:
+                    match[si_] = min(cands, key=lambda f: abs(f[0] - sp["fcx"]))
+            if match[0] and match[1]:
+                states.append("B"); payloads.append(tuple(match))
+            elif match[0] or match[1]:
+                si_ = 0 if match[0] else 1
+                states.append(str(si_)); payloads.append((match[si_],))
+            else:
+                big = [f for f in fl if f[3] >= 0.18 * src_h]
+                if len(big) == 1:
+                    states.append("F"); payloads.append((big[0],))
+                else:
+                    states.append("W"); payloads.append(None)
+
+        # Despeckle: a single deviant sample between two agreeing neighbors
+        # is detector noise, not a shot.
+        for i in range(1, len(states) - 1):
+            if states[i - 1] == states[i + 1] != states[i]:
+                states[i] = states[i - 1]
+                payloads[i] = payloads[i - 1]
+
+        # Split F-runs at large positional jumps (a cut between two different
+        # people's close-ups has no state change to mark it).
+        runs = []          # (start_idx, end_idx_exclusive, state)
+        i = 0
+        while i < len(states):
+            j = i + 1
+            while j < len(states) and states[j] == states[i]:
+                if states[i] == "F" and payloads[j] and payloads[j - 1] and \
+                        abs(payloads[j][0][0] - payloads[j - 1][0][0]) > 0.18 * src_w:
+                    break
+                j += 1
+            runs.append([i, j, states[i]])
+            i = j
+
+        # Coverage gate: the pair must actually share the screen.
+        n_b = sum(1 for s in states if s == "B")
+        if n_b < 0.35 * max(1, len(states)):
+            log(ctx.job_id, f"  Split: pair co-present in only {n_b}/{len(states)} samples — falling back to Fill")
+            return None
+
+        # Merge short runs into the longer neighbor (min segment length).
+        # 0.8s at the scan's 5 Hz. Reaction edits cut to 1-2s punch-ins;
+        # merging those into the surrounding two-shot keeps seat-aimed tiles
+        # up while the real shot is a zoom — faces gone from both tiles
+        # (audit-caught). Short REAL shots get their own segment; only
+        # sub-0.8s blips are treated as detector noise.
+        min_run = max(2, int(0.8 * 5.0))
+        changed = True
+        while changed and len(runs) > 1:
+            changed = False
+            k = min(range(len(runs)), key=lambda q: runs[q][1] - runs[q][0])
+            if runs[k][1] - runs[k][0] >= min_run:
+                break
+            prev_len = runs[k - 1][1] - runs[k - 1][0] if k > 0 else -1
+            next_len = runs[k + 1][1] - runs[k + 1][0] if k < len(runs) - 1 else -1
+            tgt = k - 1 if prev_len >= next_len else k + 1
+            lo, hi = min(runs[k][0], runs[tgt][0]), max(runs[k][1], runs[tgt][1])
+            runs[tgt][0], runs[tgt][1] = lo, hi
+            del runs[k]
+            changed = True
+        # Re-merge now-adjacent same-state runs, cap segment count.
+        k = 0
+        while k < len(runs) - 1:
+            if runs[k][2] == runs[k + 1][2]:
+                runs[k][1] = runs[k + 1][1]
+                del runs[k + 1]
+            else:
+                k += 1
+        while len(runs) > 32:
+            cands = [q for q in range(len(runs)) if runs[q][2] != "W"]
+            if not cands:
+                break
+            k = min(cands, key=lambda q: runs[q][1] - runs[q][0])
+            runs[k][2] = "W"
+            k = 0
+            while k < len(runs) - 1:
+                if runs[k][2] == runs[k + 1][2]:
+                    runs[k][1] = runs[k + 1][1]
+                    del runs[k + 1]
+                else:
+                    k += 1
+
+        # ── Content inset (reaction composition) ──────────────────────────
+        # Seats re-measured from the BASE-shot samples only: the video-level
+        # face-height median mixes punch-in close-ups and comes out far too
+        # large for masking.
+        import statistics as _st
+        b_idx = [q for q in range(len(states)) if states[q] == "B"]
+        b_times = [times[q] for q in b_idx]
+        # Spread the detector's sample budget across the WHOLE clip — the
+        # first 24 raw samples cover only the first ~5 seconds.
+        if len(b_times) > 24:
+            stride = len(b_times) / 24.0
+            b_times = [b_times[int(i * stride)] for i in range(24)]
+        b_seats = []
+        for si_ in (0, 1):
+            vals = [payloads[q][si_] for q in b_idx if payloads[q]]
+            if vals:
+                b_seats.append({"fcx": _st.median(v[0] for v in vals),
+                                "fcy": _st.median(v[1] for v in vals),
+                                "fh":  _st.median(v[3] for v in vals)})
+            else:
+                b_seats.append(dict(seats[si_]))
+        inset = await asyncio.to_thread(
+            _detect_content_inset, _sv_tmp, b_seats, src_w, src_h, b_times)
+        if inset and inset[2] * inset[3] < 0.08 * src_w * src_h:
+            inset = None
+
+        # Inset presence probe: pre-roll/outro the player isn't composited
+        # yet and the pane region shows the hosts' own torsos (user-reported)
+        # — gate the reaction composition on the player's rectangle actually
+        # being on screen.
+        act = []
+        if inset:
+            act = await asyncio.to_thread(
+                _inset_presence, _sv_tmp, inset, src_w, src_h, b_times)
+
+        def _act_at(a, b):
+            vals = sorted(v for t, v in act if a <= t < b)
+            if not vals and act:
+                vals = [min(act, key=lambda tv: abs(tv[0] - (a + b) / 2))[1]]
+            return vals[len(vals) // 2] if vals else 0.0
+
+        def _agg_seat(q0, q1, si_, st):
+            """Chunk-local framing target. Centre = MIDRANGE of the face's
+            excursion (a median lags a lean to one side — the face ends up
+            clipped at the window edge, user-reported); size = median."""
+            vals = []
+            for q in range(q0, q1):
+                if states[q] == st and payloads[q]:
+                    f = payloads[q][si_] if st == "B" else payloads[q][0]
+                    if f:
+                        vals.append(f)
+            if not vals:
+                return None
+            xs = sorted(v[0] for v in vals)
+            ys = sorted(v[1] for v in vals)
+            return {"fcx": (xs[0] + xs[-1]) / 2,
+                    "fcy": (ys[0] + ys[-1]) / 2,
+                    "fw":  _st.median(v[2] for v in vals),
+                    "fh":  _st.median(v[3] for v in vals)}
+
+        def _zoom(sp, f):
+            """Loosened copy: a bigger nominal face → a wider window, giving
+            the host room to move within the chunk without leaving frame."""
+            z = dict(sp)
+            z["fh"] = sp["fh"] * f
+            return z
+
+        # ── Items: two-seat segments are CHUNKED (≤3s) with per-chunk
+        # re-aiming so the crops follow the hosts as they lean (a long
+        # static window loses them — user-reported); windows are held
+        # steady across chunks unless the seat genuinely moved.
+        out_w, out_h = ctx.out_w, ctx.out_h
+        half_w, half_h = out_w // 2, out_h // 2
+        cw = out_w // 2 - ((out_w // 2) % 2)
+        hh = half_h - (half_h % 2)
+        tile_h = out_h // 2 - ((out_h // 2) % 2)
+        last_h = out_h - tile_h
+        prev_win = {}
+
+        def _hold(key, win):
+            """Keep the previous window while the new aim is within the dead
+            zone — steady framing beats micro re-aims; identical windows also
+            let neighboring chunks merge back into one segment."""
+            pw = prev_win.get(key)
+            if pw and abs(pw[0] - win[0]) < 0.04 * src_w and abs(pw[1] - win[1]) < 0.04 * src_h \
+                    and 0.92 <= pw[2] / max(1, win[2]) <= 1.08:
+                return pw
+            prev_win[key] = win
+            return win
+
+        def _win(key, sp, tw, th):
+            return _hold(key, _speaker_window(sp, tw, th, src_w, src_h))
+
+        def _solo_win(sp):
+            if sp["fh"] < 0.15 * src_h:
+                wh_ = int(min(src_h, max(sp["fh"] * 5.0, src_h * 0.52))); wh_ -= wh_ % 2
+                ww_ = int(wh_ * out_w / out_h); ww_ -= ww_ % 2
+                wx_ = int(max(0, min(sp["fcx"] - ww_ / 2, src_w - ww_)))
+                wy_ = int(max(0, min(sp["fcy"] - wh_ * 0.32, src_h - wh_)))
+            else:
+                ww_, wh_ = ctx.crop_w, ctx.crop_h
+                wx_ = int(max(0, min(sp["fcx"] - ww_ / 2, src_w - ww_)))
+                wy_ = 0
+            return _hold("S", (wx_, wy_, ww_, wh_))
+
+        items = []
+        for ri, run in enumerate(runs):
+            a = 0.0 if ri == 0 else (times[run[0] - 1] + times[run[0]]) / 2
+            b = dur if ri == len(runs) - 1 else (times[run[1] - 1] + times[run[1]]) / 2
+            if b - a <= 0.05:
+                continue
+            st = run[2]
+            if st == "B":
+                n_ch = max(1, int(round((b - a) / 3.0)))
+                bounds = [a + (b - a) * k / n_ch for k in range(n_ch + 1)]
+                seg_s0 = _agg_seat(run[0], run[1], 0, "B") or dict(seats[0])
+                seg_s1 = _agg_seat(run[0], run[1], 1, "B") or dict(seats[1])
+                for k in range(n_ch):
+                    ca, cb = bounds[k], bounds[k + 1]
+                    q0 = next((q for q in range(run[0], run[1]) if times[q] >= ca), run[0])
+                    q1 = next((q for q in range(q0, run[1]) if times[q] >= cb), run[1])
+                    s0 = _agg_seat(q0, q1, 0, "B") or seg_s0
+                    s1 = _agg_seat(q0, q1, 1, "B") or seg_s1
+                    if inset and _act_at(ca, cb) > 1.2:
+                        # Columns are the tightest tiles — 1.25x headroom.
+                        items.append([ca, cb, "R",
+                                      (_win(("R", 0), _zoom(s0, 1.25), cw, hh),
+                                       _win(("R", 1), _zoom(s1, 1.25), cw, hh))])
+                    else:
+                        items.append([ca, cb, "2",
+                                      (_win(("2", 0), _zoom(s0, 1.1), out_w, tile_h),
+                                       _win(("2", 1), _zoom(s1, 1.1), out_w, last_h))])
+            elif st in ("0", "1", "F"):
+                # Solo close-ups drift too — chunk and re-aim the same way.
+                n_ch = max(1, int(round((b - a) / 3.0)))
+                bounds = [a + (b - a) * k / n_ch for k in range(n_ch + 1)]
+                seg_sp = _agg_seat(run[0], run[1], 0, st) or dict(seats[int(st) if st in "01" else 0])
+                for k in range(n_ch):
+                    ca, cb = bounds[k], bounds[k + 1]
+                    q0 = next((q for q in range(run[0], run[1]) if times[q] >= ca), run[0])
+                    q1 = next((q for q in range(q0, run[1]) if times[q] >= cb), run[1])
+                    sp = _agg_seat(q0, q1, 0, st) or seg_sp
+                    items.append([ca, cb, "S", _solo_win(sp)])
+            else:
+                items.append([a, b, "W", None])
+
+        # Composition despeckle (a single R↔2 flip between agreeing
+        # neighbors is probe noise) + merge of identical neighbors.
+        for i in range(1, len(items) - 1):
+            if items[i][2] in ("R", "2") and items[i - 1][2] in ("R", "2") \
+                    and items[i - 1][2] == items[i + 1][2] != items[i][2]:
+                items[i][2] = items[i - 1][2]
+                items[i][3] = items[i - 1][3]
+        merged = []
+        for it in items:
+            if merged and merged[-1][2] == it[2] and merged[-1][3] == it[3]:
+                merged[-1][1] = it[1]
+            else:
+                merged.append(it)
+        items = merged
+        if not items:
+            return None
+
+        # Early handoff: at a two-shot → solo/wide boundary the classifier
+        # lags the real cut by a sample or two (transition frames still match
+        # the seats), leaving seat-aimed tiles up over the first zoom frames
+        # (audit-caught). Hand off ~0.4s early, like an editor cutting ahead.
+        for i in range(1, len(items)):
+            if items[i][2] in ("S", "W") and items[i - 1][2] in ("R", "2"):
+                shift = min(0.4, (items[i - 1][1] - items[i - 1][0]) * 0.5)
+                items[i - 1][1] = round(items[i - 1][1] - shift, 3)
+                items[i][0] = round(items[i][0] - shift, 3)
+
+        # ── Graph ─────────────────────────────────────────────────────────
+        parts, labels = [], []
+        for si, (a, b, kind, data) in enumerate(items):
+            head = f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS"
+            if kind == "R":
+                # Reaction composition: hosts side by side (top), content
+                # pane (bottom) — the content's own pixels blurred as backdrop.
+                ix, iy, iw, ih = inset
+                w0, w1 = data
+                parts.append(f"{head},split=4[s{si}a][s{si}b][s{si}c][s{si}d]")
+                parts.append(f"[s{si}a]crop={w0[2]}:{w0[3]}:{w0[0]}:{w0[1]},scale={cw}:{hh}[s{si}t0]")
+                parts.append(f"[s{si}b]crop={w1[2]}:{w1[3]}:{w1[0]}:{w1[1]},scale={out_w - cw}:{hh}[s{si}t1]")
+                parts.append(f"[s{si}t0][s{si}t1]hstack[s{si}h]")
+                parts.append(f"[s{si}c]crop={iw}:{ih}:{ix}:{iy},"
+                             f"scale={half_w}:{(out_h - hh) // 2}:force_original_aspect_ratio=increase,"
+                             f"crop={half_w}:{(out_h - hh) // 2},boxblur=10:2,"
+                             f"scale={out_w}:{out_h - hh}[s{si}bg]")
+                parts.append(f"[s{si}d]crop={iw}:{ih}:{ix}:{iy},"
+                             f"scale={out_w}:-2:force_original_aspect_ratio=decrease[s{si}fg]")
+                parts.append(f"[s{si}bg][s{si}fg]overlay=(W-w)/2:(H-h)/2[s{si}cp]")
+                parts.append(f"[s{si}h][s{si}cp]vstack,setsar=1[s{si}]")
+            elif kind == "2":
+                w0, w1 = data
+                parts.append(f"{head},split=2[s{si}a][s{si}b]")
+                parts.append(f"[s{si}a]crop={w0[2]}:{w0[3]}:{w0[0]}:{w0[1]},scale={out_w}:{tile_h}[s{si}t0]")
+                parts.append(f"[s{si}b]crop={w1[2]}:{w1[3]}:{w1[0]}:{w1[1]},scale={out_w}:{last_h}[s{si}t1]")
+                parts.append(f"[s{si}t0][s{si}t1]vstack,setsar=1[s{si}]")
+            elif kind == "S":
+                wx_, wy_, ww_, wh_ = data
+                parts.append(f"{head},crop={ww_}:{wh_}:{wx_}:{wy_},"
+                             f"scale={out_w}:{out_h},setsar=1[s{si}]")
+            else:
+                parts.append(f"{head},split=2[s{si}a][s{si}b]")
+                parts.append(f"[s{si}a]scale={half_w}:{half_h}:force_original_aspect_ratio=increase,"
+                             f"crop={half_w}:{half_h},boxblur=10:2,"
+                             f"scale={out_w}:{out_h}[s{si}bg]")
+                parts.append(f"[s{si}b]scale={out_w}:-2:force_original_aspect_ratio=decrease[s{si}fg]")
+                parts.append(f"[s{si}bg][s{si}fg]overlay=(W-w)/2:(H-h)/2,setsar=1[s{si}]")
+            labels.append(f"[s{si}]")
+        fc = ";".join(parts) + ";" + "".join(labels) + f"concat=n={len(items)}:v=1:a=0[vmain]"
+
+        _summary = " ".join(f"{k}@{a:.1f}" for a, _b, k, _d in items)
+        log(ctx.job_id, f"  Split: {len(items)} segments, inset={'%dx%d' % (inset[2], inset[3]) if inset else 'none'}: {_summary}")
+        return LayoutPlan(filter_complex=fc)
+    finally:
+        _sv_tmp.unlink(missing_ok=True)
 
 
 async def _plan_screenshare(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
-    """Screenshare layout (Opus's 50/50): screen content on top — letterboxed,
-    NEVER cropped (readability beats fill for slides/code) — and the speaker's
-    face strip on the bottom. The cam region is excluded from the screen crop.
-    Returns None when no cam/face is found (caller falls back)."""
+    """Screenshare layout: screen content on top — full output width, NEVER
+    cropped (readability beats fill for slides/code) — and the speaker's face
+    strip on the bottom. The split is ADAPTIVE: the screen pane gets exactly
+    the height it needs at full width and the face strip takes the rest, so
+    no dead letterbox band sits between the panes (user-reported); only a
+    pathological screen aspect hits the clamp, and then a blur-fill backdrop
+    covers the slack instead of black. The cam region is excluded from the
+    screen crop. Returns None when no cam/face is found (caller falls back)."""
     _fc_tmp = ctx.job_dir / f"clip_{ctx.idx}_fc.mp4"
     await run_cmd_async([FFMPEG, "-y", "-ss", str(ctx.render_ss), "-i", str(ctx.render_src),
                          "-t", str(ctx.render_dur), "-c:v", "libx264", "-preset", "ultrafast",
@@ -4014,7 +4663,6 @@ async def _plan_screenshare(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
 
     src_w, src_h, out_w, out_h = ctx.src_w, ctx.src_h, ctx.out_w, ctx.out_h
     fx, fy, fw, fh = facecam_box
-    tile_h = out_h // 2; tile_h -= tile_h % 2
 
     # Screen region = the larger side of the frame next to the cam; if the cam
     # sits near the middle, keep the full frame (excluding would cut content).
@@ -4027,11 +4675,25 @@ async def _plan_screenshare(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
     else:
         sx, sw = 0, src_w
     sw -= sw % 2
-    top_chain = (
-        f"[0:v]crop={sw}:{src_h - (src_h % 2)}:{sx}:0,"
-        f"scale={out_w}:{tile_h}:force_original_aspect_ratio=decrease,"
-        f"pad={out_w}:{tile_h}:(ow-iw)/2:(oh-ih)/2:black[top];"
-    )
+    sh = src_h - (src_h % 2)
+
+    # Adaptive split: screen pane height = what the screen needs at full
+    # width, clamped to [35%, 62%] of the output so neither pane starves.
+    natural_h = int(out_w * sh / sw)
+    tile_h = max(int(out_h * 0.35), min(natural_h, int(out_h * 0.62)))
+    tile_h -= tile_h % 2
+    strip_h = out_h - tile_h
+    if abs(natural_h - tile_h) <= 2:
+        top_chain = f"[0:v]crop={sw}:{sh}:{sx}:0,scale={out_w}:{tile_h}[top];"
+    else:
+        hw, hh = out_w // 2, tile_h // 2
+        top_chain = (
+            f"[0:v]crop={sw}:{sh}:{sx}:0,split=2[tsa][tsb];"
+            f"[tsa]scale={hw}:{hh}:force_original_aspect_ratio=increase,"
+            f"crop={hw}:{hh},boxblur=10:2,scale={out_w}:{tile_h}[tbg];"
+            f"[tsb]scale={out_w}:{tile_h}:force_original_aspect_ratio=decrease[tfg];"
+            f"[tbg][tfg]overlay=(W-w)/2:(H-h)/2[top];"
+        )
 
     # Bottom: the speaker's face strip (shared with the gameplay layout).
     if face_info:
@@ -4040,8 +4702,22 @@ async def _plan_screenshare(ctx: ClipRenderCtx) -> Optional[LayoutPlan]:
         fh_med = ctx.facecam_region["fh"]
         face_pts = [(0.0, ctx.facecam_region["fcx"], ctx.facecam_region["fcy"])]
     else:
-        return None
-    strip_path, _mode = await _render_face_strip(ctx, fh_med, face_pts, tile_h)
+        # Cam box found but no trackable face inside it — show the cam box
+        # itself, filled to the bottom tile (better than dropping the layout).
+        bx, by = fx - (fx % 2), fy - (fy % 2)
+        bw = min(fw - (fw % 2), src_w - bx)
+        bh = min(fh - (fh % 2), src_h - by)
+        fc = (
+            top_chain +
+            f"[0:v]crop={bw}:{bh}:{bx}:{by},"
+            f"scale={out_w}:{strip_h}:force_original_aspect_ratio=increase,"
+            f"crop={out_w}:{strip_h}[bot];"
+            f"[top][bot]vstack[vmain]"
+        )
+        log(ctx.job_id, f"  Screenshare: cam {facecam_box}, screen x={sx} w={sw}, face=cambox")
+        return LayoutPlan(filter_complex=fc)
+    strip_path, _mode = await _render_face_strip(ctx, fh_med, face_pts, strip_h,
+                                                 clamp_box=facecam_box)
     fc = (
         top_chain +
         f"[1:v]null[bot];"
@@ -4740,7 +5416,10 @@ async def _build_layout_plan(ctx: ClipRenderCtx, clip_style: str) -> LayoutPlan:
         plan = await _plan_screenshare(ctx)
         if plan is not None:
             return plan
-        log(ctx.job_id, "  No speaker cam found for screenshare — using center crop instead")
+        # A user who chose Screenshare has SCREEN content — center-cropping
+        # code/slides makes them unreadable. Letterbox instead (Fit).
+        log(ctx.job_id, "  No speaker cam found for screenshare — letterboxing (fit) instead")
+        return _plan_fit(ctx)
     if layout == "blur_bg":
         return _plan_blur_bg(ctx)
     if layout == "fit":
@@ -4786,7 +5465,7 @@ async def _resolve_auto_layout(video_path: Path, src_w: int, src_h: int,
     _m_low = float(os.getenv("AUTO_MOTION_LOW", "4.0"))
     _e_high = float(os.getenv("AUTO_EDGE_HIGH", "5.0"))
     _m_high = float(os.getenv("AUTO_MOTION_HIGH", "9.0"))
-    facecam_region = _facecam_region_from_clusters(_clusters, _n_ok, src_w, src_h)
+    facecam_region = _facecam_region_from_clusters(_clusters, _n_ok, src_w, src_h, video_path)
     if facecam_region:
         _motion, _edges = await asyncio.to_thread(
             _probe_motion_edges, video_path, duration, facecam_region["box"], 24, t0, t1)

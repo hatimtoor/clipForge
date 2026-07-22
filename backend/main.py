@@ -1112,6 +1112,7 @@ async def analyze_virality(segments: list, job_id: str, max_clips: int, min_dur:
 
     clips_per_chunk = max(2, max_clips // len(chunks) + 1)
     all_clips = []
+    api_failed_chunks = 0
 
     _analysis_provider = f"Groq ({GROQ_ANALYSIS_MODEL})"
     log(job_id, f"Transcript split into {len(chunks)} chunk(s) for {_analysis_provider} analysis")
@@ -1221,8 +1222,20 @@ Return valid JSON array only, no markdown, no explanation."""
             log(job_id, f"  → chunk {chunk_idx+1} returned {len(chunk_clips)} clip candidates")
             all_clips.extend(chunk_clips)
         except Exception as e:
+            api_failed_chunks += 1
             log(job_id, f"  !!! Analysis API error on chunk {chunk_idx+1}: {e} — skipping chunk")
             continue
+
+    # Fail LOUDLY when the API (not the content) is why we have nothing.
+    # A rate-limited analysis used to complete "successfully" with 0 clips —
+    # watchlist/digest then marked the video processed and never retried it.
+    # Raising here routes into the pipeline's error path: the watchlist
+    # counts a retry attempt (up to WATCHLIST_MAX_ATTEMPTS) and the digest
+    # leaves the video unprocessed, so both re-run it on a later pass.
+    if not all_clips and api_failed_chunks:
+        raise RuntimeError(
+            f"Analysis returned no candidates and {api_failed_chunks}/{len(chunks)} "
+            f"chunk(s) hit API errors (rate limit?) — failing job so schedulers retry")
 
     # Normalize scoring: the LLM returns 4 subscores 0-99 (hook/flow/value/trend);
     # the weighted total is computed HERE, never trusted from the model. The

@@ -250,6 +250,12 @@
   --modal-backdrop: rgba(26, 13, 46, 0.55);
   --backdrop-blur: 0px;
 
+  /* legacy pastel fills (lib/theme.js: lavender / peach / amber) — retro-only,
+     used by tinted steppers, the live job card, and other pixel-era surfaces */
+  --tint-lavender: #c8b3ec;
+  --tint-peach: #ffc4a3;
+  --tint-amber: #f5d76e;
+
   --scrollbar-w: 14px;
   --scrollbar-track: #e8d8b8;
   --scrollbar-track-border: 3px solid var(--ink);

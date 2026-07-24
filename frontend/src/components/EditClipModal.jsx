@@ -164,12 +164,8 @@ export default function EditClipModal({ jobId, clipIndex, clipTitle, onClose, on
       footer={
         <>
           <span
-            className="t-sm"
-            style={{
-              marginRight: "auto",
-              alignSelf: "center",
-              color: durationOk ? "var(--text-2)" : "var(--danger)",
-            }}
+            className={`t-sm editclip__dur${durationOk ? "" : " editclip__dur--bad"}`}
+            style={{ marginRight: "auto", alignSelf: "center" }}
           >
             {duration.toFixed(1)}s{cuts > 0 ? ` · ${cuts} cut${cuts > 1 ? "s" : ""}` : ""}
             {!durationOk && (duration < 3 ? " (min 3s)" : " (max 3 min)")}
@@ -232,12 +228,12 @@ export default function EditClipModal({ jobId, clipIndex, clipTitle, onClose, on
             return (
               <div
                 key={i}
+                className={`editclip__sent${on ? " editclip__sent--on" : ""}`}
                 style={{
                   display: "flex",
                   gap: 8,
                   alignItems: "flex-start",
                   padding: "5px 6px",
-                  background: on ? "var(--success-soft)" : "transparent",
                   opacity: ctx && !on ? 0.55 : 1,
                   borderBottom: "1px dashed var(--line)",
                   cursor: "pointer",

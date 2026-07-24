@@ -311,6 +311,18 @@
 .live__row span {
   color: var(--text-2);
 }
+.live__stage {
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+/* Legacy pixel WorkPage: the JOB % card was a lavender PixelCard and the
+   STAGE value was hotDeep (retro --accent). Pixel skin only. */
+[data-theme="retro"] .live__side {
+  background: var(--tint-lavender);
+}
+[data-theme="retro"] .live__stage {
+  color: var(--accent);
+}
 
 /* modern processing visual: molten shimmer band */
 .pviz {

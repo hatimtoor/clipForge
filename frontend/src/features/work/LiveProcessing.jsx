@@ -151,7 +151,7 @@ export default function LiveProcessing({ job, onCancel }) {
         </Banner>
       </div>
 
-      <Card>
+      <Card className="live__side">
         <div className="t-label" style={{ marginBottom: 10 }}>
           Job · {(job.job_id || "--").slice(0, 12)}
         </div>
@@ -164,7 +164,7 @@ export default function LiveProcessing({ job, onCancel }) {
         </div>
         <div className="live__row">
           <b>Stage</b>
-          <span style={{ color: "var(--accent-strong)", fontWeight: 650 }}>
+          <span className="live__stage">
             {STAGE_LABELS[job.status] || job.status}
           </span>
         </div>

@@ -33,11 +33,11 @@ export function Select({ children, className = "", ...rest }) {
   );
 }
 
-export function StepperInput({ value, onChange, min, max, step = 1, suffix = "" }) {
+export function StepperInput({ value, onChange, min, max, step = 1, suffix = "", tint }) {
   const canDec = value > min;
   const canInc = value < max;
   return (
-    <div className="stepper">
+    <div className="stepper" data-tint={tint}>
       <button
         type="button"
         className="stepper__btn"

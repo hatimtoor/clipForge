@@ -16,6 +16,7 @@ export default function ClipsLengthModal({ form, set, onClose, minDurMax = 90 })
             onChange={(v) => set({ maxClips: v })}
             min={1}
             max={10}
+            tint="lavender"
           />
         </Field>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
@@ -27,6 +28,7 @@ export default function ClipsLengthModal({ form, set, onClose, minDurMax = 90 })
               max={minDurMax}
               step={5}
               suffix="s"
+              tint="peach"
             />
           </Field>
           <Field label="Max duration">
@@ -37,6 +39,7 @@ export default function ClipsLengthModal({ form, set, onClose, minDurMax = 90 })
               max={180}
               step={10}
               suffix="s"
+              tint="amber"
             />
           </Field>
         </div>

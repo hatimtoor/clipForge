@@ -247,6 +247,20 @@ select.input {
 [data-theme="retro"] .stepper {
   box-shadow: 3px 3px 0 var(--ink);
 }
+/* Legacy NumField pastel fills (lavender / peach / amber) — pixel skin only. */
+[data-theme="retro"] .stepper[data-tint="lavender"] {
+  background: var(--tint-lavender);
+}
+[data-theme="retro"] .stepper[data-tint="peach"] {
+  background: var(--tint-peach);
+}
+[data-theme="retro"] .stepper[data-tint="amber"] {
+  background: var(--tint-amber);
+}
+[data-theme="retro"] .stepper[data-tint] .stepper__btn {
+  background: transparent;
+  color: var(--ink);
+}
 .stepper__btn {
   width: 36px;
   flex-shrink: 0;
@@ -755,6 +769,10 @@ select.input {
   background: var(--warning-soft);
   color: var(--text-1);
 }
+/* Legacy warnings were pink (hot on hotDeep), not amber — pixel skin only. */
+[data-theme="retro"] .banner--warning {
+  background: var(--accent-soft);
+}
 .banner--danger {
   background: var(--danger-soft);
   color: var(--text-1);
@@ -814,6 +832,8 @@ select.input {
 }
 [data-theme="retro"] .progress__fill {
   border-radius: 0;
+  /* legacy ProgressBar default was pastel hot pink, not the deep accent */
+  background: var(--accent-soft);
 }
 .progress__fill--stripes::after {
   content: "";
@@ -993,4 +1013,20 @@ select.input {
   border: 2px solid var(--ink);
   border-radius: 0;
   animation: cf-blink 1.2s steps(1) infinite;
+}
+
+/* ── EditClipModal transcript ───────────────────────────────────────────── */
+.editclip__sent--on {
+  background: var(--success-soft);
+}
+.editclip__dur--bad {
+  color: var(--danger);
+}
+/* Legacy pixel editor: selected sentences were a faint signal-green wash
+   (C.signal at ~13%), and the too-short/too-long note was pastel hot pink. */
+[data-theme="retro"] .editclip__sent--on {
+  background: rgba(125, 220, 160, 0.16);
+}
+[data-theme="retro"] .editclip__dur--bad {
+  color: var(--accent-soft);
 }

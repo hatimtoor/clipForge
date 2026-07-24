@@ -12,10 +12,28 @@ hit a 429 under normal single-job operation. If a 429 arrives anyway
 all configured API keys before waiting and retrying.
 """
 import asyncio
+import re
 import time
 from collections import deque
 
 import groq as _groq_sdk
+
+# Groq 429 bodies include "Please try again in 47m12.3s" (or "...in 1h2m").
+# Short waits = per-minute limits (retrying helps); long waits = the DAILY token
+# quota (TPD) — no amount of 60s retry loops can recover, the job just burns its
+# watchdog budget. Above this threshold we treat the key as exhausted for the day.
+_LONG_WAIT_S = 300
+_retry_in_re = re.compile(
+    r"try again in\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:([\d.]+)\s*s)?", re.I)
+
+
+def _parse_retry_after(msg: str):
+    """Extract Groq's suggested wait (seconds) from a 429 message, or None."""
+    m = _retry_in_re.search(msg)
+    if not m or not any(m.groups()):
+        return None
+    h, mnt, s = m.groups()
+    return int(h or 0) * 3600 + int(mnt or 0) * 60 + float(s or 0)
 
 
 class _SlidingWindowLimiter:
@@ -95,14 +113,26 @@ async def groq_with_retry(coro_fn, limiter: _SlidingWindowLimiter,
     """
     n = max(1, len(_keys))
     total = max_retries * n
+    round_waits: list = []   # parsed retry-after per key in the current round
 
     for attempt in range(total):
         await limiter.acquire()
         try:
             return await coro_fn()
-        except _groq_sdk.RateLimitError:
+        except _groq_sdk.RateLimitError as e:
+            round_waits.append(_parse_retry_after(str(e)))
             exhausted = _advance_groq_key()
             if exhausted:
+                # Every key in this round reported a long (daily-quota) wait —
+                # retrying in 60s loops is futile and just stalls the job until
+                # its watchdog. Fail now so the schedulers retry after reset.
+                if round_waits and all(
+                        w is not None and w > _LONG_WAIT_S for w in round_waits):
+                    mins = int(min(round_waits) // 60)
+                    raise RuntimeError(
+                        f"Groq daily token quota exhausted on all {n} key(s) — "
+                        f"earliest reset in ~{mins} min") from None
+                round_waits = []
                 wait = 60
                 msg = f"All {n} Groq key(s) rate limited — waiting {wait}s (retry {attempt // n + 1}/{max_retries})"
                 if log_fn:

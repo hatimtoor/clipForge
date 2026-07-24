@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import threading
 import subprocess
@@ -315,10 +316,16 @@ _watchlist_attempts: dict = {}     # (channel_id, video_id) -> failed-attempt co
 # throttled into failed-stream merge errors. Other pipeline phases stay parallel.
 _download_sem = asyncio.Semaphore(2)
 
-# Hard cap on a single download so a throttled/hung yt-dlp can't hold a download
-# slot until the 20-minute watchdog kills the whole job — fail fast and free the
-# slot for everyone else. Tune via DOWNLOAD_TIMEOUT (seconds).
-_DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "900") or "900")
+# Download watchdog. The old design was a single fixed 15-min kill timer, which
+# executed healthy-but-slow downloads (big throttled files still making steady
+# progress) and even downloads that had FINISHED and were in the silent ffmpeg
+# merge phase. Now: kill only when yt-dlp goes quiet (no stdout for
+# DOWNLOAD_STALL_TIMEOUT seconds = hung socket/dead process — a live download
+# prints progress lines constantly, and the stall window is sized to survive the
+# silent merge of a large file), with a generous absolute cap
+# (DOWNLOAD_HARD_CAP) so nothing can hold a slot forever.
+_DOWNLOAD_STALL_TIMEOUT = int(os.getenv("DOWNLOAD_STALL_TIMEOUT", "360") or "360")
+_DOWNLOAD_HARD_CAP = int(os.getenv("DOWNLOAD_HARD_CAP", "2700") or "2700")
 
 # Cap concurrent CPU-heavy renders (FFmpeg + YOLO) so a burst of jobs can't
 # saturate the box and slow everything into the watchdog timeout. Extra jobs queue
@@ -738,14 +745,34 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
         )
-        # Backstop: kill a hung/throttled yt-dlp so it can't stall a slot until the
-        # watchdog. A stalled download emits no stdout, so the read loop below would
-        # block forever — an external timer is the only thing that can interrupt it.
-        _killer = threading.Timer(_DOWNLOAD_TIMEOUT, p.kill)
-        _killer.daemon = True
+        # Backstop: kill a STALLED yt-dlp (no output = hung socket), not a slow
+        # one. The old fixed 15-min total killed downloads that were at 100% and
+        # merging, and big throttled-but-progressing files. A stalled download
+        # emits no stdout, so the read loop below would block forever — this
+        # watcher is the only thing that can interrupt it. A generous hard cap
+        # still bounds the truly endless case.
+        _start_t = time.monotonic()
+        _last_out = [time.monotonic()]
+        _kill_reason = [None]
+
+        def _watch():
+            while p.poll() is None:
+                now = time.monotonic()
+                if now - _last_out[0] > _DOWNLOAD_STALL_TIMEOUT:
+                    _kill_reason[0] = "stall"
+                    p.kill()
+                    return
+                if now - _start_t > _DOWNLOAD_HARD_CAP:
+                    _kill_reason[0] = "cap"
+                    p.kill()
+                    return
+                time.sleep(10)
+
+        _killer = threading.Thread(target=_watch, daemon=True)
         _killer.start()
         tail = []
         for line in p.stdout:
+            _last_out[0] = time.monotonic()
             tail.append(line)
             if len(tail) > 40:
                 tail.pop(0)
@@ -778,9 +805,8 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
                 log(job_id, "Merge finalizing...")
                 _progress_q.put({"status": "merging", "progress": 39, "message": "Finalizing download..."})
         p.wait()
-        _killer.cancel()
         _progress_q.put(None)  # sentinel — signals drainer to stop
-        return p.returncode, "".join(tail)
+        return p.returncode, "".join(tail), _kill_reason[0]
 
     async with _download_sem:
         loop = asyncio.get_event_loop()
@@ -809,13 +835,19 @@ async def download_video(url: str, job_dir: Path, job_id: str) -> Path:
             if not done and download_future.done():
                 done = True
 
-        returncode, tail = await download_future
+        returncode, tail, kill_reason = await download_future
     if returncode != 0:
-        if returncode < 0:  # killed by the timeout backstop (negative = signal)
-            log(job_id, f"yt-dlp killed — download exceeded {_DOWNLOAD_TIMEOUT}s")
+        if kill_reason == "stall":
+            log(job_id, f"yt-dlp killed — no output for {_DOWNLOAD_STALL_TIMEOUT}s")
             raise RuntimeError(
-                f"Download timed out after {_DOWNLOAD_TIMEOUT // 60} min — YouTube is "
-                f"likely throttling this server's IP. Last output: {tail[-300:]}")
+                f"Download stalled (no progress for {_DOWNLOAD_STALL_TIMEOUT // 60} min) — "
+                f"YouTube is likely throttling this server's IP. Last output: {tail[-300:]}")
+        if kill_reason == "cap":
+            log(job_id, f"yt-dlp killed — download exceeded {_DOWNLOAD_HARD_CAP}s hard cap")
+            raise RuntimeError(
+                f"Download took longer than {_DOWNLOAD_HARD_CAP // 60} min and was stopped — "
+                f"the video is too large or YouTube is throttling this server's IP. "
+                f"Last output: {tail[-300:]}")
         log(job_id, f"yt-dlp failed (exit {returncode})")
         # Translate the common YouTube refusals into a clear user-facing reason
         # instead of dumping raw yt-dlp output as a mysterious "clip errored".
@@ -1224,6 +1256,14 @@ Return valid JSON array only, no markdown, no explanation."""
         except Exception as e:
             api_failed_chunks += 1
             log(job_id, f"  !!! Analysis API error on chunk {chunk_idx+1}: {e} — skipping chunk")
+            # Daily quota exhaustion hits every remaining chunk identically —
+            # grinding through them just wastes ~4 min of futile retries each.
+            if "daily token quota exhausted" in str(e):
+                remaining = len(chunks) - (chunk_idx + 1)
+                if remaining:
+                    api_failed_chunks += remaining
+                    log(job_id, f"  Groq daily quota gone — abandoning {remaining} remaining chunk(s)")
+                break
             continue
 
     # Fail LOUDLY when the API (not the content) is why we have nothing.

@@ -146,6 +146,17 @@ def db_update_clip_tt_upload(job_id: str, clip_index: int, tt_upload: dict) -> N
         get_db().table("jobs").update({"clips": clips}).eq("id", job_id).execute()
 
 
+def db_update_clip_ig_upload(job_id: str, clip_index: int, ig_upload: dict) -> None:
+    """Update the ig_upload field on a single clip inside the clips JSONB array."""
+    job = db_get_job(job_id)
+    if not job:
+        return
+    clips = job.get("clips", [])
+    if clip_index < len(clips):
+        clips[clip_index]["ig_upload"] = ig_upload
+        get_db().table("jobs").update({"clips": clips}).eq("id", job_id).execute()
+
+
 def db_update_clip_analytics(job_id: str, clip_index: int, analytics: dict) -> None:
     """Store YouTube performance stats on a single clip."""
     job = db_get_job(job_id)
@@ -344,6 +355,55 @@ def db_delete_tiktok_token(user_id: str, tt_open_id: Optional[str] = None) -> No
     q = get_db().table("tiktok_tokens").delete().eq("user_id", user_id)
     if tt_open_id:
         q = q.eq("tt_open_id", tt_open_id)
+    q.execute()
+
+
+# ── Instagram tokens ───────────────────────────────────────────────────────────
+
+def db_get_instagram_token(user_id: str, ig_user_id: Optional[str] = None) -> Optional[dict]:
+    """Return one Instagram token row — the specific account if given, else the first."""
+    try:
+        q = get_db().table("instagram_tokens").select("*").eq("user_id", user_id)
+        if ig_user_id:
+            q = q.eq("ig_user_id", ig_user_id)
+        r = q.limit(1).execute()
+        return r.data[0] if r.data else None
+    except Exception as e:
+        print(f"[db_get_instagram_token] error for {user_id}: {e}", flush=True)
+        return None
+
+
+def db_get_user_instagram_tokens(user_id: str) -> list:
+    try:
+        r = get_db().table("instagram_tokens").select("*").eq("user_id", user_id).execute()
+        return r.data or []
+    except Exception:
+        return []
+
+
+def db_upsert_instagram_token(
+    user_id: str, access_token: str,
+    ig_user_id: str = "", ig_username: str = "", expires_at: Optional[str] = None,
+) -> None:
+    db = get_db()
+    r = db.table("instagram_tokens").select("id").eq("user_id", user_id).eq("ig_user_id", ig_user_id).execute()
+    payload = {
+        "access_token": access_token,
+        "ig_username": ig_username,
+        "expires_at": expires_at,
+    }
+    if r.data:
+        db.table("instagram_tokens").update(payload).eq("id", r.data[0]["id"]).execute()
+    else:
+        db.table("instagram_tokens").insert({
+            "user_id": user_id, "ig_user_id": ig_user_id, **payload,
+        }).execute()
+
+
+def db_delete_instagram_token(user_id: str, ig_user_id: Optional[str] = None) -> None:
+    q = get_db().table("instagram_tokens").delete().eq("user_id", user_id)
+    if ig_user_id:
+        q = q.eq("ig_user_id", ig_user_id)
     q.execute()
 
 

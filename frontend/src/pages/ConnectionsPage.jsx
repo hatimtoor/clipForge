@@ -317,16 +317,17 @@ function PlatformCard({ id, variant, icon, title, countLabel, rows, cta, onConne
 }
 
 export default function ConnectionsPage() {
-  const { isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus } = useApp();
+  const { isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus, igStatus, refreshIgStatus } = useApp();
   const [error, setError] = useState("");
 
   const ytChannels = ytStatus?.channels || [];
   const ttAccounts = ttStatus?.accounts || [];
+  const igAccounts = igStatus?.accounts || [];
 
   // ── OAuth popup helper ──────────────────────────────────────────────────────
+  const refreshFor = { youtube: refreshYtStatus, tiktok: refreshTtStatus, instagram: refreshIgStatus };
   const connect = async (provider) => {
     setError("");
-    const isYt = provider === "youtube";
     try {
       const res = await authFetch(`/api/${provider}/auth`);
       const data = await res.json();
@@ -342,7 +343,7 @@ export default function ConnectionsPage() {
       const onMsg = (e) => {
         if (e.data?.type === `${provider}_auth_success`) {
           window.removeEventListener("message", onMsg);
-          isYt ? refreshYtStatus() : refreshTtStatus();
+          refreshFor[provider]?.();
         } else if (e.data?.type === `${provider}_auth_error`) {
           window.removeEventListener("message", onMsg);
           setError(e.data.error || "Authorization failed.");
@@ -369,6 +370,16 @@ export default function ConnectionsPage() {
     try {
       await authFetch(`/api/tiktok/disconnect?tt_open_id=${encodeURIComponent(id)}`, { method: "DELETE" });
       refreshTtStatus();
+    } catch {
+      setError("Could not disconnect. Try again.");
+    }
+  };
+
+  const disconnectIg = async (id) => {
+    if (!window.confirm("Disconnect this Instagram account?")) return;
+    try {
+      await authFetch(`/api/instagram/disconnect?ig_user_id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      refreshIgStatus();
     } catch {
       setError("Could not disconnect. Try again.");
     }
@@ -429,6 +440,21 @@ export default function ConnectionsPage() {
         }))}
         cta="Connect TikTok account"
         onConnect={() => connect("tiktok")}
+      />
+
+      <PlatformCard
+        id="tour-cn-ig"
+        variant="ig"
+        icon="◉"
+        title="Instagram"
+        countLabel={`${igAccounts.length} account${igAccounts.length === 1 ? "" : "s"} connected`}
+        rows={igAccounts.map((acc) => ({
+          key: acc.ig_user_id,
+          name: acc.ig_username ? `@${acc.ig_username}` : "Instagram",
+          onDisconnect: () => disconnectIg(acc.ig_user_id),
+        }))}
+        cta="Connect Instagram account"
+        onConnect={() => connect("instagram")}
       />
 
       <BrandKitCard />

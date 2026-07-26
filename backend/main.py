@@ -103,6 +103,11 @@ YOUTUBE_REDIRECT_URI  = os.getenv("YOUTUBE_REDIRECT_URI", "http://localhost:8000
 TIKTOK_CLIENT_KEY     = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_CLIENT_SECRET  = os.getenv("TIKTOK_CLIENT_SECRET", "")
 TIKTOK_REDIRECT_URI   = os.getenv("TIKTOK_REDIRECT_URI", "https://clipforging.com/api/tiktok/callback")
+# Instagram API with Instagram Login (professional accounts; no Facebook Page needed)
+INSTAGRAM_APP_ID       = os.getenv("INSTAGRAM_APP_ID", "")
+INSTAGRAM_APP_SECRET   = os.getenv("INSTAGRAM_APP_SECRET", "")
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "https://clipforging.com/api/instagram/callback")
+INSTAGRAM_SCOPES       = os.getenv("INSTAGRAM_SCOPES", "instagram_business_basic,instagram_business_content_publish")
 # SELF_ONLY (private) is forced for unaudited apps. After audit, set to
 # PUBLIC_TO_EVERYONE in .env to publish publicly.
 TIKTOK_PRIVACY_LEVEL  = os.getenv("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")
@@ -127,6 +132,8 @@ from db import (
     db_get_all_channels, db_update_channel, db_delete_channel, db_channel_owned_by,
     db_get_youtube_token, db_get_user_youtube_tokens, db_upsert_youtube_token, db_delete_youtube_token,
     db_get_tiktok_token, db_get_user_tiktok_tokens, db_upsert_tiktok_token, db_delete_tiktok_token,
+    db_get_instagram_token, db_get_user_instagram_tokens, db_upsert_instagram_token,
+    db_delete_instagram_token, db_update_clip_ig_upload,
     db_update_clip_tt_upload,
     db_get_profile, db_check_and_reset_quota, db_increment_clips_used, db_claim_clips_atomic,
     db_get_user_email, db_update_profile, db_redeem_promo, parse_iso,
@@ -437,6 +444,11 @@ class TikTokUploadRequest(BaseModel):
     disable_comment: bool = False
     disable_duet: bool = False
     disable_stitch: bool = False
+
+class InstagramUploadRequest(BaseModel):
+    ig_user_id: Optional[str] = None  # which connected Instagram account to post to
+    caption: Optional[str] = None
+    share_to_feed: bool = True
 
 class ChannelRequest(BaseModel):
     url: str
@@ -8761,6 +8773,314 @@ async def get_tiktok_upload_status(job_id: str, clip_index: int, user=Depends(re
     if clip_index >= len(clips):
         raise HTTPException(404, "Clip not found")
     return clips[clip_index].get("tt_upload", {"status": "none"})
+
+
+# ── Instagram (Instagram API with Instagram Login) ────────────────────────────
+# Professional (Business/Creator) accounts only; no Facebook Page required.
+# Long-lived tokens last ~60 days and are refreshed IN PLACE (no refresh token);
+# refresh only works on tokens older than 24h, so we refresh when within 7 days
+# of expiry — plenty of margin on both sides.
+
+_IG_GRAPH = "https://graph.instagram.com"
+
+
+async def get_instagram_access_token(user_id: str, ig_user_id: Optional[str] = None) -> Optional[dict]:
+    """Return a token row with a valid access_token, refreshing if near expiry."""
+    from datetime import datetime, timezone, timedelta
+    tok = await asyncio.to_thread(db_get_instagram_token, user_id, ig_user_id)
+    if not tok:
+        return None
+    exp = tok.get("expires_at")
+    needs_refresh = False
+    if exp:
+        try:
+            needs_refresh = (parse_iso(exp) - datetime.now(timezone.utc)) < timedelta(days=7)
+        except Exception:
+            needs_refresh = True
+    if needs_refresh:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(
+                    f"{_IG_GRAPH}/refresh_access_token",
+                    params={"grant_type": "ig_refresh_token", "access_token": tok["access_token"]},
+                )
+                d = r.json()
+                if d.get("access_token"):
+                    new_exp = (datetime.now(timezone.utc)
+                               + timedelta(seconds=int(d.get("expires_in", 5184000)))).isoformat()
+                    await asyncio.to_thread(
+                        db_upsert_instagram_token, user_id, d["access_token"],
+                        tok.get("ig_user_id", ""), tok.get("ig_username", "Instagram"), new_exp,
+                    )
+                    tok["access_token"] = d["access_token"]
+        except Exception as e:
+            print(f"[instagram] token refresh failed: {e}", flush=True)
+    return tok
+
+
+@app.get("/api/instagram/auth")
+async def instagram_auth(user=Depends(require_pro)):
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
+        raise HTTPException(400, "Instagram not configured. Set INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET in .env")
+    import urllib.parse, secrets
+    state = secrets.token_urlsafe(24)
+    _oauth_state_set(state, {"user_id": user.id})
+    params = {
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": INSTAGRAM_REDIRECT_URI,
+        "response_type": "code",
+        "scope": INSTAGRAM_SCOPES,
+        "state": state,
+    }
+    return {"auth_url": "https://www.instagram.com/oauth/authorize?" + urllib.parse.urlencode(params)}
+
+
+@app.get("/api/instagram/callback")
+async def instagram_callback(code: str = None, state: str = None,
+                             error: str = None, error_description: str = None):
+    if error:
+        return _tt_postmsg("instagram_auth_error", error_description or "Authorization was denied.")
+    state_data = _oauth_state_get(state) if state else None
+    if not code or not state_data:
+        return _tt_postmsg("instagram_auth_error", "Invalid or expired authorization state.")
+    try:
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        user_id = state_data.get("user_id", "")
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "https://api.instagram.com/oauth/access_token",
+                data={
+                    "client_id": INSTAGRAM_APP_ID,
+                    "client_secret": INSTAGRAM_APP_SECRET,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": INSTAGRAM_REDIRECT_URI,
+                    "code": code,
+                },
+            )
+            tok = r.json()
+        # Response is either flat or wrapped in {"data": [...]} depending on rollout
+        if isinstance(tok.get("data"), list) and tok["data"]:
+            tok = tok["data"][0]
+        short_token = tok.get("access_token")
+        ig_user_id = str(tok.get("user_id") or "")
+        if not short_token:
+            print(f"[instagram_callback] token exchange failed: {json.dumps(tok)[:300]}", flush=True)
+            return _tt_postmsg("instagram_auth_error", "Failed to complete Instagram authorization.")
+
+        # Exchange for a ~60-day long-lived token
+        access_token = short_token
+        expires_at = None
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                r = await client.get(
+                    f"{_IG_GRAPH}/access_token",
+                    params={"grant_type": "ig_exchange_token",
+                            "client_secret": INSTAGRAM_APP_SECRET,
+                            "access_token": short_token},
+                )
+                ll = r.json()
+                if ll.get("access_token"):
+                    access_token = ll["access_token"]
+                    expires_at = (datetime.now(timezone.utc)
+                                  + timedelta(seconds=int(ll.get("expires_in", 5184000)))).isoformat()
+            except Exception as le:
+                print(f"[instagram_callback] long-lived exchange failed (keeping short token): {le}", flush=True)
+
+            # Username for the Connections page
+            ig_username = "Instagram"
+            try:
+                ui = await client.get(
+                    f"{_IG_GRAPH}/me",
+                    params={"fields": "user_id,username", "access_token": access_token},
+                )
+                uj = ui.json()
+                ig_username = uj.get("username") or "Instagram"
+                ig_user_id = str(uj.get("user_id") or uj.get("id") or ig_user_id)
+            except Exception as ue:
+                print(f"[instagram_callback] user info lookup failed: {ue}", flush=True)
+
+        await asyncio.to_thread(
+            db_upsert_instagram_token, user_id, access_token, ig_user_id, ig_username, expires_at,
+        )
+        _oauth_states.pop(state, None)
+        return _tt_postmsg("instagram_auth_success")
+    except Exception as e:
+        print(f"[instagram_callback] error: {e}", flush=True)
+        return _tt_postmsg("instagram_auth_error", "Failed to complete Instagram authorization.")
+
+
+@app.get("/api/instagram/status")
+async def instagram_status(user=Depends(require_pro)):
+    tokens = await asyncio.to_thread(db_get_user_instagram_tokens, user.id)
+    if not tokens:
+        return {"connected": False, "accounts": []}
+    accounts = [
+        {"ig_user_id": t.get("ig_user_id", ""), "ig_username": t.get("ig_username") or "Instagram"}
+        for t in tokens
+    ]
+    return {"connected": True, "accounts": accounts}
+
+
+@app.delete("/api/instagram/disconnect")
+async def instagram_disconnect(ig_user_id: Optional[str] = None, user=Depends(require_pro)):
+    await asyncio.to_thread(db_delete_instagram_token, user.id, ig_user_id or None)
+    return {"ok": True}
+
+
+def do_instagram_upload(job_id: str, clip_index: int, req_data: dict, user_id: str):
+    """Publish a rendered clip to the user's Instagram as a Reel.
+
+    Instagram pulls the video from a public URL (no byte upload): we hand it a
+    presigned R2 URL, create a REELS media container, poll until Instagram has
+    ingested it, then publish. Requires R2 (a local-only server has no public
+    URL for Instagram to fetch).
+    """
+    import time as _time
+    import httpx, asyncio as _aio
+    job_id = safe_path_id(job_id)
+    try:
+        tok = _aio.run(get_instagram_access_token(user_id, req_data.get("ig_user_id") or None))
+        if not tok:
+            db_update_clip_ig_upload(job_id, clip_index, {"status": "error", "error": "Not connected to Instagram"})
+            return
+        access_token = tok["access_token"]
+        ig_id = tok.get("ig_user_id", "")
+
+        job = db_get_job(job_id)
+        if not job:
+            return
+        clips = job.get("clips", [])
+        if clip_index >= len(clips):
+            return
+        clip = clips[clip_index]
+        filename = clip.get("filename", "")
+
+        if not R2_ENABLED:
+            db_update_clip_ig_upload(job_id, clip_index, {
+                "status": "error",
+                "error": "Instagram needs a public clip URL — R2 storage is not enabled on this server"})
+            return
+        # 6h expiry: Instagram fetches the file during container processing,
+        # which can lag well behind the API call on busy days.
+        video_url = presigned_url(job_id, filename, expires=21600)
+        if not video_url:
+            db_update_clip_ig_upload(job_id, clip_index, {"status": "error", "error": "Clip file not found"})
+            return
+
+        tags = clip.get("tags", []) or []
+        default_caption = " ".join(filter(None, [
+            clip.get("title", "") or clip.get("hook", ""),
+            " ".join(f"#{t}" for t in tags),
+        ])).strip() or "New clip"
+        caption = (req_data.get("caption") or default_caption)[:2200]
+
+        db_update_clip_ig_upload(job_id, clip_index, {"status": "uploading", "progress": 10})
+
+        with httpx.Client(timeout=60) as client:
+            # 1. Create the REELS media container
+            r = client.post(
+                f"{_IG_GRAPH}/{ig_id}/media",
+                data={
+                    "media_type": "REELS",
+                    "video_url": video_url,
+                    "caption": caption,
+                    "share_to_feed": "true" if req_data.get("share_to_feed", True) else "false",
+                    "access_token": access_token,
+                },
+            )
+            cj = r.json()
+            print(f"[instagram] container create ({r.status_code}): {json.dumps(cj)[:300]}", flush=True)
+            container_id = cj.get("id")
+            if not container_id:
+                err = cj.get("error", {})
+                db_update_clip_ig_upload(job_id, clip_index, {
+                    "status": "error",
+                    "error": err.get("error_user_msg") or err.get("message") or "Instagram rejected the video"})
+                return
+
+            # 2. Poll until Instagram has ingested the video (usually <1 min)
+            status = "IN_PROGRESS"
+            for i in range(48):  # up to 8 minutes
+                _time.sleep(10)
+                s = client.get(
+                    f"{_IG_GRAPH}/{container_id}",
+                    params={"fields": "status_code,status", "access_token": access_token},
+                )
+                sj = s.json()
+                status = sj.get("status_code", "IN_PROGRESS")
+                if status in ("FINISHED", "ERROR", "EXPIRED"):
+                    break
+                db_update_clip_ig_upload(job_id, clip_index, {
+                    "status": "uploading", "progress": min(90, 20 + i * 5)})
+            if status != "FINISHED":
+                detail = (sj.get("status") or status) if status == "ERROR" else \
+                    "Instagram took too long to process the video"
+                print(f"[instagram] container {container_id} ended {status}: {json.dumps(sj)[:300]}", flush=True)
+                db_update_clip_ig_upload(job_id, clip_index, {"status": "error", "error": str(detail)[:300]})
+                return
+
+            # 3. Publish
+            p = client.post(
+                f"{_IG_GRAPH}/{ig_id}/media_publish",
+                data={"creation_id": container_id, "access_token": access_token},
+            )
+            pj = p.json()
+            print(f"[instagram] publish ({p.status_code}): {json.dumps(pj)[:300]}", flush=True)
+            media_id = pj.get("id")
+            if not media_id:
+                err = pj.get("error", {})
+                db_update_clip_ig_upload(job_id, clip_index, {
+                    "status": "error",
+                    "error": err.get("error_user_msg") or err.get("message") or "Instagram publish failed"})
+                return
+
+            # Permalink is a nice-to-have — ignore failures
+            permalink = None
+            try:
+                pl = client.get(f"{_IG_GRAPH}/{media_id}",
+                                params={"fields": "permalink", "access_token": access_token})
+                permalink = pl.json().get("permalink")
+            except Exception:
+                pass
+
+        db_update_clip_ig_upload(job_id, clip_index, {
+            "status": "done", "progress": 100, "media_id": media_id,
+            "permalink": permalink, "note": "Posted to your Instagram as a Reel.",
+        })
+        print(f"[instagram] job={job_id} clip={clip_index} published (media_id={media_id})", flush=True)
+    except Exception as e:
+        print(f"[instagram] job={job_id} clip={clip_index} error: {e}", flush=True)
+        db_update_clip_ig_upload(job_id, clip_index, {"status": "error", "error": "Upload to Instagram failed"})
+
+
+@app.post("/api/instagram/upload/{job_id}/{clip_index}")
+async def start_instagram_upload(
+    job_id: str, clip_index: int, req: InstagramUploadRequest,
+    background_tasks: BackgroundTasks, user=Depends(require_pro),
+):
+    job = db_get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("user_id") != user.id:
+        raise HTTPException(403, "Forbidden")
+    if clip_index >= len(job.get("clips", [])):
+        raise HTTPException(404, "Clip not found")
+    db_update_clip_ig_upload(job_id, clip_index, {"status": "queued", "progress": 0})
+    background_tasks.add_task(do_instagram_upload, job_id, clip_index, req.model_dump(), user.id)
+    return {"status": "queued"}
+
+
+@app.get("/api/instagram/upload_status/{job_id}/{clip_index}")
+async def get_instagram_upload_status(job_id: str, clip_index: int, user=Depends(require_pro)):
+    job = db_get_job(job_id)
+    if not job or job.get("user_id") != user.id:
+        raise HTTPException(404, "Job not found")
+    clips = job.get("clips", [])
+    if clip_index >= len(clips):
+        raise HTTPException(404, "Clip not found")
+    return clips[clip_index].get("ig_upload", {"status": "none"})
 
 
 @app.post("/api/jobs/{job_id}/clips/{clip_index}/refresh_analytics")

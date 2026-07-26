@@ -54,9 +54,11 @@ export default function Results({
   job,
   ytStatus,
   ttStatus,
+  igStatus,
   isPro,
   onYTUpload,
   onTTUpload,
+  onIGUpload,
   onNew,
   onUploadAll,
   onUploadAllTikTok,
@@ -79,6 +81,7 @@ export default function Results({
   const ttAccounts = ttStatus?.accounts || [];
   const ytConnected = isPro && !!ytStatus?.connected;
   const ttConnected = isPro && !!ttStatus?.connected;
+  const igConnected = isPro && !!igStatus?.connected;
   const uploadableCount = clips.filter(
     (c) => !c.yt_upload || !["done", "uploading", "queued"].includes(c.yt_upload?.status)
   ).length;
@@ -158,10 +161,12 @@ export default function Results({
               idx={i}
               ytConnected={ytConnected}
               ttConnected={ttConnected}
+              igConnected={igConnected}
               isActive={active?.path === c.path}
               onPreview={() => setActive((prev) => (prev?.path === c.path ? null : c))}
               onYTUpload={() => onYTUpload(c, i)}
               onTTUpload={() => onTTUpload(c, i)}
+              onIGUpload={() => onIGUpload(c, i)}
               onEdit={() => setEditTarget({ clipIndex: i, title: c.title })}
               jobId={job.job_id}
               isPro={isPro}

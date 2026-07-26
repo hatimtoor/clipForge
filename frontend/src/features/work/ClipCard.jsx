@@ -5,6 +5,7 @@ import { authFetch } from "../../lib/supabase";
 import { useMobile } from "../../hooks/useMobile";
 import { Button, Card, Tag, MenuButton, ScoreRing, ScoreBars } from "../../components/kit";
 import { TikTokClipButton } from "./UploadModalTikTok";
+import { InstagramClipButton } from "./UploadModalInstagram";
 import ScheduleModal from "./ScheduleModal";
 import { fmtNum, timeAgoShort } from "./format";
 
@@ -15,9 +16,11 @@ export default function ClipCard({
   onPreview,
   onYTUpload,
   onTTUpload,
+  onIGUpload,
   onEdit,
   ytConnected,
   ttConnected,
+  igConnected,
   jobId,
   isPro,
 }) {
@@ -246,6 +249,7 @@ export default function ClipCard({
             </Button>
           ))}
         {ttConnected && <TikTokClipButton clip={clip} onOpen={onTTUpload} />}
+        {igConnected && <InstagramClipButton clip={clip} onOpen={onIGUpload} />}
         <span style={{ marginLeft: "auto" }} />
         <MenuButton
           trigger={(toggle) => (

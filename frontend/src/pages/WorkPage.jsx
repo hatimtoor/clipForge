@@ -7,6 +7,7 @@ import LiveProcessing from "../features/work/LiveProcessing";
 import Results from "../features/work/Results";
 import UploadModalYouTube from "../features/work/UploadModalYouTube";
 import UploadModalTikTok from "../features/work/UploadModalTikTok";
+import UploadModalInstagram from "../features/work/UploadModalInstagram";
 
 /* Orchestrator only: job polling, jobActive lifecycle, bulk-upload loops, and
    the route-state switch. All rendering lives in features/work/. */
@@ -14,11 +15,12 @@ export default function WorkPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const jobId = searchParams.get("job");
-  const { isPro, ytStatus, ttStatus, setJobActive } = useApp();
+  const { isPro, ytStatus, ttStatus, igStatus, setJobActive } = useApp();
 
   const [job, setJob] = useState(null);
   const [ytModal, setYtModal] = useState(null);
   const [ttModal, setTtModal] = useState(null);
+  const [igModal, setIgModal] = useState(null);
   const [loading, setLoading] = useState(!!jobId);
   const [fetchError, setFetchError] = useState(false);
   const [uploadingAll, setUploadingAll] = useState(false);
@@ -237,10 +239,12 @@ export default function WorkPage() {
           job={job}
           ytStatus={ytStatus}
           ttStatus={ttStatus}
+          igStatus={igStatus}
           isPro={isPro}
           onNew={goNew}
           onYTUpload={(clip, clipIndex) => setYtModal({ clip, clipIndex })}
           onTTUpload={(clip, clipIndex) => setTtModal({ clip, clipIndex })}
+          onIGUpload={(clip, clipIndex) => setIgModal({ clip, clipIndex })}
           onUploadAll={handleUploadAll}
           onUploadAllTikTok={handleUploadAllTikTok}
           uploadingAll={uploadingAll}
@@ -262,6 +266,16 @@ export default function WorkPage() {
             jobId={jobId}
             ttAccounts={ttStatus?.accounts || []}
             onClose={() => setTtModal(null)}
+            onUploaded={refreshJob}
+          />
+        )}
+        {igModal && (
+          <UploadModalInstagram
+            clip={igModal.clip}
+            clipIndex={igModal.clipIndex}
+            jobId={jobId}
+            igAccounts={igStatus?.accounts || []}
+            onClose={() => setIgModal(null)}
             onUploaded={refreshJob}
           />
         )}

@@ -38,6 +38,8 @@
   --yt-soft: #fceaea;
   --tt: #12889f;
   --tt-soft: #e3f3f6;
+  --ig: #c13584;
+  --ig-soft: #fae8f2;
 
   /* borders / radii / shadows */
   --border-w: 1px;
@@ -111,6 +113,9 @@
   --btn-tt-bg: var(--tt-soft);
   --btn-tt-fg: #0d6172;
   --btn-tt-border: #bfe0e6;
+  --btn-ig-bg: var(--ig-soft);
+  --btn-ig-fg: #96266a;
+  --btn-ig-border: #ecc4dc;
 
   /* inputs */
   --input-bg: var(--surface-1);
@@ -172,6 +177,8 @@
   --yt-soft: #ff7a7a;
   --tt: #3a9ac4;
   --tt-soft: #7ec8e3;
+  --ig: #b04a9e;
+  --ig-soft: #e8a9d6;
 
   --border-w: 3px;
   --border-w-sm: 2px;
@@ -240,6 +247,9 @@
   --btn-tt-bg: #7ec8e3;
   --btn-tt-fg: var(--ink);
   --btn-tt-border: var(--ink);
+  --btn-ig-bg: #e8a9d6;
+  --btn-ig-fg: var(--ink);
+  --btn-ig-border: var(--ink);
 
   --input-bg: #fef7e4;
   --input-border: var(--ink);

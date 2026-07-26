@@ -59,6 +59,7 @@ export default function App() {
   const [profile, setProfile] = useState({ plan: "free", clips_used: 0, clips_limit: 10 });
   const [ytStatus, setYtStatus] = useState({ connected: false });
   const [ttStatus, setTtStatus] = useState({ connected: false });
+  const [igStatus, setIgStatus] = useState({ connected: false });
   const [jobActive, setJobActive] = useState(null); // null | jobId string
 
   const isPro = profile.plan === "pro";
@@ -81,6 +82,13 @@ export default function App() {
     try {
       const res = await authFetch("/api/tiktok/status");
       if (res.ok) setTtStatus(await res.json());
+    } catch {}
+  };
+
+  const refreshIgStatus = async () => {
+    try {
+      const res = await authFetch("/api/instagram/status");
+      if (res.ok) setIgStatus(await res.json());
     } catch {}
   };
 
@@ -129,10 +137,10 @@ export default function App() {
   }, [authed]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (authed && isPro) { refreshYtStatus(); refreshTtStatus(); }
+    if (authed && isPro) { refreshYtStatus(); refreshTtStatus(); refreshIgStatus(); }
   }, [authed, isPro]);
 
-  const ctx = { authed, profile, isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus, refreshProfile, jobActive, setJobActive };
+  const ctx = { authed, profile, isPro, ytStatus, refreshYtStatus, ttStatus, refreshTtStatus, igStatus, refreshIgStatus, refreshProfile, jobActive, setJobActive };
 
   return (
     <BrowserRouter>

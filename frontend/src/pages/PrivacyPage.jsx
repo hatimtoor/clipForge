@@ -38,7 +38,7 @@ export default function PrivacyPage() {
               When you purchase a Pro subscription, payment is handled by Lemon Squeezy (our Merchant of Record). We do not collect or store your full card details. We store a subscription identifier, customer identifier, subscription status, and renewal date returned by Lemon Squeezy so we can manage your plan.
             </SubSection>
             <SubSection title="Video Content">
-              We do not permanently store your original source videos. Videos are downloaded temporarily to the server during processing and deleted once clips are rendered. Rendered clips are stored in Cloudflare R2 cloud storage, are accessible only to you via time-limited secure links, and are automatically deleted after a retention period (see Section 5).
+              We do not permanently store your original source videos. Videos are downloaded temporarily to the server during processing and deleted once clips are rendered. Rendered clips are stored in Cloudflare R2 cloud storage, are accessible only to you via time-limited secure links, and are automatically deleted after a retention period (see Section 6).
             </SubSection>
           </Section>
         </Card>
@@ -103,7 +103,39 @@ export default function PrivacyPage() {
         </Card>
 
         <Card style={{ marginBottom: 20 }}>
-          <Section title="5. Data Storage & Retention">
+          <Section title="5. Google API Services & YouTube API">
+            ClipForge uses <strong>YouTube API Services</strong>. By using ClipForge's YouTube features you
+            agree to be bound by the{" "}
+            <a href="https://www.youtube.com/t/terms" target="_blank" rel="noreferrer">YouTube Terms of Service</a>.
+            Google's handling of your data is described in the{" "}
+            <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">Google Privacy Policy</a>.
+            <br /><br />
+            <SubSection title="Google User Data We Access">
+              If you connect a YouTube channel, we request two permissions: <strong>viewing your YouTube
+              account</strong> (used only to display your connected channel's name and ID inside ClipForge and to
+              retrieve public performance metrics for clips you uploaded through ClipForge) and{" "}
+              <strong>managing your YouTube videos</strong> (used only to upload the clips you explicitly choose to
+              upload, with the title, description, and privacy setting you select). We never read your private
+              videos, comments, or messages, never modify or delete existing videos, and never post anything you
+              did not explicitly submit.
+            </SubSection>
+            <SubSection title="Storage & Sharing of Google User Data">
+              The OAuth tokens Google issues are stored server-side in our database, are never exposed to the
+              browser, and are used solely to provide the features above. We do not sell, share, or transfer your
+              Google user data to third parties except as required to operate the service (see Section 4), and we
+              do not use it for advertising. Tokens are deleted when you disconnect your channel.
+            </SubSection>
+            <SubSection title="Revoking Access">
+              You can disconnect your YouTube channel at any time on the Connections page inside ClipForge. You can
+              also revoke ClipForge's access entirely from your Google account's security settings at{" "}
+              <a href="https://myaccount.google.com/permissions" target="_blank" rel="noreferrer">
+                myaccount.google.com/permissions</a>.
+            </SubSection>
+          </Section>
+        </Card>
+
+        <Card style={{ marginBottom: 20 }}>
+          <Section title="6. Data Storage & Retention">
             <SubSection title="Clip Files">
               Rendered clips are stored in a private Cloudflare R2 bucket. They are not publicly accessible. Access is provided via presigned URLs that expire after 1 hour. Clip files are automatically deleted approximately 7 days after the job is completed, so you should download or publish clips you wish to keep. Clip metadata may remain in your job history until you delete the job or your account.
             </SubSection>
@@ -120,7 +152,7 @@ export default function PrivacyPage() {
         </Card>
 
         <Card style={{ marginBottom: 20 }}>
-          <Section title="6. Data Security">
+          <Section title="7. Data Security">
             We implement the following measures to protect your data:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
               {[
@@ -137,7 +169,7 @@ export default function PrivacyPage() {
         </Card>
 
         <Card style={{ marginBottom: 20 }}>
-          <Section title="7. Your Rights">
+          <Section title="8. Your Rights">
             You have the right to:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
               {[
@@ -158,19 +190,19 @@ export default function PrivacyPage() {
         </Card>
 
         <Card style={{ marginBottom: 20 }}>
-          <Section title="8. Children's Privacy">
+          <Section title="9. Children's Privacy">
             ClipForge is not directed at children under 13. We do not knowingly collect personal information from children under 13. If you believe a child has provided us with personal data, contact us at hatimtoor2025@gmail.com and we will delete it promptly.
           </Section>
         </Card>
 
         <Card style={{ marginBottom: 20 }}>
-          <Section title="9. Changes to This Policy">
+          <Section title="10. Changes to This Policy">
             We may update this Privacy Policy from time to time. When we do, we will update the "Last updated" date at the top of this page. Continued use of ClipForge after changes constitutes acceptance of the updated policy.
           </Section>
         </Card>
 
         <Card>
-          <Section title="10. Contact">
+          <Section title="11. Contact">
             For any privacy-related questions, data requests, or concerns:
             <br /><br />
             <span style={{ fontWeight: 700 }}>Hatim Toor</span><br />

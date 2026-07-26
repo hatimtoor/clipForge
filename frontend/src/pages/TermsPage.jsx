@@ -70,6 +70,15 @@ export default function TermsPage() {
 
         <Card style={{ marginBottom: 20 }}>
           <Section title="5. YouTube, TikTok & Third-Party Platform Compliance">
+            ClipForge uses <strong>YouTube API Services</strong> for its YouTube integration. By using
+            ClipForge's YouTube features you agree to be bound by the{" "}
+            <a href="https://www.youtube.com/t/terms" target="_blank" rel="noreferrer">YouTube Terms of Service</a>.
+            Google's handling of your data is described in the{" "}
+            <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">Google Privacy Policy</a>,
+            and you can revoke ClipForge's access to your Google account at any time at{" "}
+            <a href="https://myaccount.google.com/permissions" target="_blank" rel="noreferrer">
+              myaccount.google.com/permissions</a>.
+            <br /><br />
             ClipForge uses yt-dlp to download YouTube videos for processing, and integrates with YouTube and TikTok for optional publishing. You acknowledge that:
             <ul style={{ paddingLeft: 20, margin: "12px 0 0" }}>
               {[

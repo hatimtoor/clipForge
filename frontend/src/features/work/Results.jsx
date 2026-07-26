@@ -62,6 +62,7 @@ export default function Results({
   onNew,
   onUploadAll,
   onUploadAllTikTok,
+  onUploadAllInstagram,
   uploadingAll,
 }) {
   const clips = job.clips || [];
@@ -75,10 +76,12 @@ export default function Results({
   const [editTarget, setEditTarget] = useState(null);
   const [ytPicker, setYtPicker] = useState(false);
   const [ttPicker, setTtPicker] = useState(false);
+  const [igPicker, setIgPicker] = useState(false);
   const previewRef = useRef(null);
 
   const ytChannels = ytStatus?.channels || [];
   const ttAccounts = ttStatus?.accounts || [];
+  const igAccounts = igStatus?.accounts || [];
   const ytConnected = isPro && !!ytStatus?.connected;
   const ttConnected = isPro && !!ttStatus?.connected;
   const igConnected = isPro && !!igStatus?.connected;
@@ -87,6 +90,9 @@ export default function Results({
   ).length;
   const ttUploadableCount = clips.filter(
     (c) => !c.tt_upload || !["done", "uploading", "queued"].includes(c.tt_upload?.status)
+  ).length;
+  const igUploadableCount = clips.filter(
+    (c) => !c.ig_upload || !["done", "uploading", "queued"].includes(c.ig_upload?.status)
   ).length;
 
   useEffect(() => {
@@ -116,6 +122,10 @@ export default function Results({
     if (ttAccounts.length > 1) setTtPicker(true);
     else onUploadAllTikTok(ttAccounts[0]?.tt_open_id || "");
   };
+  const handleIgAllClick = () => {
+    if (igAccounts.length > 1) setIgPicker(true);
+    else onUploadAllInstagram(igAccounts[0]?.ig_user_id || "");
+  };
 
   return (
     <div className="results">
@@ -136,6 +146,11 @@ export default function Results({
           {ttConnected && ttUploadableCount > 0 && (
             <Button size="sm" variant="tt" onClick={handleTtAllClick} disabled={uploadingAll}>
               ♪ All to TikTok
+            </Button>
+          )}
+          {igConnected && igUploadableCount > 0 && (
+            <Button size="sm" variant="ig" onClick={handleIgAllClick} disabled={uploadingAll}>
+              ◉ All to Instagram
             </Button>
           )}
           <Button size="sm" variant="secondary" onClick={() => setRepromptOpen(true)}>
@@ -270,6 +285,23 @@ export default function Results({
           onConfirm={(id) => {
             setTtPicker(false);
             onUploadAllTikTok(id);
+          }}
+        />
+      )}
+      {igPicker && (
+        <TargetPickerModal
+          title="Post all to Instagram"
+          tone="ig"
+          confirmLabel="Post all"
+          options={igAccounts.map((a) => ({
+            id: a.ig_user_id,
+            label: a.ig_username ? `@${a.ig_username}` : a.ig_user_id,
+          }))}
+          initial={igAccounts[0]?.ig_user_id || ""}
+          onClose={() => setIgPicker(false)}
+          onConfirm={(id) => {
+            setIgPicker(false);
+            onUploadAllInstagram(id);
           }}
         />
       )}

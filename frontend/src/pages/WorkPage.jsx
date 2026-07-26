@@ -137,6 +137,37 @@ export default function WorkPage() {
     }, 2000);
   };
 
+  const handleUploadAllInstagram = async (account) => {
+    if (!job?.clips || uploadingAll) return;
+    setUploadingAll(true);
+    clearInterval(uploadAllPollRef.current);
+    const toUpload = job.clips
+      .map((c, i) => ({ clip: c, idx: i }))
+      .filter(({ clip }) => !clip.ig_upload || !["done", "uploading", "queued"].includes(clip.ig_upload?.status));
+    for (const { idx } of toUpload) {
+      try {
+        await authFetch(`/api/instagram/upload/${jobId}/${idx}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ig_user_id: account || undefined }),
+        });
+      } catch {}
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    uploadAllPollRef.current = setInterval(async () => {
+      const d = await fetchJob(jobId);
+      if (!d) return;
+      setJob(d);
+      const allSettled = (d.clips || []).every(
+        (c) => !c.ig_upload || ["done", "error"].includes(c.ig_upload?.status)
+      );
+      if (allSettled) {
+        clearInterval(uploadAllPollRef.current);
+        setUploadingAll(false);
+      }
+    }, 3000);
+  };
+
   const handleUploadAllTikTok = async (account) => {
     if (!job?.clips || uploadingAll) return;
     setUploadingAll(true);
@@ -247,6 +278,7 @@ export default function WorkPage() {
           onIGUpload={(clip, clipIndex) => setIgModal({ clip, clipIndex })}
           onUploadAll={handleUploadAll}
           onUploadAllTikTok={handleUploadAllTikTok}
+          onUploadAllInstagram={handleUploadAllInstagram}
           uploadingAll={uploadingAll}
         />
         {ytModal && (

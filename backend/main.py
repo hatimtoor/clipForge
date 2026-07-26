@@ -404,8 +404,8 @@ class BrandSettings(BaseModel):
 class ScheduleRequest(BaseModel):
     job_id: str
     clip_index: int
-    platform: str                       # youtube | tiktok
-    target_id: Optional[str] = None     # yt_channel_id / tt_open_id
+    platform: str                       # youtube | tiktok | instagram
+    target_id: Optional[str] = None     # yt_channel_id / tt_open_id / ig_user_id
     title: Optional[str] = None
     description: Optional[str] = None
     privacy: Optional[str] = None       # youtube privacy_status / tiktok privacy_level
@@ -463,6 +463,7 @@ class ChannelRequest(BaseModel):
     caption_language: str = "source"
     yt_channel_id: Optional[str] = None
     tt_open_id: Optional[str] = None
+    ig_user_id: Optional[str] = None
     bg_music_url: Optional[str] = None
     bg_music_volume: float = 0.15
     trim_silence: bool = False
@@ -489,6 +490,7 @@ class ChannelPatchRequest(BaseModel):
     caption_language: Optional[str] = None
     yt_channel_id: Optional[str] = None
     tt_open_id: Optional[str] = None
+    ig_user_id: Optional[str] = None
     bg_music_url: Optional[str] = None
     bg_music_volume: Optional[float] = None
     trim_silence: Optional[bool] = None
@@ -580,6 +582,7 @@ class BackfillRequest(BaseModel):
     bg_music_volume: float = 0.15
     trim_silence: bool = False
     tt_open_id: Optional[str] = None
+    ig_user_id: Optional[str] = None
     aspect_ratio: Optional[str] = None
     caption_position: Optional[str] = None
     caption_keywords: Optional[bool] = None
@@ -608,6 +611,7 @@ class BackfillPatchRequest(BaseModel):
     bg_music_volume: Optional[float] = None
     trim_silence: Optional[bool] = None
     tt_open_id: Optional[str] = None
+    ig_user_id: Optional[str] = None
     aspect_ratio: Optional[str] = None
     caption_position: Optional[str] = None
     caption_keywords: Optional[bool] = None
@@ -6061,7 +6065,7 @@ async def channel_poller():
                     job_id = job["id"]
                     req = _channel_clip_request(ch, video_url)
                     _watchlist_inflight.add(key)
-                    _running_tasks[job_id] = asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id"), watchlist_channel_id=channel_id, watchlist_video_id=video_id, watchlist_video_title=video.get("title", "")))
+                    _running_tasks[job_id] = asyncio.create_task(run_pipeline(job_id, req, user_id=user_id, auto_upload=ch.get("auto_upload", False), auto_upload_yt_channel=ch.get("yt_channel_id"), auto_upload_tt_account=ch.get("tt_open_id"), auto_upload_ig_account=ch.get("ig_user_id"), watchlist_channel_id=channel_id, watchlist_video_id=video_id, watchlist_video_title=video.get("title", "")))
             except Exception as e:
                 print(f"[watchlist] Error checking {channel_id}: {e}", flush=True)
                 db_update_channel(channel_id, {"last_checked": datetime.now(timezone.utc).isoformat()})
@@ -6255,7 +6259,7 @@ async def _acquire_render_slot(job_id: str) -> None:
         raise
 
 
-async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None, watchlist_channel_id: Optional[str] = None, watchlist_video_id: Optional[str] = None, watchlist_video_title: str = "", reprompt_parent_id: Optional[str] = None):
+async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_upload: bool = False, auto_upload_yt_channel: Optional[str] = None, auto_upload_tt_account: Optional[str] = None, auto_upload_ig_account: Optional[str] = None, backfill_id: Optional[str] = None, backfill_video_id: Optional[str] = None, watchlist_channel_id: Optional[str] = None, watchlist_video_id: Optional[str] = None, watchlist_video_title: str = "", reprompt_parent_id: Optional[str] = None):
     # Barrier: both ids get joined into filesystem paths (temp/output/cache).
     job_id = safe_path_id(job_id)
     if reprompt_parent_id:
@@ -6460,7 +6464,7 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
         if auto_upload and final_clips:
             # YouTube runs when a YT channel is chosen, or as the default when no
             # TikTok account is the sole chosen target (backward compatible).
-            do_yt = bool(auto_upload_yt_channel) or not auto_upload_tt_account
+            do_yt = bool(auto_upload_yt_channel) or not (auto_upload_tt_account or auto_upload_ig_account)
             if do_yt:
                 log(job_id, f"Auto-uploading {len(final_clips)} clips to YouTube...")
                 for i in range(len(final_clips)):
@@ -6481,6 +6485,10 @@ async def run_pipeline(job_id: str, req: ClipRequest, user_id: str = "", auto_up
                 log(job_id, f"Auto-uploading {len(final_clips)} clips to TikTok...")
                 for i in range(len(final_clips)):
                     await asyncio.to_thread(do_tiktok_upload, job_id, i, {"tt_open_id": auto_upload_tt_account}, user_id)
+            if auto_upload_ig_account:
+                log(job_id, f"Auto-uploading {len(final_clips)} clips to Instagram...")
+                for i in range(len(final_clips)):
+                    await asyncio.to_thread(do_instagram_upload, job_id, i, {"ig_user_id": auto_upload_ig_account}, user_id)
         log(job_id, f"=== PIPELINE DONE === {len(final_clips)} clips delivered")
         if backfill_id and backfill_video_id:
             bf = await asyncio.to_thread(db_get_backfill, backfill_id)
@@ -6626,6 +6634,7 @@ async def _process_backfill_inner(bf: dict) -> None:
     vpd = bf.get("videos_per_day", 2)
     yt_ch_id = bf.get("yt_upload_channel_id") or None
     tt_account = bf.get("tt_open_id") or None
+    ig_account = bf.get("ig_user_id") or None
     auto_upload = bf.get("auto_upload", False)
     processed = set(bf.get("processed_video_ids") or [])
 
@@ -6663,9 +6672,10 @@ async def _process_backfill_inner(bf: dict) -> None:
             _running_tasks[job["id"]] = asyncio.create_task(run_pipeline(
                 job["id"], req,
                 user_id=user_id,
-                auto_upload=auto_upload and (bool(yt_ch_id) or bool(tt_account)),
+                auto_upload=auto_upload and (bool(yt_ch_id) or bool(tt_account) or bool(ig_account)),
                 auto_upload_yt_channel=yt_ch_id if auto_upload else None,
                 auto_upload_tt_account=tt_account if auto_upload else None,
+                auto_upload_ig_account=ig_account if auto_upload else None,
                 backfill_id=bf_id,
                 backfill_video_id=video["id"],
             ))
@@ -6828,6 +6838,14 @@ async def scheduled_post_publisher():
                         await asyncio.to_thread(do_youtube_upload, post["job_id"], idx, req_data, post["user_id"])
                         job2 = db_get_job(post["job_id"]) or {}
                         up = ((job2.get("clips") or [{}] * (idx + 1))[idx] or {}).get("yt_upload") or {}
+                    elif post["platform"] == "instagram":
+                        req_data = {
+                            "ig_user_id": post.get("target_id"),
+                            "caption": post.get("title") or clip.get("title") or "",
+                        }
+                        await asyncio.to_thread(do_instagram_upload, post["job_id"], idx, req_data, post["user_id"])
+                        job2 = db_get_job(post["job_id"]) or {}
+                        up = ((job2.get("clips") or [{}] * (idx + 1))[idx] or {}).get("ig_upload") or {}
                     else:
                         req_data = {
                             "tt_open_id": post.get("target_id"),
@@ -8229,6 +8247,7 @@ async def create_backfill(req: BackfillRequest, user=Depends(require_pro)):
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,
         "tt_open_id": req.tt_open_id or None,
+        "ig_user_id": req.ig_user_id or None,
         "options": {k: getattr(req, k) for k in _OPTIONS_FIELDS},
         "processed_video_ids": [],
         "total_videos": 0,
@@ -9164,6 +9183,7 @@ async def add_channel(req: ChannelRequest, user=Depends(require_pro)):
         "bg_music_volume": req.bg_music_volume,
         "trim_silence": req.trim_silence,
         "tt_open_id": req.tt_open_id or None,
+        "ig_user_id": req.ig_user_id or None,
         "options": {k: getattr(req, k) for k in _OPTIONS_FIELDS},
     })
     return _c(ch_data)

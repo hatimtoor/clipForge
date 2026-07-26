@@ -30,7 +30,7 @@ const TOUR_STEPS = [
   },
 ];
 
-function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
+function DigestCard({ bf, ytStatus, ttStatus, igStatus, onRemove, onRunNow, onPatch }) {
   const isCompleted = bf.status === "completed";
   const processed = (bf.processed_video_ids || []).length;
   const total = bf.total_videos || 0;
@@ -40,10 +40,12 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
   const [videosPerDay, setVideosPerDay] = useState(bf.videos_per_day ?? 2);
   const [ytChannelId, setYtChannelId] = useState(bf.yt_upload_channel_id ?? "");
   const [ttAccountId, setTtAccountId] = useState(bf.tt_open_id ?? "");
+  const [igAccountId, setIgAccountId] = useState(bf.ig_user_id ?? "");
   const [autoUpload, setAutoUpload] = useState(bf.auto_upload ?? false);
 
   const ytChannels = ytStatus?.channels || [];
   const ttAccounts = ttStatus?.accounts || [];
+  const igAccounts = igStatus?.accounts || [];
   const patch = (fields) => onPatch(bf.id, fields);
 
   // Same chip-strip + modals as the create page, PATCHing this digest channel.
@@ -146,6 +148,20 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
           </Field>
         )}
 
+        {igAccounts.length > 0 && (
+          <Field label="◉ Instagram account">
+            <Select value={igAccountId}
+              onChange={(e) => { setIgAccountId(e.target.value); patch({ ig_user_id: e.target.value || null }); }}>
+              <option value="">— off —</option>
+              {igAccounts.map((a) => (
+                <option key={a.ig_user_id} value={a.ig_user_id}>
+                  {a.ig_username ? `@${a.ig_username}` : a.ig_user_id}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {!isCompleted && (
             <Button size="sm" variant="secondary" onClick={() => onRunNow(bf.id)}>
@@ -162,7 +178,7 @@ function DigestCard({ bf, ytStatus, ttStatus, onRemove, onRunNow, onPatch }) {
 }
 
 export default function DigestPage() {
-  const { ytStatus, ttStatus, isPro } = useApp();
+  const { ytStatus, ttStatus, igStatus, isPro } = useApp();
   const navigate = useNavigate();
   const [backfills, setBackfills] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -287,7 +303,7 @@ export default function DigestPage() {
       ) : (
         <div style={{ display: "grid", gap: 14 }}>
           {backfills.map((bf) => (
-            <DigestCard key={bf.id} bf={bf} ytStatus={ytStatus} ttStatus={ttStatus}
+            <DigestCard key={bf.id} bf={bf} ytStatus={ytStatus} ttStatus={ttStatus} igStatus={igStatus}
               onRemove={handleRemove} onRunNow={handleRunNow} onPatch={handlePatch} />
           ))}
         </div>

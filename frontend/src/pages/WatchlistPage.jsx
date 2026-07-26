@@ -65,10 +65,11 @@ function UpgradeGate() {
 }
 
 
-function ChannelRow({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, onSetUploadChannel, onSetTtAccount }) {
-  const { ytStatus, ttStatus } = useApp();
+function ChannelRow({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, onSetUploadChannel, onSetTtAccount, onSetIgAccount }) {
+  const { ytStatus, ttStatus, igStatus } = useApp();
   const [selectedYtChannel, setSelectedYtChannel] = useState(ch.yt_channel_id ?? "");
   const [selectedTtAccount, setSelectedTtAccount] = useState(ch.tt_open_id ?? "");
+  const [selectedIgAccount, setSelectedIgAccount] = useState(ch.ig_user_id ?? "");
 
   const patch = async (fields) => {
     await authFetch(`/api/channels/${ch.channel_id}`, {
@@ -137,6 +138,20 @@ function ChannelRow({ ch, onRemove, onToggleAutoUpload, onCheckNow, checking, on
                 ))}
               </Select>
               <Button size="sm" variant="tt" onClick={() => onSetTtAccount(ch, selectedTtAccount)}>Save</Button>
+            </div>
+          </Field>
+        )}
+        {ch.auto_upload && igStatus?.connected && (igStatus.accounts || []).length > 0 && (
+          <Field label="◉ Instagram account">
+            <div style={{ display: "flex", gap: 8 }}>
+              <Select value={selectedIgAccount} onChange={(e) => setSelectedIgAccount(e.target.value)}
+                style={{ flex: 1, minWidth: 0 }}>
+                <option value="">— off —</option>
+                {igStatus.accounts.map((a) => (
+                  <option key={a.ig_user_id} value={a.ig_user_id}>{a.ig_username ? `@${a.ig_username}` : a.ig_user_id}</option>
+                ))}
+              </Select>
+              <Button size="sm" variant="ig" onClick={() => onSetIgAccount(ch, selectedIgAccount)}>Save</Button>
             </div>
           </Field>
         )}
@@ -238,6 +253,15 @@ function WatchlistContent() {
     fetchChannels();
   };
 
+  const handleSetIgAccount = async (ch, ig_user_id) => {
+    await authFetch(`/api/channels/${ch.channel_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ig_user_id: ig_user_id || null }),
+    });
+    fetchChannels();
+  };
+
   const handleCheckNow = async (id) => {
     setCheckingId(id);
     await authFetch(`/api/channels/${id}/check`, { method: "POST" });
@@ -293,6 +317,7 @@ function WatchlistContent() {
               checking={checkingId === ch.channel_id}
               onSetUploadChannel={handleSetUploadChannel}
               onSetTtAccount={handleSetTtAccount}
+              onSetIgAccount={handleSetIgAccount}
             />
           ))}
         </div>
